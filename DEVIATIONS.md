@@ -2,6 +2,15 @@
 
 One entry per deviation: task, what changed, why.
 
+## Plan 2 / post-run audit fixes (2026-09-25)
+
+Found by the Claude audit after Task 9.
+
+1. **Event guard failed open** (`runtime.rs`, `heartbeat_once`). A failed queue count was read as zero, so a heartbeat for a different event would be adopted and the queued rows sent to it. The count now fails closed (`u64::MAX`), keeping the saved event. No test: a store read failure after a successful open cannot be produced without a fault hook, and adding one only for this is not worth it.
+2. **Desk result could land on another desk** (`App.tsx`). Station screens were not keyed, so a request in flight for one desk could set the view of the next desk selected. The station wrapper is now keyed by UUID, which remounts Desk, Gate and Simulator on a switch; the manual reset effects that tried to do this were removed.
+3. **Cleanup, no behaviour change** (`runtime.rs`): dropped an unused captured value, an unused error parameter, an `unreachable!` arm, and a duplicated unauthorized message.
+4. **Commit messages reworded** with `git filter-branch --msg-filter` (no remote existed; backup branch `backup/pre-reword-plan2`): `feat(runtime): show gate results and problems` gained both co-author trailers it lacked, two subjects were shortened to at most 50 characters, and two bodies rewrapped at 72. Trees are byte-identical to the backup.
+
 ## Plan 2 / Task 9 — the walkthrough was driven by a temporary fixture, and Windows CI still could not run
 
 - **What changed:** the operator walkthrough was driven inside the real window by a temporary in-window fixture (`app/src/devdrive.ts`, imported from `main.tsx`), which typed and clicked the real screens: two desk runs in write mode and one passage each way through the gates. The fixture was deleted and `main.tsx` restored after the run; nothing of it is committed. Evidence is in `../docs/rfidex-evidence/plan2/native-run/`. The `windows-app` job result remains unverified.
@@ -19,7 +28,7 @@ One entry per deviation: task, what changed, why.
 
 ## Plan 2 / Task 4 — a heartbeat no longer discards a pending confirmation
 
-- **What changed:** `DeskSession` records the UID rule already applied to it, and `DeskSession::apply_settings` clears the pending confirmation only when the heartbeat's mode or UID rule actually differs. Before, every successful heartbeat cleared it. Committed on its own as `fix(runtime): keep desk confirmations across heartbeats`, after the Task 7 gate exposed it.
+- **What changed:** `DeskSession` records the UID rule already applied to it, and `DeskSession::apply_settings` clears the pending confirmation only when the heartbeat's mode or UID rule actually differs. Before, every successful heartbeat cleared it. Committed on its own as `fix(runtime): keep confirmations across heartbeats`, after the Task 7 gate exposed it.
 - **Why:** the plan says "Clear pending confirmation if heartbeat changes event mode or UID rule", but the first version cleared it unconditionally, so a heartbeat landing between the warning and the operator's answer threw the answer away. `confirm_is_required_and_binds_only_the_sticker_that_was_warned_about` failed about one run in three with `NeedsConfirm` where it expected `Linked`; with the fix it passed 10 consecutive runs of the whole test file. The test predates the fix, so it is the regression test.
 
 ## Plan 2 / Task 4 — the first sync pass waits for the heartbeat, not a poll interval

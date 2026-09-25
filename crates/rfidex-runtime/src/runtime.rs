@@ -241,7 +241,9 @@ impl StationRuntime {
         match self.client.heartbeat(&req).await {
             Ok(resp) => {
                 let skew = (resp.server_time - now).num_seconds();
-                let pending = self.pending_count().unwrap_or(0);
+                // Fail closed: if the queue cannot be counted, assume work is
+                // waiting so it can never be sent to a different event.
+                let pending = self.pending_count().unwrap_or(u64::MAX);
                 let adopt = {
                     let inner = self.lock();
                     match &inner.settings {
@@ -313,11 +315,10 @@ impl StationRuntime {
         }
         let mut gate = device.lock().await;
         match gate.tick(now) {
-            Ok(captured) => {
+            Ok(_) => {
                 let mut inner = self.lock();
                 inner.connected = true;
                 inner.device_error = None;
-                let _ = captured;
             }
             Err(GateError::Device(DeviceError::Disconnected)) => {
                 let mut inner = self.lock();
@@ -325,21 +326,17 @@ impl StationRuntime {
                 inner.device_error = None;
             }
             Err(GateError::Device(e)) => {
-                let mut inner = self.lock();
-                inner.device_error = Some(match e {
-                    DeviceError::Disconnected => unreachable!("handled above"),
-                    DeviceError::TagNotFound => {
-                        "The gate could not read a sticker. Try again.".to_string()
-                    }
+                let message = match e {
+                    DeviceError::TagNotFound => "The gate could not read a sticker. Try again.",
                     DeviceError::OutOfRange => {
-                        "The gate could not store what it read. Ask for help.".to_string()
+                        "The gate could not store what it read. Ask for help."
                     }
-                    DeviceError::WriteUnsupported => "This gate cannot do that.".to_string(),
-                    DeviceError::Other(_) => {
+                    DeviceError::WriteUnsupported => "This gate cannot do that.",
+                    DeviceError::Disconnected | DeviceError::Other(_) => {
                         "The gate could not finish the last action. Check it and try again."
-                            .to_string()
                     }
-                });
+                };
+                self.lock().device_error = Some(message.to_string());
             }
             Err(GateError::Store(_)) => {
                 let mut inner = self.lock();
@@ -348,8 +345,7 @@ impl StationRuntime {
         }
     }
 
-    fn note_store_error(&self, e: &rfidex_core::store::StoreError) {
-        let _ = e;
+    fn note_store_error(&self) {
         self.lock().store_error = Some(store_failure().message);
     }
 
@@ -384,13 +380,14 @@ impl StationRuntime {
 
     fn prune_sent(&self) {
         let cutoff = Utc::now() - chrono::Duration::days(SENT_RETENTION_DAYS);
-        if let Err(e) = self
+        if self
             .store
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .prune_sent(cutoff)
+            .is_err()
         {
-            self.note_store_error(&e);
+            self.note_store_error();
         }
     }
 
@@ -537,9 +534,7 @@ fn station_status(
 
 fn network_message(e: &ApiError) -> String {
     match e {
-        ApiError::Unauthorized => {
-            "The server did not accept the API key. Open Setup to check it.".to_string()
-        }
+        ApiError::Unauthorized => UNAUTHORIZED.to_string(),
         ApiError::Retryable(_) => {
             "Cannot reach the server. Try again when the connection returns.".to_string()
         }
@@ -683,8 +678,8 @@ impl Runtime {
                         ));
                     }
                 }
-                Err(e) => {
-                    station.note_store_error(&e);
+                Err(_) => {
+                    station.note_store_error();
                     failures.push(store_failure().message);
                 }
             }
@@ -1112,7 +1107,7 @@ async fn sync_loop(station: Arc<StationRuntime>) {
                         }
                         match station.worker.run_once(now).await {
                             Ok(report) => station.note_sync_report(&report, now),
-                            Err(e) => station.note_store_error(&e),
+                            Err(_) => station.note_store_error(),
                         }
                     } => {}
                     _ = stop.changed() => return,

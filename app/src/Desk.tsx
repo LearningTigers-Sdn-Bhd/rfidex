@@ -15,19 +15,11 @@ export function Desk({ station }: Props) {
   const [failure, setFailure] = useState<string | null>(null);
   const [reason, setReason] = useState("");
 
-  // Every scan, reset and station switch bumps this, so a timer that started
-  // under an older session can never replace the newer view.
+  // Every scan bumps this, so a timer that started under an older scan can
+  // never replace the newer view. A station switch remounts this component.
   const generation = useRef(0);
   const qrRef = useRef<HTMLInputElement>(null);
   const dialogRef = useRef<HTMLDialogElement>(null);
-
-  useEffect(() => {
-    generation.current += 1;
-    setView(null);
-    setCode("");
-    setReason("");
-    setFailure(null);
-  }, [station.id]);
 
   const run = useCallback(async (operation: () => Promise<DeskView>) => {
     setBusy(true);

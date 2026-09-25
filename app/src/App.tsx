@@ -196,7 +196,9 @@ export function App() {
             </nav>
 
             {station && (
-              <div className="station">
+              // Keyed: a station switch remounts its screens, so a request still
+              // in flight for the old station can never land on the new one.
+              <div className="station" key={station.id}>
                 <div className="station-body">
                   {station.kind === "desk" ? (
                     <Desk station={station} />

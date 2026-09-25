@@ -30,8 +30,6 @@ export function Gate({ station }: Props) {
       }
       if (live) timer = window.setTimeout(tick, POLL_MS);
     };
-    setRows([]);
-    setFailure(null);
     void tick();
     return () => {
       live = false;

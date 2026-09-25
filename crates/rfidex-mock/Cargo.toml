@@ -1,0 +1,22 @@
+[package]
+name = "rfidex-mock"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "rfidex-mock"
+path = "src/main.rs"
+
+[dependencies]
+rfidex-core = { path = "../rfidex-core" }
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+tokio = { workspace = true, features = ["full"] }
+axum.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+reqwest.workspace = true

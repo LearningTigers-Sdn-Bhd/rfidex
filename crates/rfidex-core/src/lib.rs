@@ -4,6 +4,7 @@ pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub mod codec;
 pub mod contract;
+pub mod device;
 pub mod store;
 pub mod tag;
 

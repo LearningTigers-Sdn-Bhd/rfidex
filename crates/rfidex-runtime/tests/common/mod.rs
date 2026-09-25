@@ -106,13 +106,34 @@ pub struct Harness {
 
 impl Harness {
     pub async fn start(mode: RfidMode) -> Harness {
-        Harness::start_with(mode, fast_options(), three_stations()).await
+        let harness = Harness::build(mode, fast_options(), three_stations(), false).await;
+        // A station is only operational once a heartbeat has landed, so tests
+        // must not race the first one.
+        harness.await_online().await;
+        harness
     }
 
     pub async fn start_with(
         mode: RfidMode,
         opts: RuntimeOptions,
         stations: Vec<StationConfig>,
+    ) -> Harness {
+        let harness = Harness::build(mode, opts, stations, false).await;
+        harness.await_online().await;
+        harness
+    }
+
+    /// First run with the server unreachable: the stations exist, but no
+    /// heartbeat has ever succeeded, so nothing is saved and nothing works yet.
+    pub async fn start_with_server_down(mode: RfidMode) -> Harness {
+        Harness::build(mode, fast_options(), three_stations(), true).await
+    }
+
+    async fn build(
+        mode: RfidMode,
+        opts: RuntimeOptions,
+        stations: Vec<StationConfig>,
+        down: bool,
     ) -> Harness {
         let event = EventSettings {
             event_id: 1,
@@ -121,6 +142,9 @@ impl Harness {
             require_check_in: false,
         };
         let state = Arc::new(AppState::new(MockState::new(KEY.into(), event, seeds())));
+        if down {
+            state.faults.lock().unwrap().down = true;
+        }
         let (addr, handle) = serve(state.clone(), "127.0.0.1:0".parse().unwrap())
             .await
             .unwrap();
@@ -136,7 +160,7 @@ impl Harness {
         let runtime = Runtime::start(paths.clone(), config, opts.clone())
             .await
             .unwrap();
-        let harness = Harness {
+        Harness {
             runtime,
             server: state,
             paths,
@@ -144,11 +168,7 @@ impl Harness {
             opts,
             temp,
             handle,
-        };
-        // A station is only operational once a heartbeat has landed, so tests
-        // must not race the first one.
-        harness.await_online().await;
-        harness
+        }
     }
 
     /// Stop the runtime and start a fresh one over the same data root and the
@@ -168,12 +188,22 @@ impl Harness {
             .unwrap();
     }
 
+    /// A station is operational when every station is online, and the desk has
+    /// the ticket cache a first scan needs.
     pub async fn await_online(&self) {
         eventually("every station to be online", || async {
             self.runtime
                 .stations()
                 .iter()
                 .all(|s| s.connected() && s.online())
+        })
+        .await;
+        self.await_cached(desk_station().id, ticket(1)).await;
+    }
+
+    pub async fn await_cached(&self, station: Uuid, id: Uuid) {
+        eventually("the ticket cache to be ready", || async {
+            self.store_of(station).ticket(id).ok().flatten().is_some()
         })
         .await;
     }

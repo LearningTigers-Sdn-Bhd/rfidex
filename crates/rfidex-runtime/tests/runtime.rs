@@ -5,9 +5,10 @@ mod common;
 
 use std::time::Duration;
 
-use common::{desk_id, entry_id, eventually, exit_id, Harness, TAG_A, TAG_B, TAG_C};
+use common::{desk_id, entry_id, eventually, exit_id, ticket, Harness, TAG_A, TAG_B, TAG_C};
 use rfidex_core::contract::{RfidMode, Role, StationKind};
 use rfidex_core::store::OutboxState;
+use rfidex_runtime::desk::DeskStep;
 use rfidex_runtime::RuntimeOptions;
 
 #[tokio::test]
@@ -256,5 +257,267 @@ async fn unknown_stickers_still_reach_the_server() {
         h.observations() == 1
     })
     .await;
+    h.stop().await;
+}
+
+#[tokio::test]
+async fn bind_flow_waits_for_scan_and_one_sticker() {
+    let mut h = Harness::start(RfidMode::Bind).await;
+    let desk = desk_id();
+
+    let before = h.runtime.desk_link(desk, None).await.unwrap();
+    assert_eq!(before.step, DeskStep::Error);
+    assert_eq!(before.code.as_deref(), Some("scan_first"));
+
+    let scanned = h
+        .runtime
+        .desk_scan(desk, &ticket(1).to_string())
+        .await
+        .unwrap();
+    assert_eq!(scanned.step, DeskStep::Scanned);
+    assert_eq!(scanned.ticket.as_ref().unwrap().name, "Aina");
+    assert_eq!(scanned.message, "Place one sticker on the reader.");
+
+    let waiting = h.runtime.desk_link(desk, None).await.unwrap();
+    assert_eq!(waiting.step, DeskStep::Error);
+    assert_eq!(waiting.code.as_deref(), Some("no_tag"));
+    assert_eq!(
+        waiting.ticket.as_ref().unwrap().name,
+        "Aina",
+        "a no-tag retry keeps the selected attendee"
+    );
+
+    h.runtime.sim_place(desk, TAG_A).await.unwrap();
+    let linked = h.runtime.desk_link(desk, None).await.unwrap();
+    assert_eq!(linked.step, DeskStep::Linked);
+    assert_eq!(linked.message, "Sticker linked.");
+    assert_eq!(linked.ticket.as_ref().unwrap().name, "Aina");
+    assert_eq!(
+        h.server.mock.lock().unwrap().active_bindings()[0].public_id,
+        ticket(1)
+    );
+
+    // Pressing Link again must not bind or write a second time.
+    let again = h.runtime.desk_link(desk, None).await.unwrap();
+    assert_eq!(again.step, DeskStep::Linked);
+    assert_eq!(h.server.mock.lock().unwrap().active_bindings().len(), 1);
+
+    let reset = h.runtime.desk_reset(desk).await.unwrap();
+    assert_eq!(reset.step, DeskStep::Ready);
+    assert_eq!(reset.message, "Scan a ticket to begin.");
+    assert!(reset.ticket.is_none());
+    h.stop().await;
+}
+
+#[tokio::test]
+async fn a_failed_scan_cannot_link_the_previous_attendee() {
+    let mut h = Harness::start(RfidMode::Bind).await;
+    let desk = desk_id();
+    h.runtime
+        .desk_scan(desk, &ticket(1).to_string())
+        .await
+        .unwrap();
+
+    for (code, expected) in [
+        (ticket(3).to_string(), "ticket_unpaid"),
+        (ticket(4).to_string(), "ticket_cancelled"),
+        (ticket(99).to_string(), "ticket_not_found"),
+        ("not-a-uuid".to_string(), "ticket_not_found"),
+    ] {
+        let view = h.runtime.desk_scan(desk, &code).await.unwrap();
+        assert_eq!(view.step, DeskStep::Error, "{code} should be rejected");
+        assert_eq!(view.code.as_deref(), Some(expected));
+
+        // Even with a sticker waiting, there is nobody to link.
+        h.runtime.sim_place(desk, TAG_A).await.unwrap();
+        let link = h.runtime.desk_link(desk, None).await.unwrap();
+        assert_eq!(link.code.as_deref(), Some("scan_first"));
+        h.runtime.sim_clear(desk).await.unwrap();
+    }
+    assert!(h.server.mock.lock().unwrap().active_bindings().is_empty());
+    h.stop().await;
+}
+
+#[tokio::test]
+async fn multiple_stickers_never_write() {
+    let mut h = Harness::start(RfidMode::Write).await;
+    let desk = desk_id();
+    eventually("the desk to switch to write mode", || async {
+        h.station(desk).mode() == Some(RfidMode::Write)
+    })
+    .await;
+    h.runtime
+        .desk_scan(desk, &ticket(1).to_string())
+        .await
+        .unwrap();
+
+    h.runtime.sim_place(desk, TAG_A).await.unwrap();
+    h.runtime.sim_place(desk, TAG_B).await.unwrap();
+    let view = h.runtime.desk_link(desk, None).await.unwrap();
+    assert_eq!(view.step, DeskStep::Error);
+    assert_eq!(view.code.as_deref(), Some("multiple_tags"));
+    assert!(view.ticket.is_some(), "the retry needs no new scan");
+    assert!(h.server.mock.lock().unwrap().active_bindings().is_empty());
+
+    h.runtime.sim_clear(desk).await.unwrap();
+    h.runtime.sim_place(desk, TAG_A).await.unwrap();
+    let linked = h.runtime.desk_link(desk, None).await.unwrap();
+    assert_eq!(linked.step, DeskStep::Linked);
+    h.stop().await;
+}
+
+#[tokio::test]
+async fn confirm_is_required_and_binds_only_the_sticker_that_was_warned_about() {
+    let mut h = Harness::start(RfidMode::Bind).await;
+    let desk = desk_id();
+
+    // Aina takes TAG_A.
+    h.runtime
+        .desk_scan(desk, &ticket(1).to_string())
+        .await
+        .unwrap();
+    h.runtime.sim_place(desk, TAG_A).await.unwrap();
+    h.runtime.desk_link(desk, None).await.unwrap();
+
+    // Ben scans, and the same sticker is offered.
+    h.runtime.desk_reset(desk).await.unwrap();
+    h.runtime
+        .desk_scan(desk, &ticket(2).to_string())
+        .await
+        .unwrap();
+    let warned = h.runtime.desk_link(desk, None).await.unwrap();
+    assert_eq!(warned.step, DeskStep::NeedsConfirm);
+    assert_eq!(warned.code.as_deref(), Some("sticker_in_use"));
+    assert!(warned.message.contains("Aina"));
+    assert_eq!(warned.ticket.as_ref().unwrap().name, "Ben");
+
+    // A blank reason changes nothing.
+    let blank = h
+        .runtime
+        .desk_link(desk, Some("   ".to_string()))
+        .await
+        .unwrap();
+    assert_eq!(blank.step, DeskStep::NeedsConfirm);
+    assert_eq!(
+        h.server.mock.lock().unwrap().active_bindings()[0].public_id,
+        ticket(1),
+        "nothing was rebound"
+    );
+
+    // Swap the sticker on the reader and confirm: the authorisation for TAG_A
+    // must not carry over, and TAG_B is unbound so it links cleanly.
+    h.runtime.sim_clear(desk).await.unwrap();
+    h.runtime.sim_place(desk, TAG_B).await.unwrap();
+    let swapped = h
+        .runtime
+        .desk_link(desk, Some("badge swapped".to_string()))
+        .await
+        .unwrap();
+    assert_eq!(swapped.step, DeskStep::Linked);
+    assert_eq!(swapped.message, "Sticker linked.");
+    let active = h.server.mock.lock().unwrap().active_bindings();
+    assert_eq!(active.len(), 2, "Aina keeps TAG_A, Ben takes TAG_B");
+    assert!(active
+        .iter()
+        .any(|b| b.tag_key == TAG_B && b.public_id == ticket(2)));
+
+    // And now a real confirmation: Aina offers the sticker Ben is holding.
+    h.runtime.desk_reset(desk).await.unwrap();
+    h.runtime
+        .desk_scan(desk, &ticket(1).to_string())
+        .await
+        .unwrap();
+    h.runtime.sim_clear(desk).await.unwrap();
+    h.runtime.sim_place(desk, TAG_B).await.unwrap();
+    let warned_again = h.runtime.desk_link(desk, None).await.unwrap();
+    assert_eq!(warned_again.step, DeskStep::NeedsConfirm);
+    assert_eq!(warned_again.code.as_deref(), Some("sticker_in_use"));
+    assert!(warned_again.message.contains("Ben"));
+    let confirmed = h
+        .runtime
+        .desk_link(desk, Some("badge replaced".to_string()))
+        .await
+        .unwrap();
+    assert_eq!(confirmed.step, DeskStep::Linked);
+    let active = h.server.mock.lock().unwrap().active_bindings();
+    assert_eq!(active.len(), 1, "the replace revoked Ben's link");
+    assert_eq!(active[0].tag_key, TAG_B);
+    assert_eq!(active[0].public_id, ticket(1));
+    h.stop().await;
+}
+
+#[tokio::test]
+async fn a_reason_without_a_warning_links_but_never_replaces() {
+    let mut h = Harness::start(RfidMode::Bind).await;
+    let desk = desk_id();
+    h.runtime
+        .desk_scan(desk, &ticket(1).to_string())
+        .await
+        .unwrap();
+    h.runtime.sim_place(desk, TAG_A).await.unwrap();
+
+    let view = h
+        .runtime
+        .desk_link(desk, Some("just because".to_string()))
+        .await
+        .unwrap();
+    assert_eq!(view.step, DeskStep::Linked);
+    assert_eq!(h.server.mock.lock().unwrap().active_bindings().len(), 1);
+    h.stop().await;
+}
+
+#[tokio::test]
+async fn an_offline_desk_says_the_badge_prints_later() {
+    let mut h = Harness::start(RfidMode::Bind).await;
+    let desk = desk_id();
+    h.set_down(true);
+    let scanned = h
+        .runtime
+        .desk_scan(desk, &ticket(1).to_string())
+        .await
+        .unwrap();
+    assert_eq!(scanned.step, DeskStep::Scanned);
+    assert!(scanned.offline);
+    assert!(scanned
+        .message
+        .contains("Offline — badge will print when connection returns."));
+
+    h.runtime.sim_place(desk, TAG_A).await.unwrap();
+    let linked = h.runtime.desk_link(desk, None).await.unwrap();
+    assert_eq!(linked.step, DeskStep::Linked);
+    assert!(linked.offline);
+    assert!(linked
+        .message
+        .contains("Offline — badge will print when connection returns."));
+
+    h.set_down(false);
+    eventually("the queued desk work to drain", || async {
+        let mock = h.server.mock.lock().unwrap();
+        mock.scan_log_count == 1 && mock.active_bindings().len() == 1
+    })
+    .await;
+    h.stop().await;
+}
+
+#[tokio::test]
+async fn the_desk_refuses_to_work_before_the_first_heartbeat() {
+    let mut h = Harness::start_with_server_down(RfidMode::Bind).await;
+    let desk = desk_id();
+    let view = h
+        .runtime
+        .desk_scan(desk, &ticket(1).to_string())
+        .await
+        .unwrap();
+    assert_eq!(view.step, DeskStep::Error);
+    assert_eq!(view.code.as_deref(), Some("connect_first"));
+    assert!(view.message.contains("Connect to the server once"));
+
+    // A different station kind is an IPC-level failure, not a desk message.
+    let err = h
+        .runtime
+        .desk_scan(entry_id(), &ticket(1).to_string())
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, "wrong_station");
     h.stop().await;
 }

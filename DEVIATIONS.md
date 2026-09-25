@@ -2,6 +2,11 @@
 
 One entry per deviation: task, what changed, why.
 
+## Plan 2 / Task 4 — the first sync pass waits for the heartbeat, not a poll interval
+
+- **What changed:** `StationRuntime` gained a `tokio::sync::Notify`. The heartbeat calls `notify_one()` when it records that syncing is allowed, and the sync loop waits on `sleep(1s)`, that notification, and the stop signal.
+- **Why:** Task 3's event guard parks the sync loop until the first successful heartbeat, and the loop's 1-second wait runs before that. So the first cache refresh happened up to a second after the station was already online — long enough that `an_offline_desk_says_the_badge_prints_later` saw an empty cache and a server-down scan reported `ticket_not_found` instead of showing the cached ticket. Waking on the heartbeat makes "immediate pass" true the moment the guard lifts, instead of a poll interval later. No interval, backoff or retention value changed.
+
 ## Plan 2 / Task 3 — `desk.rs` created one task early
 
 - **What changed:** `crates/rfidex-runtime/src/desk.rs` exists after Task 3 instead of first appearing in Task 4. It holds only `DeskView`, `DeskStep`, `PendingConfirm` and the `DeskSession` constructor; Task 4 adds the transitions.

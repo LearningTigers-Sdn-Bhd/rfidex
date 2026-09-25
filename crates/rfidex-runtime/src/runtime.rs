@@ -23,7 +23,7 @@ use tokio::task::JoinHandle;
 use uuid::Uuid;
 
 use crate::config::{AppConfig, AppPaths, DeviceChoice, StationConfig};
-use crate::desk::DeskSession;
+use crate::desk::{DeskSession, DeskView};
 use crate::devices::{DeskDevice, GateDevice, SimLibrary};
 use crate::RuntimeError;
 
@@ -85,6 +85,9 @@ pub struct StationRuntime {
     worker: SyncWorker,
     /// Serialises every sync pass for this station, manual or scheduled.
     sync_lock: tokio::sync::Mutex<()>,
+    /// Woken when the heartbeat confirms the event, so the first cache refresh
+    /// and queue drain happen at once instead of after a poll interval.
+    notify: tokio::sync::Notify,
     device: StationDevice,
     inner: Mutex<StationInner>,
     next_sequence: AtomicU64,
@@ -186,6 +189,9 @@ impl StationRuntime {
                     .station
                     .configure(resp.event.rfid_mode, resp.uid_rule);
                 session.view.mode = resp.event.rfid_mode;
+                // A confirmation checked against the old mode or UID rule must
+                // not carry over to the new one.
+                session.pending = None;
             }
             StationDevice::Gate(g) => {
                 let mut gate = g.lock().await;
@@ -237,6 +243,11 @@ impl StationRuntime {
                 inner.unauthorized = false;
                 inner.network_error = None;
                 inner.skew_secs = Some(skew);
+                let ready = inner.event_ok;
+                drop(inner);
+                if ready {
+                    self.notify.notify_one();
+                }
             }
             Err(ApiError::Unauthorized) => {
                 let mut inner = self.lock();
@@ -548,6 +559,50 @@ impl Runtime {
         }
     }
 
+    /// Read a scanned ticket code at a desk. Business failures come back as an
+    /// error step the desk screen can show; only a wrong station is rejected.
+    pub async fn desk_scan(&self, station: Uuid, code: &str) -> Result<DeskView, RuntimeError> {
+        let (runtime, mut session) = self.desk_session(station).await?;
+        if runtime.settings().is_none() {
+            return Ok(session.connect_first());
+        }
+        Ok(crate::desk::scan(&mut session, &runtime.store, code).await)
+    }
+
+    pub async fn desk_link(
+        &self,
+        station: Uuid,
+        reason: Option<String>,
+    ) -> Result<DeskView, RuntimeError> {
+        let (runtime, mut session) = self.desk_session(station).await?;
+        if runtime.settings().is_none() {
+            return Ok(session.connect_first());
+        }
+        Ok(crate::desk::link(&mut session, &runtime.store, reason).await)
+    }
+
+    pub async fn desk_reset(&self, station: Uuid) -> Result<DeskView, RuntimeError> {
+        let (_, mut session) = self.desk_session(station).await?;
+        Ok(crate::desk::reset(&mut session))
+    }
+
+    async fn desk_session(
+        &self,
+        id: Uuid,
+    ) -> Result<
+        (
+            &Arc<StationRuntime>,
+            tokio::sync::MutexGuard<'_, DeskSession>,
+        ),
+        RuntimeError,
+    > {
+        let runtime = self.station(id)?;
+        let StationDevice::Desk(device) = &runtime.device else {
+            return Err(wrong_station("use this at a desk"));
+        };
+        Ok((runtime, device.lock().await))
+    }
+
     pub async fn sim_place(&self, station: Uuid, uid_hex: &str) -> Result<(), RuntimeError> {
         let runtime = self.station(station)?;
         let StationDevice::Desk(device) = &runtime.device else {
@@ -751,6 +806,7 @@ impl StationRuntime {
             client,
             worker,
             sync_lock: tokio::sync::Mutex::new(()),
+            notify: tokio::sync::Notify::new(),
             device,
             inner: Mutex::new(StationInner {
                 event_name: settings.as_ref().map(|s| s.event.name.clone()),
@@ -832,6 +888,8 @@ async fn sync_loop(station: Arc<StationRuntime>) {
         }
         tokio::select! {
             _ = tokio::time::sleep(Duration::from_secs(1)) => {}
+            // The heartbeat tells us the moment syncing is allowed to start.
+            _ = station.notify.notified() => {}
             _ = stop.changed() => return,
         }
     }

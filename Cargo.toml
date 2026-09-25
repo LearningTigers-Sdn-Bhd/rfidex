@@ -1,6 +1,11 @@
 [workspace]
 resolver = "2"
-members = ["crates/rfidex-core", "crates/rfidex-mock", "crates/rfidex-runtime"]
+members = [
+    "crates/rfidex-core",
+    "crates/rfidex-mock",
+    "crates/rfidex-runtime",
+    "app/src-tauri",
+]
 
 [workspace.package]
 version = "0.1.0"

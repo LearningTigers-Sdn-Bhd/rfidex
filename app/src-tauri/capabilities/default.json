@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "RfiDex main window core permissions",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

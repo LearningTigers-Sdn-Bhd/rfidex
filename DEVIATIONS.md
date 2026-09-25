@@ -2,6 +2,11 @@
 
 One entry per deviation: task, what changed, why.
 
+## Plan 2 / Task 4 — a heartbeat no longer discards a pending confirmation
+
+- **What changed:** `DeskSession` records the UID rule already applied to it, and `DeskSession::apply_settings` clears the pending confirmation only when the heartbeat's mode or UID rule actually differs. Before, every successful heartbeat cleared it. Committed on its own as `fix(runtime): keep desk confirmations across heartbeats`, after the Task 7 gate exposed it.
+- **Why:** the plan says "Clear pending confirmation if heartbeat changes event mode or UID rule", but the first version cleared it unconditionally, so a heartbeat landing between the warning and the operator's answer threw the answer away. `confirm_is_required_and_binds_only_the_sticker_that_was_warned_about` failed about one run in three with `NeedsConfirm` where it expected `Linked`; with the fix it passed 10 consecutive runs of the whole test file. The test predates the fix, so it is the regression test.
+
 ## Plan 2 / Task 4 — the first sync pass waits for the heartbeat, not a poll interval
 
 - **What changed:** `StationRuntime` gained a `tokio::sync::Notify`. The heartbeat calls `notify_one()` when it records that syncing is allowed, and the sync loop waits on `sleep(1s)`, that notification, and the stop signal.

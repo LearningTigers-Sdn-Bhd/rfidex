@@ -219,13 +219,7 @@ impl StationRuntime {
         match &self.device {
             StationDevice::Desk(d) => {
                 let mut session = d.lock().await;
-                session
-                    .station
-                    .configure(resp.event.rfid_mode, resp.uid_rule);
-                session.view.mode = resp.event.rfid_mode;
-                // A confirmation checked against the old mode or UID rule must
-                // not carry over to the new one.
-                session.pending = None;
+                session.apply_settings(resp.event.rfid_mode, resp.uid_rule);
             }
             StationDevice::Gate(g) => {
                 let mut gate = g.lock().await;
@@ -1003,7 +997,7 @@ impl StationRuntime {
                     station.write_start_block,
                 );
                 StationDevice::Desk(Box::new(tokio::sync::Mutex::new(DeskSession::new(
-                    desk, mode,
+                    desk, mode, uid_rule,
                 ))))
             }
             (

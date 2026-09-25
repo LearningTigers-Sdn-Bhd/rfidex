@@ -553,10 +553,28 @@ async fn written_sticker_yields_welcome_and_goodbye() {
 
     h.runtime.sim_pass(entry_id(), TAG_A).await.unwrap();
     h.runtime.sim_pass(exit_id(), TAG_A).await.unwrap();
+    // The server answering is not the same moment as the row being marked sent,
+    // so wait for the screen rather than the mock's counter.
     eventually("both passages to be accepted", || async {
-        h.observations() == 2
+        let entry = h
+            .runtime
+            .gate_recent(entry_id(), 30)
+            .await
+            .unwrap_or_default();
+        let exit = h
+            .runtime
+            .gate_recent(exit_id(), 30)
+            .await
+            .unwrap_or_default();
+        entry
+            .first()
+            .is_some_and(|r| r.status == GateStatus::Accepted)
+            && exit
+                .first()
+                .is_some_and(|r| r.status == GateStatus::Accepted)
     })
     .await;
+    assert_eq!(h.observations(), 2);
 
     let entry = h.runtime.gate_recent(entry_id(), 30).await.unwrap();
     assert_eq!(entry.len(), 1);
@@ -862,8 +880,8 @@ async fn diagnostics_export_keeps_people_and_raw_uid_out() {
     h.runtime.desk_link(desk, None).await.unwrap();
     h.runtime.sim_clear(desk).await.unwrap();
     h.runtime.sim_pass(exit_id(), TAG_A).await.unwrap();
-    eventually("the passage to be accepted", || async {
-        h.observations() == 1
+    eventually("the passage to be stored as sent", || async {
+        h.store_of(exit_id()).count(OutboxState::Sent).unwrap() == 1
     })
     .await;
 

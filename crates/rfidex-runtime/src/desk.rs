@@ -90,15 +90,36 @@ pub struct DeskSession {
     /// The attendee this session is working on, kept until reset.
     pub ticket: Option<TicketSummary>,
     pub pending: Option<PendingConfirm>,
+    /// The UID rule already applied to this station, so a heartbeat that
+    /// changes nothing does not throw away a half-answered warning.
+    pub uid_rule: rfidex_core::tag::UidRule,
 }
 
 impl DeskSession {
-    pub fn new(station: DeskStation<DeskDevice>, mode: RfidMode) -> DeskSession {
+    pub fn new(
+        station: DeskStation<DeskDevice>,
+        mode: RfidMode,
+        uid_rule: rfidex_core::tag::UidRule,
+    ) -> DeskSession {
         DeskSession {
             station,
             view: DeskView::ready(mode),
             ticket: None,
             pending: None,
+            uid_rule,
+        }
+    }
+
+    /// Apply settings from a heartbeat. A confirmation checked against the old
+    /// mode or UID rule must not carry over to a new one, but an unchanged
+    /// heartbeat leaves the session exactly as it was.
+    pub fn apply_settings(&mut self, mode: RfidMode, uid_rule: rfidex_core::tag::UidRule) {
+        let changed = self.station.mode() != mode || self.uid_rule != uid_rule;
+        self.station.configure(mode, uid_rule);
+        self.view.mode = mode;
+        self.uid_rule = uid_rule;
+        if changed {
+            self.pending = None;
         }
     }
 

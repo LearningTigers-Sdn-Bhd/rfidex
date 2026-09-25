@@ -6,7 +6,9 @@ pub mod client;
 pub mod codec;
 pub mod contract;
 pub mod device;
+pub mod health;
 pub mod store;
+pub mod sync;
 pub mod tag;
 
 #[cfg(test)]

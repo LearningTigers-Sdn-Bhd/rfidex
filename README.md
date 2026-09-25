@@ -187,13 +187,23 @@ The runtime acceptance set runs the real `rfidex-runtime` against the real
 
 ## Verification evidence
 
-Screenshots and command transcripts for the Plan 2 verification live outside this
-repository in `../docs/rfidex-evidence/plan2/`. Native screenshots could not be taken on
-the verification machine (no Screen Recording permission), so the operator screens there
-are browser renders of the real React app against a stubbed Tauri IPC transport, clearly
-labelled as supplementary. Everything the Rust side does was verified headlessly against
-the real mock, and the live window was verified to start its stations and follow the
-event mode.
+Screenshots and transcripts for the Plan 2 verification live outside this repository
+in `../docs/rfidex-evidence/plan2/`.
+
+- `native-run/` — the real Tauri window, in write mode, driven through the real screens
+  by a temporary in-window fixture (deleted afterwards). The desk checked in two
+  attendees, wrote and bound two stickers, and one sticker then passed both gates; the
+  mock shows both bindings with `mode: "written"`, the gate databases show both
+  passages accepted with no anomalies, and the block data each gate read decodes to the
+  ticket that was written. A failure would have left an unknown sticker's denial in the
+  entry database.
+- `browser-*.png` — the operator screens rendered at 1366×768 with the Tauri IPC
+  transport stubbed. **Supplementary only:** they show the layout, and the Rust side is
+  never stubbed anywhere. Native screenshots could not be taken on the verification
+  machine, which grants no Screen Recording permission.
+
+Not verified on that machine: the Windows CI job (no remote may be pushed, and no
+Windows SDK is available locally) and anything requiring a Windows build.
 
 ## Not in this plan
 

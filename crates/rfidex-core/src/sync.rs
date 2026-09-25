@@ -13,6 +13,12 @@ use crate::client::{ApiClient, ApiError};
 use crate::contract::*;
 use crate::store::{OutboxItem, OutboxKind, Store, StoreError};
 
+/// A 2xx reply the app cannot read is retried this many times, then parked,
+/// so version drift cannot block the queue forever. Network errors retry forever.
+pub const MAX_BAD_RESPONSE_ATTEMPTS: u32 = 5;
+/// Sent rows are kept this long for support, then pruned.
+pub const SENT_RETENTION_DAYS: i64 = 7;
+
 pub fn backoff(attempts: u32, max: Duration, id: i64) -> Duration {
     let secs = (1u64 << attempts.min(6)).min(max.as_secs());
     Duration::from_secs(secs) + Duration::from_millis(id.unsigned_abs() % 250)
@@ -66,7 +72,12 @@ impl SyncWorker {
         Ok(r)
     }
 
-    async fn send_single(&self, item: &OutboxItem) -> Result<Result<Value, ApiError>, StoreError> {
+    /// Outer `Err` = the stored payload cannot be decoded (e.g. written by an
+    /// older app version); the caller parks that row instead of aborting.
+    async fn send_single(
+        &self,
+        item: &OutboxItem,
+    ) -> Result<Result<Value, ApiError>, serde_json::Error> {
         Ok(match item.kind {
             OutboxKind::DeskScan => {
                 let req: DeskScanReq = serde_json::from_value(item.payload.clone())?;
@@ -118,7 +129,15 @@ impl SyncWorker {
                 .into_iter()
                 .next();
             let Some(item) = next else { return Ok(()) };
-            let result = self.send_single(&item).await?;
+            let result = match self.send_single(&item).await {
+                Ok(result) => result,
+                Err(e) => {
+                    let msg = format!("undecodable payload: {e}");
+                    self.store.lock().unwrap().mark_parked(item.id, &msg)?;
+                    r.parked += 1;
+                    continue;
+                }
+            };
             let s = self.store.lock().unwrap();
             match result {
                 Ok(v) => {
@@ -139,6 +158,11 @@ impl SyncWorker {
                     r.unauthorized = true;
                     return Ok(());
                 }
+                Err(ApiError::BadResponse(e)) => {
+                    if !self.retry_or_park(&s, &item, &e, now, r)? {
+                        return Ok(());
+                    }
+                }
                 Err(ApiError::Retryable(e)) => {
                     s.mark_retry(
                         item.id,
@@ -149,6 +173,28 @@ impl SyncWorker {
                     return Ok(());
                 }
             }
+        }
+    }
+
+    /// Unreadable reply: retry with backoff until the attempt limit, then park.
+    /// Returns true when the row was parked (the queue may move on).
+    fn retry_or_park(
+        &self,
+        s: &Store,
+        item: &OutboxItem,
+        error: &str,
+        now: DateTime<Utc>,
+        r: &mut SyncReport,
+    ) -> Result<bool, StoreError> {
+        if item.attempts + 1 >= MAX_BAD_RESPONSE_ATTEMPTS {
+            s.mark_parked(item.id, &format!("unreadable server reply: {error}"))?;
+            r.parked += 1;
+            Ok(true)
+        } else {
+            let next = after(now, backoff(item.attempts, self.max_backoff, item.id));
+            s.mark_retry(item.id, error, next)?;
+            r.retried += 1;
+            Ok(false)
         }
     }
 
@@ -166,17 +212,30 @@ impl SyncWorker {
             if items.is_empty() {
                 return Ok(());
             }
-            let reqs: Vec<ObservationItem> = items
-                .iter()
-                .map(|i| serde_json::from_value(i.payload.clone()))
-                .collect::<Result<_, _>>()?;
+            let mut batch = Vec::with_capacity(items.len());
+            {
+                let s = self.store.lock().unwrap();
+                for item in items {
+                    match serde_json::from_value::<ObservationItem>(item.payload.clone()) {
+                        Ok(req) => batch.push((item, req)),
+                        Err(e) => {
+                            s.mark_parked(item.id, &format!("undecodable payload: {e}"))?;
+                            r.parked += 1;
+                        }
+                    }
+                }
+            }
+            if batch.is_empty() {
+                continue;
+            }
+            let reqs: Vec<ObservationItem> = batch.iter().map(|(_, req)| req.clone()).collect();
             let result = self.client.observations(&reqs).await;
             let s = self.store.lock().unwrap();
             match result {
                 Ok(resp) => {
                     let by_id: HashMap<Uuid, &ObservationResult> =
                         resp.results.iter().map(|x| (x.delivery_id, x)).collect();
-                    for (item, req) in items.iter().zip(&reqs) {
+                    for (item, req) in &batch {
                         match by_id.get(&req.delivery_id) {
                             Some(res) => {
                                 s.mark_sent(item.id, &serde_json::to_value(res)?)?;
@@ -194,27 +253,36 @@ impl SyncWorker {
                     }
                 }
                 Err(ApiError::Rejected { body, .. }) => {
-                    for item in &items {
+                    for (item, _) in &batch {
                         s.mark_parked(item.id, &body.message)?;
                     }
-                    r.parked += items.len();
+                    r.parked += batch.len();
+                }
+                Err(ApiError::BadResponse(e)) => {
+                    let mut any_retried = false;
+                    for (item, _) in &batch {
+                        any_retried |= !self.retry_or_park(&s, item, &e, now, r)?;
+                    }
+                    if any_retried {
+                        return Ok(());
+                    }
                 }
                 Err(ApiError::Unauthorized) => {
-                    for item in &items {
+                    for (item, _) in &batch {
                         s.mark_retry(item.id, "api key rejected", after(now, self.max_backoff))?;
                     }
                     r.unauthorized = true;
                     return Ok(());
                 }
                 Err(ApiError::Retryable(e)) => {
-                    for item in &items {
+                    for (item, _) in &batch {
                         s.mark_retry(
                             item.id,
                             &e,
                             after(now, backoff(item.attempts, self.max_backoff, item.id)),
                         )?;
                     }
-                    r.retried += items.len();
+                    r.retried += batch.len();
                     return Ok(());
                 }
             }
@@ -229,6 +297,7 @@ impl SyncWorker {
 
     pub async fn run_forever(&self, mut stop: tokio::sync::watch::Receiver<bool>) {
         let mut last_cache: Option<Instant> = None;
+        let mut last_prune: Option<Instant> = None;
         loop {
             if *stop.borrow() {
                 return;
@@ -240,6 +309,13 @@ impl SyncWorker {
                 && self.refresh_cache().await.is_ok()
             {
                 last_cache = Some(Instant::now());
+            }
+            if last_prune.is_none_or(|t| t.elapsed() >= Duration::from_secs(3600)) {
+                let cutoff = Utc::now() - chrono::Duration::days(SENT_RETENTION_DAYS);
+                if let Err(e) = self.store.lock().unwrap().prune_sent(cutoff) {
+                    eprintln!("rfidex sync: prune failed: {e}");
+                }
+                last_prune = Some(Instant::now());
             }
             tokio::select! {
                 _ = tokio::time::sleep(Duration::from_secs(1)) => {}

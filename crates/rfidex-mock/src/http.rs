@@ -19,6 +19,8 @@ pub struct Faults {
     pub delay_ms: u64,
     pub fail_5xx: u32,
     pub hang_after_commit: u32,
+    /// The next N requests get HTTP 200 with a body that does not match the contract.
+    pub bad_body: u32,
 }
 
 pub struct AppState {
@@ -68,6 +70,10 @@ async fn pre(s: &AppState, headers: &HeaderMap) -> Result<String, Response> {
         if f.fail_5xx > 0 {
             f.fail_5xx -= 1;
             return Err(error(500, ErrorCode::Malformed, "injected server error"));
+        }
+        if f.bad_body > 0 {
+            f.bad_body -= 1;
+            return Err(Json(serde_json::json!({ "unexpected": true })).into_response());
         }
     }
     let key = headers

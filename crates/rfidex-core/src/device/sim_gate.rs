@@ -13,6 +13,8 @@ pub struct SimGate {
     pub connected: bool,
     pub redeliver_unreleased: bool,
     pub released: Vec<ReleaseHandle>,
+    /// The next N releases fail (device error during acknowledge/delete).
+    pub fail_next_releases: u32,
     pub on_release: Option<Box<dyn FnMut(ReleaseHandle) + Send>>,
 }
 
@@ -28,6 +30,7 @@ impl SimGate {
             connected: true,
             redeliver_unreleased: false,
             released: Vec::new(),
+            fail_next_releases: 0,
             on_release: None,
         }
     }
@@ -63,6 +66,10 @@ impl GateSource for SimGate {
     fn release(&mut self, handle: ReleaseHandle) -> DeviceResult<()> {
         if !self.caps.release_verified {
             return Err(DeviceError::Other("release not verified".into()));
+        }
+        if self.fail_next_releases > 0 {
+            self.fail_next_releases -= 1;
+            return Err(DeviceError::Other("release failed".into()));
         }
         if let Some(hook) = self.on_release.as_mut() {
             hook(handle);

@@ -181,3 +181,62 @@ async fn refresh_cache_and_health_alarms() {
     assert!(h.alarms.contains(&Alarm::LowDisk(100 * 1024 * 1024)));
     assert!(health(&s, None, 10).unwrap().alarms.is_empty());
 }
+
+#[tokio::test]
+async fn undecodable_rows_are_parked_not_blocking() {
+    let (base, state) = common::spawn(RfidMode::Bind).await;
+    let store = common::store();
+    {
+        let s = store.lock().unwrap();
+        let junk = serde_json::json!({ "garbage": 1 });
+        s.enqueue(OutboxKind::Binding, "bad-bind", &junk, Utc::now())
+            .unwrap();
+        let ok = bind_req(1, TAG_A, 1);
+        s.enqueue(
+            OutboxKind::Binding,
+            &ok.operation_id.to_string(),
+            &to_value(&ok).unwrap(),
+            ok.captured_at,
+        )
+        .unwrap();
+        s.enqueue(OutboxKind::Observation, "bad-obs", &junk, Utc::now())
+            .unwrap();
+        enqueue_obs(&s, &obs(1, TAG_A));
+    }
+    let r = SyncWorker::new(store.clone(), common::client(&base, "desk-1"))
+        .run_once(Utc::now())
+        .await
+        .unwrap();
+    assert_eq!((r.parked, r.sent), (2, 2));
+    let m = state.mock.lock().unwrap();
+    assert_eq!(m.active_bindings().len(), 1);
+    assert_eq!(m.observation_count(), 1);
+}
+
+#[tokio::test]
+async fn unreadable_server_reply_is_parked_after_retries() {
+    let (base, state) = common::spawn(RfidMode::Bind).await;
+    let store = common::store();
+    let ok = bind_req(1, TAG_A, 1);
+    store
+        .lock()
+        .unwrap()
+        .enqueue(
+            OutboxKind::Binding,
+            &ok.operation_id.to_string(),
+            &to_value(&ok).unwrap(),
+            ok.captured_at,
+        )
+        .unwrap();
+    enqueue_obs(&store.lock().unwrap(), &obs(1, TAG_A));
+    state.faults.lock().unwrap().bad_body = 100;
+    let worker = SyncWorker::new(store.clone(), common::client(&base, "desk-1"));
+    let mut now = Utc::now();
+    for _ in 0..rfidex_core::sync::MAX_BAD_RESPONSE_ATTEMPTS {
+        worker.run_once(now).await.unwrap();
+        now += ChronoDuration::seconds(120);
+    }
+    let s = store.lock().unwrap();
+    assert_eq!(s.count(OutboxState::Parked).unwrap(), 2);
+    assert_eq!(s.count(OutboxState::Pending).unwrap(), 0);
+}

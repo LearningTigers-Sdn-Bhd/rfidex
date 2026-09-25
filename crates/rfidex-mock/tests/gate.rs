@@ -141,3 +141,25 @@ fn local_guess_from_cache() {
     );
     assert_eq!(got[1].local, LocalGuess::Unknown);
 }
+
+#[test]
+fn release_failure_does_not_lose_later_reads() {
+    let store = common::store();
+    let mut gate = SimGate::new(GateKind::Records, true);
+    gate.fail_next_releases = 1;
+    for seq in 1..=3 {
+        gate.push(read(Some(seq)));
+    }
+    let mut g = station(gate, store.clone());
+    assert!(g.tick(Utc::now()).is_err(), "release failure is reported");
+    assert_eq!(
+        store.lock().unwrap().count(OutboxState::Pending).unwrap(),
+        3,
+        "every read is saved even though one release failed"
+    );
+    assert_eq!(
+        g.gate.released.len(),
+        2,
+        "the other reads are still released"
+    );
+}

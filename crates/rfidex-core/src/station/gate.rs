@@ -63,9 +63,15 @@ impl<G: GateSource> GateStation<G> {
         }
     }
 
+    /// Two phases so one failed release can never lose a read:
+    /// 1. save every polled read to the outbox (committed per row);
+    /// 2. only then release them, trying all and reporting the first failure.
+    ///
+    /// On `Err` the reads are still saved; the UI shows them from the store.
     pub fn tick(&mut self, now: DateTime<Utc>) -> Result<Vec<Captured>, GateError> {
         let caps = self.gate.capabilities();
         let mut out = Vec::new();
+        let mut saved = Vec::new();
         for (read, handle) in self.gate.poll()? {
             let key = tag_key(&read.tag.uid_raw, self.uid_rule);
             if caps.kind == GateKind::LiveInventory {
@@ -109,14 +115,23 @@ impl<G: GateSource> GateStation<G> {
                 };
                 (enqueued, local)
             };
-            // Committed above; only now may the device forget the record.
-            if caps.release_verified {
-                self.gate.release(handle)?;
-            }
+            saved.push(handle);
             if let Enqueued::New(_) = enqueued {
                 out.push(Captured { delivery_id, local });
             }
         }
-        Ok(out)
+        // Every read above is committed; only now may the device forget them.
+        let mut first_err = None;
+        if caps.release_verified {
+            for handle in saved {
+                if let Err(e) = self.gate.release(handle) {
+                    first_err.get_or_insert(e);
+                }
+            }
+        }
+        match first_err {
+            Some(e) => Err(e.into()),
+            None => Ok(out),
+        }
     }
 }

@@ -210,3 +210,36 @@ async fn offline_desk_uses_cache_and_queues() {
     );
     assert_eq!(s.binding_holder(TAG_A).unwrap(), Some(id(1)));
 }
+
+#[tokio::test]
+async fn write_mode_checks_existing_sticker_before_writing() {
+    let (mut d, state) = desk(RfidMode::Write).await;
+    state
+        .mock
+        .lock()
+        .unwrap()
+        .bind(BindingReq {
+            public_id: id(1),
+            protocol: rfidex_core::tag::Protocol::Iso15693,
+            uid_raw_hex: TAG_A.into(),
+            mode: BindMode::Written,
+            payload_version: Some(1),
+            operation_id: id(9001),
+            captured_at: chrono::Utc::now(),
+            replace: false,
+            reason: None,
+        })
+        .unwrap();
+    let aina = d.scan_ticket(&id(1).to_string()).await.unwrap().ticket;
+    d.reader.place(tag(TAG_B, 4, 28));
+    let t = d.detect_tag().unwrap();
+    assert!(matches!(
+        d.link(&aina, &t, None).await,
+        Err(DeskError::NeedsConfirm(Warning::TicketHasSticker))
+    ));
+    assert_eq!(
+        d.reader.tag(&t.uid_raw).unwrap().memory,
+        vec![0; 112],
+        "nothing written before staff confirm"
+    );
+}

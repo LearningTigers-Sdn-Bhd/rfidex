@@ -14,6 +14,9 @@ pub enum ApiError {
     Retryable(String),
     #[error("api key rejected")]
     Unauthorized,
+    /// HTTP 2xx whose body does not match the contract (server/app version drift).
+    #[error("unreadable server reply: {0}")]
+    BadResponse(String),
     #[error("rejected with {status}: {}", body.message)]
     Rejected { status: u16, body: ErrorBody },
 }
@@ -95,7 +98,7 @@ impl ApiClient {
             return resp
                 .json::<T>()
                 .await
-                .map_err(|e| ApiError::Retryable(format!("bad response body: {e}")));
+                .map_err(|e| ApiError::BadResponse(e.to_string()));
         }
         if status == StatusCode::UNAUTHORIZED {
             return Err(ApiError::Unauthorized);

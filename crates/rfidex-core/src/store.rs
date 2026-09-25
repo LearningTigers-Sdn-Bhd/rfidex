@@ -236,6 +236,15 @@ impl Store {
         Ok(())
     }
 
+    /// Deletes sent rows captured before `older_than`. Pending, conflict and
+    /// parked rows are never pruned: they still need action.
+    pub fn prune_sent(&self, older_than: DateTime<Utc>) -> StoreResult<usize> {
+        Ok(self.conn.execute(
+            "DELETE FROM outbox WHERE state = 'sent' AND captured_at < ?1",
+            [ts(older_than)],
+        )?)
+    }
+
     pub fn count(&self, state: OutboxState) -> StoreResult<u64> {
         let n: i64 = self.conn.query_row(
             "SELECT COUNT(*) FROM outbox WHERE state = ?1",
@@ -490,6 +499,34 @@ mod tests {
             std::mem::forget(s); // simulate a crash: no Drop, no close
         }
         let s = Store::open(&path).unwrap();
+        assert_eq!(s.count(OutboxState::Pending).unwrap(), 1);
+    }
+
+    #[test]
+    fn prune_sent_removes_only_old_sent_rows() {
+        let s = Store::open_in_memory().unwrap();
+        let id_of = |e: Enqueued| match e {
+            Enqueued::New(id) | Enqueued::Existing(id) => id,
+        };
+        let old_sent = id_of(
+            s.enqueue(OutboxKind::Observation, "old-sent", &json!(1), t0())
+                .unwrap(),
+        );
+        s.enqueue(OutboxKind::Observation, "old-pending", &json!(2), t0())
+            .unwrap();
+        let new_sent = id_of(
+            s.enqueue(
+                OutboxKind::Observation,
+                "new-sent",
+                &json!(3),
+                t0() + Duration::days(8),
+            )
+            .unwrap(),
+        );
+        s.mark_sent(old_sent, &json!({})).unwrap();
+        s.mark_sent(new_sent, &json!({})).unwrap();
+        assert_eq!(s.prune_sent(t0() + Duration::days(1)).unwrap(), 1);
+        assert_eq!(s.count(OutboxState::Sent).unwrap(), 1);
         assert_eq!(s.count(OutboxState::Pending).unwrap(), 1);
     }
 

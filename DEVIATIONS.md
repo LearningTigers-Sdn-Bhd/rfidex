@@ -36,3 +36,13 @@ One entry per deviation: task, what changed, why.
 
 - **What changed:** `station/desk.rs` opens with a documented module-level `#![allow(clippy::result_large_err)]`; `DeskError`, its variants and all five signatures are exactly as the plan writes them.
 - **Why:** `DeskError::Api(ApiError)` carries `ApiError::Rejected`'s `ErrorBody` (~192 bytes), so clippy 1.96 rejects the `Result<_, DeskError>` returns under warnings-as-errors. Boxing would change the error enum that Task 12's interface lists and that the tests pattern-match on (`Err(DeskError::NeedsConfirm(..))`), so the allow is scoped to the one module whose fallible methods all return it.
+
+## Post-plan audit fixes (2026-09-25)
+
+Found in the plan's own design during the audit after Task 14; each has a regression test that fails on the old code.
+
+1. **Gate release could lose reads** (`station/gate.rs`). One failed `release()` aborted the batch, so later reads in the same poll were never saved (on a fetch-consumes gate: lost). `tick` now saves every read first, then releases all, reporting the first failure. Test: `gate::release_failure_does_not_lose_later_reads` (old code saved 1 of 3). `SimGate` gained `fail_next_releases`.
+2. **Undecodable outbox row stopped all sync** (`sync.rs`). A row whose payload no longer decodes (e.g. after an app upgrade) made every `run_once` fail. It is now parked and the queue continues. Test: `sync::undecodable_rows_are_parked_not_blocking`.
+3. **Unreadable 2xx reply retried forever** (`client.rs`, `sync.rs`). New `ApiError::BadResponse`; retried with backoff up to `MAX_BAD_RESPONSE_ATTEMPTS` (5), then parked. Network errors still retry forever. Test: `sync::unreadable_server_reply_is_parked_after_retries`; mock `Faults` gained `bad_body`.
+4. **Write mode could write before learning the ticket already has a sticker** (`station/desk.rs`). An online scan now caches the ticket's current sticker, so `link` warns before writing. Test: `desk::write_mode_checks_existing_sticker_before_writing` (old code wrote the sticker).
+5. **Sent rows were never deleted** (`store.rs`, `sync.rs`). `Store::prune_sent(older_than)`; `run_forever` prunes sent rows older than `SENT_RETENTION_DAYS` (7) hourly. Pending, conflict and parked rows are never pruned. Test: `store::prune_sent_removes_only_old_sent_rows`.

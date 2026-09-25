@@ -113,7 +113,13 @@ impl<R: TagReaderWriter> DeskStation<R> {
         };
         match self.client.desk_scan(&req).await {
             Ok(resp) => {
-                self.store.lock().unwrap().upsert_ticket(&resp.ticket)?;
+                let s = self.store.lock().unwrap();
+                s.upsert_ticket(&resp.ticket)?;
+                // Cache the ticket's current sticker so `link` can warn before writing.
+                if let Some(b) = &resp.binding {
+                    s.upsert_binding(&b.tag_key, b.public_id)?;
+                }
+                drop(s);
                 Ok(Scanned {
                     current_tag_key: resp.binding.map(|b| b.tag_key),
                     ticket: resp.ticket,

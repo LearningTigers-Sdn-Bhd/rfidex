@@ -14,7 +14,7 @@ use rfidex_core::contract::{HeartbeatReq, HeartbeatResp, RfidMode, Role, Station
 use rfidex_core::device::{DeviceError, GateKind, GateSource, TagReaderWriter};
 use rfidex_core::station::desk::DeskStation;
 use rfidex_core::station::gate::{GateError, GateStation};
-use rfidex_core::store::{OutboxState, Store};
+use rfidex_core::store::{OutboxKind, OutboxState, Store};
 use rfidex_core::sync::{SyncReport, SyncWorker, SENT_RETENTION_DAYS};
 use rfidex_core::tag::UidRule;
 use rfidex_core::APP_VERSION;
@@ -25,6 +25,8 @@ use uuid::Uuid;
 use crate::config::{AppConfig, AppPaths, DeviceChoice, StationConfig};
 use crate::desk::{DeskSession, DeskView};
 use crate::devices::{DeskDevice, GateDevice, SimLibrary};
+use crate::gate::GateView;
+use crate::problems::ProblemView;
 use crate::RuntimeError;
 
 /// Where a station's successful settings are remembered between runs.
@@ -146,6 +148,24 @@ impl StationRuntime {
 impl StationRuntime {
     fn lock(&self) -> std::sync::MutexGuard<'_, StationInner> {
         self.inner.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn snapshot(&self) -> StationInner {
+        let inner = self.lock();
+        StationInner {
+            settings: inner.settings.clone(),
+            event_ok: inner.event_ok,
+            event_mismatch: inner.event_mismatch,
+            online: inner.online,
+            unauthorized: inner.unauthorized,
+            connected: inner.connected,
+            event_name: inner.event_name.clone(),
+            skew_secs: inner.skew_secs,
+            last_sync: inner.last_sync,
+            network_error: inner.network_error.clone(),
+            device_error: inner.device_error.clone(),
+            store_error: inner.store_error.clone(),
+        }
     }
 
     fn pending_count(&self) -> Result<u64, RuntimeError> {
@@ -397,6 +417,116 @@ fn store_failure() -> RuntimeError {
     )
 }
 
+/// Wording the operator sees, kept in one place so the status bar, the alarm
+/// line and the station list cannot drift apart.
+const UNAUTHORIZED: &str = "The server did not accept the API key. Open Setup to check it.";
+const DIFFERENT_EVENT: &str =
+    "This API key belongs to a different event. Open Setup and enter the key for this event.";
+const MANY_WAITING: &str = "Many actions are waiting to send.";
+const LOW_DISK: &str = "Disk space is low. Free some space before continuing.";
+const LINKS_NEED_ATTENTION: &str = "Some sticker links need attention.";
+const COULD_NOT_BE_SENT: &str = "Some saved actions could not be sent.";
+const COULD_NOT_CHECK_DISK: &str = "Could not check free disk space.";
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StationStatus {
+    pub id: Uuid,
+    pub name: String,
+    pub kind: StationKind,
+    pub role: Option<Role>,
+    pub simulated: bool,
+    pub online: bool,
+    pub unauthorized: bool,
+    pub connected: bool,
+    pub event_name: Option<String>,
+    pub mode: Option<RfidMode>,
+    pub settings_ready: bool,
+    pub skew_secs: Option<i64>,
+    pub last_sync: Option<DateTime<Utc>>,
+    pub last_error: Option<String>,
+    pub pending: u64,
+    pub problems: u64,
+    pub alarm: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AppStatus {
+    pub stations: Vec<StationStatus>,
+    pub pending: u64,
+    pub problems: u64,
+    pub alarm: Option<String>,
+}
+
+fn station_status(
+    station: &StationRuntime,
+    free_bytes: Option<u64>,
+    disk_note: Option<&str>,
+) -> Result<StationStatus, RuntimeError> {
+    let health = {
+        let store = station.store.lock().unwrap_or_else(|e| e.into_inner());
+        rfidex_core::health::health(&store, free_bytes, rfidex_core::health::DEEP_QUEUE)
+            .map_err(|_| store_failure())?
+    };
+    let inner = station.snapshot();
+
+    // Precedence: a rejected key, then a wrong event, then trouble saving or
+    // reading here, and only then a network problem.
+    let last_error = if inner.unauthorized {
+        Some(UNAUTHORIZED.to_string())
+    } else if inner.event_mismatch {
+        Some(DIFFERENT_EVENT.to_string())
+    } else if let Some(local) = inner.store_error.or(inner.device_error) {
+        Some(local)
+    } else {
+        inner.network_error
+    };
+
+    let mut alarms = Vec::new();
+    if let Some(note) = disk_note {
+        alarms.push(note.to_string());
+    }
+    for alarm in &health.alarms {
+        alarms.push(
+            match alarm {
+                rfidex_core::health::Alarm::DeepQueue(_) => MANY_WAITING,
+                rfidex_core::health::Alarm::LowDisk(_) => LOW_DISK,
+                rfidex_core::health::Alarm::Conflicts(_) => LINKS_NEED_ATTENTION,
+                rfidex_core::health::Alarm::Parked(_) => COULD_NOT_BE_SENT,
+            }
+            .to_string(),
+        );
+    }
+    if let Some(skew) = inner.skew_secs.filter(|s| s.abs() > 60) {
+        alarms.push(format!(
+            "This computer's clock is about {} minutes away from the server.",
+            (skew.abs() + 30) / 60
+        ));
+    }
+
+    Ok(StationStatus {
+        id: station.config.id,
+        name: station.config.name.clone(),
+        kind: station.config.kind,
+        role: station.config.role,
+        simulated: matches!(
+            station.config.device,
+            DeviceChoice::SimDesk | DeviceChoice::SimGate { .. }
+        ),
+        online: inner.online,
+        unauthorized: inner.unauthorized,
+        connected: inner.connected,
+        event_name: inner.event_name,
+        mode: inner.settings.as_ref().map(|s| s.event.rfid_mode),
+        settings_ready: inner.settings.is_some(),
+        skew_secs: inner.skew_secs,
+        last_sync: inner.last_sync,
+        last_error,
+        pending: health.pending,
+        problems: health.conflicts + health.parked,
+        alarm: (!alarms.is_empty()).then(|| alarms.join(" ")),
+    })
+}
+
 fn network_message(e: &ApiError) -> String {
     match e {
         ApiError::Unauthorized => {
@@ -601,6 +731,105 @@ impl Runtime {
             return Err(wrong_station("use this at a desk"));
         };
         Ok((runtime, device.lock().await))
+    }
+
+    /// The most recent passages this gate has saved, newest first. Zero asks
+    /// for nothing; the cap keeps a long-running station from flooding the UI.
+    pub async fn gate_recent(
+        &self,
+        station: Uuid,
+        limit: usize,
+    ) -> Result<Vec<GateView>, RuntimeError> {
+        let runtime = self.station(station)?;
+        let StationDevice::Gate(_) = &runtime.device else {
+            return Err(wrong_station("read gate results"));
+        };
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let uid_rule = runtime
+            .snapshot()
+            .settings
+            .map(|s| s.uid_rule)
+            .unwrap_or(UidRule::AsIs);
+        let store = runtime.store.lock().unwrap_or_else(|e| e.into_inner());
+        let rows = store
+            .rows(
+                &[
+                    OutboxState::Pending,
+                    OutboxState::Sent,
+                    OutboxState::Conflict,
+                    OutboxState::Parked,
+                    OutboxState::Dismissed,
+                ],
+                Some(OutboxKind::Observation),
+                limit.min(200),
+            )
+            .map_err(|_| store_failure())?;
+        Ok(rows
+            .iter()
+            .map(|row| crate::gate::view(row, &store, uid_rule))
+            .collect())
+    }
+
+    /// Everything that still needs a person, from every configured station.
+    pub async fn problems(&self) -> Result<Vec<ProblemView>, RuntimeError> {
+        let mut all = Vec::new();
+        for station in &self.stations {
+            let uid_rule = station
+                .snapshot()
+                .settings
+                .map(|s| s.uid_rule)
+                .unwrap_or(UidRule::AsIs);
+            let store = station.store.lock().unwrap_or_else(|e| e.into_inner());
+            all.extend(crate::problems::for_station(
+                station.config.id,
+                &station.config.name,
+                &store,
+                uid_rule,
+            )?);
+        }
+        crate::problems::sort(&mut all);
+        Ok(all)
+    }
+
+    /// Hide one problem from the list. The row keeps its payload, its server
+    /// reply and its error, so nothing is lost and nothing is claimed fixed.
+    pub async fn dismiss(&self, station: Uuid, id: i64) -> Result<bool, RuntimeError> {
+        let runtime = self.station(station)?;
+        runtime
+            .store
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .mark_dismissed(id)
+            .map_err(|_| store_failure())
+    }
+
+    pub async fn status(&self) -> Result<AppStatus, RuntimeError> {
+        // Measured once for the whole app rather than per station.
+        let (free_bytes, disk_note) = match fs2::available_space(self.paths.root()) {
+            Ok(bytes) => (Some(bytes), None),
+            Err(_) => (None, Some(COULD_NOT_CHECK_DISK)),
+        };
+        let mut stations = Vec::with_capacity(self.stations.len());
+        let mut pending = 0;
+        let mut problems = 0;
+        let mut alarms = Vec::new();
+        for station in &self.stations {
+            let status = station_status(station, free_bytes, disk_note)?;
+            pending += status.pending;
+            problems += status.problems;
+            if let Some(alarm) = &status.alarm {
+                alarms.push(format!("{}: {alarm}", status.name));
+            }
+            stations.push(status);
+        }
+        Ok(AppStatus {
+            stations,
+            pending,
+            problems,
+            alarm: (!alarms.is_empty()).then(|| alarms.join(" ")),
+        })
     }
 
     pub async fn sim_place(&self, station: Uuid, uid_hex: &str) -> Result<(), RuntimeError> {

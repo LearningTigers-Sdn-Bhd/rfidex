@@ -8,13 +8,18 @@ use std::fmt;
 pub mod config;
 pub mod desk;
 pub mod devices;
+pub mod gate;
+pub mod problems;
 pub mod runtime;
 
 pub use config::{
     validate_connection, AppConfig, AppPaths, ConfigError, DeviceChoice, SetupInput, SetupView,
     StationConfig,
 };
-pub use runtime::{Runtime, RuntimeOptions};
+pub use desk::{DeskStep, DeskView};
+pub use gate::{GateStatus, GateView};
+pub use problems::ProblemView;
+pub use runtime::{AppStatus, Runtime, RuntimeOptions, StationStatus};
 
 /// An error the operator can read. Never carries a raw database or HTTP error,
 /// a URL, or a server error body: the code says what happened, the message says

@@ -9,6 +9,7 @@ use common::{desk_id, entry_id, eventually, exit_id, ticket, Harness, TAG_A, TAG
 use rfidex_core::contract::{RfidMode, Role, StationKind};
 use rfidex_core::store::OutboxState;
 use rfidex_runtime::desk::DeskStep;
+use rfidex_runtime::GateStatus;
 use rfidex_runtime::RuntimeOptions;
 
 #[tokio::test]
@@ -130,6 +131,14 @@ async fn event_guard_parks_rows_for_another_event() {
     .await;
     tokio::time::sleep(Duration::from_millis(150)).await;
     assert_eq!(h.observations(), 0, "nothing may reach the wrong event");
+    let status = h.runtime.status().await.unwrap();
+    let entry = status.stations.iter().find(|s| s.id == entry_id()).unwrap();
+    assert_eq!(
+        entry.last_error.as_deref(),
+        Some(
+            "This API key belongs to a different event. Open Setup and enter the key for this event."
+        )
+    );
     assert_eq!(
         h.store_of(entry_id()).count(OutboxState::Pending).unwrap(),
         1,
@@ -519,5 +528,268 @@ async fn the_desk_refuses_to_work_before_the_first_heartbeat() {
         .await
         .unwrap_err();
     assert_eq!(err.code, "wrong_station");
+    h.stop().await;
+}
+
+#[tokio::test]
+async fn written_sticker_yields_welcome_and_goodbye() {
+    let mut h = Harness::start(RfidMode::Write).await;
+    let desk = desk_id();
+    eventually("the desk to switch to write mode", || async {
+        h.station(desk).mode() == Some(RfidMode::Write)
+    })
+    .await;
+
+    // Desk: check in Aina and write her ticket into TAG_A.
+    h.runtime
+        .desk_scan(desk, &ticket(1).to_string())
+        .await
+        .unwrap();
+    h.runtime.sim_place(desk, TAG_A).await.unwrap();
+    let linked = h.runtime.desk_link(desk, None).await.unwrap();
+    assert_eq!(linked.step, DeskStep::Linked);
+    // The sticker leaves the reader physically, carrying what was written.
+    h.runtime.sim_clear(desk).await.unwrap();
+
+    h.runtime.sim_pass(entry_id(), TAG_A).await.unwrap();
+    h.runtime.sim_pass(exit_id(), TAG_A).await.unwrap();
+    eventually("both passages to be accepted", || async {
+        h.observations() == 2
+    })
+    .await;
+
+    let entry = h.runtime.gate_recent(entry_id(), 30).await.unwrap();
+    assert_eq!(entry.len(), 1);
+    assert_eq!(entry[0].status, GateStatus::Accepted);
+    assert_eq!(entry[0].role, Role::Entry);
+    assert_eq!(entry[0].name.as_deref(), Some("Aina"));
+    assert_eq!(entry[0].message, "Welcome");
+
+    let exit = h.runtime.gate_recent(exit_id(), 30).await.unwrap();
+    assert_eq!(exit.len(), 1);
+    assert_eq!(exit[0].status, GateStatus::Accepted);
+    assert_eq!(exit[0].role, Role::Exit);
+    assert_eq!(exit[0].name.as_deref(), Some("Aina"));
+    assert_eq!(exit[0].message, "Goodbye");
+
+    // Acceptance alone could come from the UID binding, so prove the gate saw
+    // the ticket that was actually written into the sticker.
+    let store = h.store_of(entry_id());
+    let rows = store
+        .rows(
+            &[OutboxState::Sent],
+            Some(rfidex_core::store::OutboxKind::Observation),
+            10,
+        )
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+    let payload_hex = rows[0].item.payload["payload_hex"]
+        .as_str()
+        .expect("the written payload reached the gate");
+    let decoded =
+        rfidex_core::codec::decode(&rfidex_core::tag::parse_hex(payload_hex).unwrap()).unwrap();
+    assert_eq!(decoded, ticket(1));
+
+    assert_eq!(h.runtime.gate_recent(entry_id(), 0).await.unwrap().len(), 0);
+    let wrong = h.runtime.gate_recent(desk_id(), 10).await;
+    assert_eq!(wrong.unwrap_err().code, "wrong_station");
+    h.stop().await;
+}
+
+#[tokio::test]
+async fn an_offline_passage_is_recorded_then_accepted_on_the_same_row() {
+    let mut h = Harness::start(RfidMode::Write).await;
+    let desk = desk_id();
+    h.runtime
+        .desk_scan(desk, &ticket(1).to_string())
+        .await
+        .unwrap();
+    h.runtime.sim_place(desk, TAG_A).await.unwrap();
+    h.runtime.desk_link(desk, None).await.unwrap();
+    h.runtime.sim_clear(desk).await.unwrap();
+    // The gates only learn a binding from their cache, so refresh it before
+    // expecting them to know who is walking through.
+    h.runtime.sync_now().await.unwrap();
+    eventually("the gates to know the binding", || async {
+        h.store_of(entry_id())
+            .binding_holder(TAG_A)
+            .unwrap()
+            .is_some()
+    })
+    .await;
+
+    h.set_down(true);
+    h.runtime.sim_pass(entry_id(), TAG_A).await.unwrap();
+    eventually("the passage to be recorded offline", || async {
+        h.runtime
+            .gate_recent(entry_id(), 5)
+            .await
+            .map(|rows| {
+                rows.first()
+                    .is_some_and(|r| r.status == GateStatus::Recorded)
+            })
+            .unwrap_or(false)
+    })
+    .await;
+    let recorded = h.runtime.gate_recent(entry_id(), 5).await.unwrap();
+    assert_eq!(recorded[0].name.as_deref(), Some("Aina"), "from the cache");
+    assert_eq!(recorded[0].message, "Recorded — waiting for the server.");
+    assert_eq!(h.observations(), 0, "nothing was sent while offline");
+    let row_id = recorded[0].id;
+
+    h.set_down(false);
+    eventually("the same row to be accepted", || async {
+        let _ = h.runtime.sync_now().await;
+        h.runtime
+            .gate_recent(entry_id(), 5)
+            .await
+            .map(|rows| {
+                rows.first()
+                    .is_some_and(|r| r.status == GateStatus::Accepted)
+            })
+            .unwrap_or(false)
+    })
+    .await;
+
+    let accepted = h.runtime.gate_recent(entry_id(), 5).await.unwrap();
+    assert_eq!(accepted[0].id, row_id, "the same local row changed state");
+    assert_eq!(accepted[0].message, "Welcome");
+    assert_eq!(accepted[0].name.as_deref(), Some("Aina"));
+    assert_eq!(h.observations(), 1);
+    h.stop().await;
+}
+
+#[tokio::test]
+async fn an_offline_conflict_names_the_holder_and_can_be_dismissed() {
+    let mut h = Harness::start(RfidMode::Bind).await;
+    let desk = desk_id();
+
+    // Aina, offline, takes TAG_B.
+    h.set_down(true);
+    h.runtime
+        .desk_scan(desk, &ticket(1).to_string())
+        .await
+        .unwrap();
+    h.runtime.sim_place(desk, TAG_B).await.unwrap();
+    let linked = h.runtime.desk_link(desk, None).await.unwrap();
+    assert_eq!(linked.step, DeskStep::Linked);
+    assert!(linked.offline);
+
+    // Meanwhile the server gives TAG_B to Ben.
+    h.server
+        .mock
+        .lock()
+        .unwrap()
+        .bind(rfidex_core::contract::BindingReq {
+            public_id: ticket(2),
+            protocol: rfidex_core::tag::Protocol::Iso15693,
+            uid_raw_hex: TAG_B.into(),
+            mode: rfidex_core::contract::BindMode::Bind,
+            payload_version: None,
+            operation_id: ticket(9001),
+            captured_at: chrono::Utc::now(),
+            replace: false,
+            reason: None,
+        })
+        .unwrap();
+
+    h.set_down(false);
+    eventually("the queued link to conflict", || async {
+        let _ = h.runtime.sync_now().await;
+        h.store_of(desk).count(OutboxState::Conflict).unwrap() == 1
+    })
+    .await;
+
+    let problems = h.runtime.problems().await.unwrap();
+    assert_eq!(problems.len(), 1);
+    assert_eq!(problems[0].station_id, desk);
+    assert_eq!(problems[0].station_name, "Desk");
+    assert_eq!(problems[0].name.as_deref(), Some("Ben"));
+    assert!(problems[0].message.contains("already linked"));
+
+    let status = h.runtime.status().await.unwrap();
+    assert_eq!(status.problems, 1);
+    assert!(status
+        .alarm
+        .as_deref()
+        .unwrap_or_default()
+        .contains("Some sticker links need attention."));
+
+    assert!(h.runtime.dismiss(desk, problems[0].id).await.unwrap());
+    assert!(
+        !h.runtime.dismiss(desk, problems[0].id).await.unwrap(),
+        "dismissing twice does nothing the second time"
+    );
+    assert!(h.runtime.problems().await.unwrap().is_empty());
+    assert_eq!(h.runtime.status().await.unwrap().problems, 0);
+
+    // The row is hidden, not gone: the server reply and the payload survive.
+    let store = h.store_of(desk);
+    let dismissed = store.rows(&[OutboxState::Dismissed], None, 10).unwrap();
+    assert_eq!(dismissed.len(), 1);
+    assert_eq!(
+        dismissed[0].result.as_ref().unwrap()["holder"]["name"],
+        "Ben"
+    );
+    assert_eq!(dismissed[0].item.payload["uid_raw_hex"], TAG_B);
+
+    // A pending row is not something to dismiss; there is nothing to hide yet.
+    h.set_down(true);
+    h.runtime.sim_pass(entry_id(), TAG_C).await.unwrap();
+    eventually("the observation to be saved", || async {
+        h.store_of(entry_id()).count(OutboxState::Pending).unwrap() == 1
+    })
+    .await;
+    let pending_row = h
+        .store_of(entry_id())
+        .rows(&[OutboxState::Pending], None, 1)
+        .unwrap()[0]
+        .item
+        .id;
+    assert!(!h.runtime.dismiss(entry_id(), pending_row).await.unwrap());
+    h.stop().await;
+}
+
+#[tokio::test]
+async fn a_rejected_key_is_unauthorized_rather_than_offline() {
+    let mut h = Harness::start_with_bad_key(RfidMode::Bind).await;
+    eventually("the station to report the key as rejected", || async {
+        h.station(desk_id()).unauthorized()
+    })
+    .await;
+
+    let status = h.runtime.status().await.unwrap();
+    let desk = status.stations.iter().find(|s| s.id == desk_id()).unwrap();
+    assert!(desk.unauthorized);
+    assert!(!desk.online);
+    assert!(desk.connected, "the reader is fine; the key is not");
+    assert!(!desk.settings_ready);
+    assert!(desk.mode.is_none());
+    assert_eq!(
+        desk.last_error.as_deref(),
+        Some("The server did not accept the API key. Open Setup to check it.")
+    );
+    assert!(status.stations.iter().all(|s| s.simulated));
+    h.stop().await;
+}
+
+#[tokio::test]
+async fn an_empty_gate_denies_with_a_reason_and_never_a_welcome() {
+    let mut h = Harness::start(RfidMode::Bind).await;
+    h.runtime.sim_pass(entry_id(), TAG_C).await.unwrap();
+    eventually("the unknown passage to be answered", || async {
+        h.runtime
+            .gate_recent(entry_id(), 5)
+            .await
+            .map(|rows| rows.first().is_some_and(|r| r.status == GateStatus::Denied))
+            .unwrap_or(false)
+    })
+    .await;
+    assert_eq!(h.observations(), 1);
+
+    let rows = h.runtime.gate_recent(entry_id(), 5).await.unwrap();
+    assert_eq!(rows[0].status, GateStatus::Denied);
+    assert_eq!(rows[0].message, "Sticker not recognised.");
+    assert!(rows[0].name.is_none(), "no fabricated name");
     h.stop().await;
 }

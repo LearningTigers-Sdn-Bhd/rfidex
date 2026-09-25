@@ -129,11 +129,33 @@ impl Harness {
         Harness::build(mode, fast_options(), three_stations(), true).await
     }
 
+    /// A runtime whose key the server will reject: well formed, but wrong.
+    pub async fn start_with_bad_key(mode: RfidMode) -> Harness {
+        Harness::build_keyed(
+            mode,
+            fast_options(),
+            three_stations(),
+            false,
+            "wrong_key_wrong_key_wrong_key_xx",
+        )
+        .await
+    }
+
     async fn build(
         mode: RfidMode,
         opts: RuntimeOptions,
         stations: Vec<StationConfig>,
         down: bool,
+    ) -> Harness {
+        Harness::build_keyed(mode, opts, stations, down, KEY).await
+    }
+
+    async fn build_keyed(
+        mode: RfidMode,
+        opts: RuntimeOptions,
+        stations: Vec<StationConfig>,
+        down: bool,
+        key: &str,
     ) -> Harness {
         let event = EventSettings {
             event_id: 1,
@@ -153,7 +175,7 @@ impl Harness {
         let paths = AppPaths::new(temp.path().to_path_buf());
         let config = AppConfig {
             server_url: base.clone(),
-            api_key: KEY.into(),
+            api_key: key.into(),
             stations,
         };
         paths.save(&config).unwrap();

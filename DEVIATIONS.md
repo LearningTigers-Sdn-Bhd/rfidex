@@ -2,6 +2,16 @@
 
 One entry per deviation: task, what changed, why.
 
+## Plan 2 / Task 8 — `src/vite-env.d.ts` for the CSS import
+
+- **What changed:** added `app/src/vite-env.d.ts` containing `/// <reference types="vite/client" />`. The file map does not list it.
+- **Why:** `npm run build` failed with `src/main.tsx(5,8): error TS2882: Cannot find module or type declarations for side-effect import of './style.css'` under TypeScript 7.0.2. The reference is the standard Vite declaration file and is the documented way to type CSS side-effect imports; nothing else about the build changed.
+
+## Plan 2 / Task 8 — native screenshots are not available on this machine
+
+- **What changed:** the operator screens were captured as browser renders of the real React app against a stubbed Tauri IPC transport, written as a throwaway Playwright script in the session scratchpad. No harness file was added to the repository.
+- **Why:** `screencapture` fails here with `could not create image from display`, and AppleScript UI scripting is refused with `osascript is not allowed assistive access (-1719)`, so neither a native grab nor native interaction is possible. The plan's Task 8 Step 5 allows a browser-only render as supplementary evidence. The Rust side is not stubbed anywhere: it is covered by the runtime acceptance tests against the real mock, and the live window was verified to start the stations and persist their heartbeats, which only happens if the real IPC path ran.
+
 ## Plan 2 / Task 4 — a heartbeat no longer discards a pending confirmation
 
 - **What changed:** `DeskSession` records the UID rule already applied to it, and `DeskSession::apply_settings` clears the pending confirmation only when the heartbeat's mode or UID rule actually differs. Before, every successful heartbeat cleared it. Committed on its own as `fix(runtime): keep desk confirmations across heartbeats`, after the Task 7 gate exposed it.

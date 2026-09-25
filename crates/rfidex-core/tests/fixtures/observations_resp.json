@@ -1,0 +1,10 @@
+{
+  "results": [
+    {
+      "delivery_id": "0192f0a0-0000-7000-8000-0000000000a1",
+      "outcome": "accepted",
+      "anomalies": ["entered_without_check_in"],
+      "display": { "name": "Aina", "ticket_type": "VIP", "reason": null }
+    }
+  ]
+}

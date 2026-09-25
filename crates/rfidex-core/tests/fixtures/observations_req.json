@@ -1,0 +1,16 @@
+{
+  "observations": [
+    {
+      "delivery_id": "0192f0a0-0000-7000-8000-0000000000a1",
+      "role": "entry",
+      "protocol": "iso15693",
+      "uid_raw_hex": "3412CDAB500104E0",
+      "payload_hex": null,
+      "device_direction_raw": 0,
+      "device_time_raw_hex": "250925143000",
+      "device_record_seq": 1201,
+      "flags_raw": { "substitute": 0, "trailing": 0 },
+      "captured_at": "2026-09-25T06:30:05Z"
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "ticket": {
+    "public_id": "8d6f3a52-0c1e-4b7a-9f2d-6e5c4b3a2918",
+    "name": "Aina",
+    "ticket_type": "VIP",
+    "valid": true,
+    "checked_in": true
+  },
+  "binding": null
+}

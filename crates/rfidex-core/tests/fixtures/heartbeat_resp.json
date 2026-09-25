@@ -1,0 +1,5 @@
+{
+  "event": { "event_id": 47, "name": "Test Expo", "rfid_mode": "write", "require_check_in": false },
+  "uid_rule": "as_is",
+  "server_time": "2026-09-25T06:30:00Z"
+}

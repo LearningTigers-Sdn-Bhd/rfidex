@@ -1,0 +1,11 @@
+{
+  "public_id": "8d6f3a52-0c1e-4b7a-9f2d-6e5c4b3a2918",
+  "protocol": "iso15693",
+  "uid_raw_hex": "3412CDAB500104E0",
+  "mode": "written",
+  "payload_version": 1,
+  "operation_id": "0192f0a0-0000-7000-8000-000000000001",
+  "captured_at": "2026-09-25T06:30:01Z",
+  "replace": true,
+  "reason": "Badge reprinted"
+}

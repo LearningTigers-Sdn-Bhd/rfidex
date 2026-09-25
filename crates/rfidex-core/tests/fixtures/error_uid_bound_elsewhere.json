@@ -1,0 +1,19 @@
+{
+  "error": "uid_bound_elsewhere",
+  "message": "sticker is linked to another ticket",
+  "holder": {
+    "public_id": "00000000-0000-0000-0000-000000000002",
+    "name": "Ben",
+    "ticket_type": "Regular",
+    "valid": true,
+    "checked_in": false
+  },
+  "binding": {
+    "id": 7,
+    "public_id": "00000000-0000-0000-0000-000000000002",
+    "protocol": "iso15693",
+    "uid_raw_hex": "3412CDAB500104E0",
+    "tag_key": "3412CDAB500104E0",
+    "mode": "bind"
+  }
+}

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/rfidex-core", "crates/rfidex-mock"]
+members = ["crates/rfidex-core", "crates/rfidex-mock", "crates/rfidex-runtime"]
 
 [workspace.package]
 version = "0.1.0"

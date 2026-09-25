@@ -14,7 +14,7 @@ uuid = { version = "1", features = ["v4", "v7", "serde"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }
 thiserror = "2"
 rusqlite = { version = "0.40", features = ["bundled"] }
-reqwest = { version = "0.13", features = ["json"] }
+reqwest = { version = "0.13", features = ["json", "query"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "net"] }
 axum = "0.8"
 tempfile = "3"

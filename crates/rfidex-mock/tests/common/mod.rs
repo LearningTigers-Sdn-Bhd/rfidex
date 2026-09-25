@@ -49,3 +49,7 @@ pub async fn spawn(mode: RfidMode) -> (String, Arc<AppState>) {
 pub fn store() -> Arc<Mutex<Store>> {
     Arc::new(Mutex::new(Store::open_in_memory().unwrap()))
 }
+
+pub fn client(base: &str, station: &str) -> rfidex_core::client::ApiClient {
+    rfidex_core::client::ApiClient::new(base, KEY, station, std::time::Duration::from_millis(500))
+}

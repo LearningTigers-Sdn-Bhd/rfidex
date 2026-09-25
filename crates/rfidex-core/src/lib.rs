@@ -2,6 +2,7 @@
 
 pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+pub mod codec;
 pub mod tag;
 
 #[cfg(test)]

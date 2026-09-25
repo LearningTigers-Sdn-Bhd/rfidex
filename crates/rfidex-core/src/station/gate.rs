@@ -63,6 +63,15 @@ impl<G: GateSource> GateStation<G> {
         }
     }
 
+    /// Changing the rule changes which tags count as already seen, so the
+    /// debounce memory is dropped with it.
+    pub fn set_uid_rule(&mut self, uid_rule: UidRule) {
+        if self.uid_rule != uid_rule {
+            self.last_seen.clear();
+            self.uid_rule = uid_rule;
+        }
+    }
+
     /// Two phases so one failed release can never lose a read:
     /// 1. save every polled read to the outbox (committed per row);
     /// 2. only then release them, trying all and reporting the first failure.

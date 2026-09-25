@@ -52,6 +52,9 @@ pub enum OutboxState {
     Sent,
     Conflict,
     Parked,
+    /// Staff hid a conflict or parked row from the operator list. The row, its
+    /// payload and its server result stay on disk as evidence.
+    Dismissed,
 }
 
 impl OutboxState {
@@ -61,6 +64,20 @@ impl OutboxState {
             OutboxState::Sent => "sent",
             OutboxState::Conflict => "conflict",
             OutboxState::Parked => "parked",
+            OutboxState::Dismissed => "dismissed",
+        }
+    }
+
+    /// `None` for anything unrecognised, so a state written by a newer version
+    /// can never be silently treated as pending.
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "pending" => Some(OutboxState::Pending),
+            "sent" => Some(OutboxState::Sent),
+            "conflict" => Some(OutboxState::Conflict),
+            "parked" => Some(OutboxState::Parked),
+            "dismissed" => Some(OutboxState::Dismissed),
+            _ => None,
         }
     }
 }
@@ -79,6 +96,16 @@ pub struct OutboxItem {
     pub payload: Value,
     pub captured_at: DateTime<Utc>,
     pub attempts: u32,
+}
+
+/// One outbox row as an operator screen needs it: the durable item plus the
+/// state and whatever the server said about it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OutboxRow {
+    pub item: OutboxItem,
+    pub state: OutboxState,
+    pub result: Option<Value>,
+    pub last_error: Option<String>,
 }
 
 pub struct Store {
@@ -275,6 +302,64 @@ impl Store {
             out.push((item?, result));
         }
         Ok(out)
+    }
+
+    /// Operator-facing rows, newest insertion first (device capture time is not
+    /// trustworthy for ordering), filtered by state and optionally by kind. An
+    /// empty `states` slice returns nothing. A row whose stored state cannot be
+    /// read is an error, not a silent default.
+    pub fn rows(
+        &self,
+        states: &[OutboxState],
+        kind: Option<OutboxKind>,
+        limit: usize,
+    ) -> StoreResult<Vec<OutboxRow>> {
+        let states = serde_json::to_string(&states.iter().map(|s| s.as_str()).collect::<Vec<_>>())?;
+        let mut stmt = self.conn.prepare(
+            "SELECT id, kind, idem_key, payload, captured_at, attempts, state, result, last_error
+             FROM outbox
+             WHERE state IN (SELECT value FROM json_each(?1))
+               AND (?2 IS NULL OR kind = ?2)
+             ORDER BY id DESC
+             LIMIT ?3",
+        )?;
+        let rows = stmt.query_map(
+            params![
+                states,
+                kind.map(OutboxKind::as_str),
+                i64::try_from(limit).unwrap_or(i64::MAX)
+            ],
+            |r| {
+                let item = row_to_item(r)?;
+                let state: String = r.get(6)?;
+                let result: Option<String> = r.get(7)?;
+                let last_error: Option<String> = r.get(8)?;
+                Ok((item, state, result, last_error))
+            },
+        )?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (item, state, result, last_error) = row?;
+            let state = OutboxState::parse(&state).ok_or(rusqlite::Error::InvalidQuery)?;
+            let result = result.map(|s| serde_json::from_str(&s)).transpose()?;
+            out.push(OutboxRow {
+                item: item?,
+                state,
+                result,
+                last_error,
+            });
+        }
+        Ok(out)
+    }
+
+    /// True only when a conflict or parked row moved to dismissed. Missing,
+    /// pending, sent and already-dismissed rows return false. The row keeps its
+    /// payload, result, error and attempt count.
+    pub fn mark_dismissed(&self, id: i64) -> StoreResult<bool> {
+        Ok(self.conn.execute(
+            "UPDATE outbox SET state = 'dismissed' WHERE id = ?1 AND state IN ('conflict', 'parked')",
+            [id],
+        )? == 1)
     }
 
     pub fn get_config(&self, key: &str) -> StoreResult<Option<String>> {
@@ -528,6 +613,75 @@ mod tests {
         assert_eq!(s.prune_sent(t0() + Duration::days(1)).unwrap(), 1);
         assert_eq!(s.count(OutboxState::Sent).unwrap(), 1);
         assert_eq!(s.count(OutboxState::Pending).unwrap(), 1);
+    }
+
+    #[test]
+    fn operator_rows_filter_sort_and_dismiss_without_losing_evidence() {
+        let s = Store::open_in_memory().unwrap();
+        let now = Utc::now();
+        s.enqueue(
+            OutboxKind::Binding,
+            "old",
+            &serde_json::json!({"old": true}),
+            now,
+        )
+        .unwrap();
+        s.enqueue(
+            OutboxKind::Observation,
+            "middle",
+            &serde_json::json!({}),
+            now,
+        )
+        .unwrap();
+        s.enqueue(
+            OutboxKind::Binding,
+            "new",
+            &serde_json::json!({"new": true}),
+            now,
+        )
+        .unwrap();
+        let all = s.rows(&[OutboxState::Pending], None, 10).unwrap();
+        assert_eq!(
+            all.iter()
+                .map(|r| r.item.idem_key.as_str())
+                .collect::<Vec<_>>(),
+            vec!["new", "middle", "old"]
+        );
+        let old_id = all[2].item.id;
+        let new_id = all[0].item.id;
+        assert!(!s.mark_dismissed(old_id).unwrap());
+        s.mark_conflict(old_id, &serde_json::json!({"holder": {"name": "Aina"}}))
+            .unwrap();
+        s.mark_parked(new_id, "cannot read saved operation")
+            .unwrap();
+        let rows = s
+            .rows(
+                &[OutboxState::Conflict, OutboxState::Parked],
+                Some(OutboxKind::Binding),
+                1,
+            )
+            .unwrap();
+        assert_eq!(rows[0].item.id, new_id);
+        assert_eq!(
+            rows[0].last_error.as_deref(),
+            Some("cannot read saved operation")
+        );
+        assert!(s.mark_dismissed(old_id).unwrap());
+        assert!(!s.mark_dismissed(old_id).unwrap());
+        assert!(!s.mark_dismissed(i64::MAX).unwrap());
+        let dismissed = s.rows(&[OutboxState::Dismissed], None, 10).unwrap();
+        assert_eq!(
+            dismissed[0].result.as_ref().unwrap()["holder"]["name"],
+            "Aina"
+        );
+        assert_eq!(dismissed[0].item.payload, serde_json::json!({"old": true}));
+        assert!(s.rows(&[], None, 10).unwrap().is_empty());
+        assert!(s.rows(&[OutboxState::Pending], None, 0).unwrap().is_empty());
+        assert_eq!(
+            OutboxState::parse("dismissed"),
+            Some(OutboxState::Dismissed)
+        );
+        assert_eq!(OutboxState::parse("unexpected"), None);
     }
 
     #[test]

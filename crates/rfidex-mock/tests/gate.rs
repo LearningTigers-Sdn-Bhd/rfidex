@@ -143,6 +143,47 @@ fn local_guess_from_cache() {
 }
 
 #[test]
+fn uid_rule_change_applies_to_the_next_sighting() {
+    let store = common::store();
+    {
+        let s = store.lock().unwrap();
+        s.upsert_ticket(&TicketSummary {
+            public_id: id(1),
+            name: "Aina".into(),
+            ticket_type: "VIP".into(),
+            valid: true,
+            checked_in: true,
+        })
+        .unwrap();
+        s.upsert_binding("E0040150ABCD1234", id(1)).unwrap();
+    }
+    let mut g = station(SimGate::new(GateKind::Records, false), store.clone());
+
+    g.gate.push(read(Some(1)));
+    assert_eq!(g.tick(Utc::now()).unwrap()[0].local, LocalGuess::Unknown);
+
+    g.set_uid_rule(UidRule::Reversed);
+    g.gate.push(read(Some(2)));
+    assert_eq!(
+        g.tick(Utc::now()).unwrap()[0].local,
+        LocalGuess::Known {
+            name: "Aina".into(),
+            ticket_type: "VIP".into()
+        }
+    );
+
+    let s = store.lock().unwrap();
+    let rows = s.items(OutboxState::Pending, 10).unwrap();
+    assert_eq!(rows.len(), 2);
+    for (item, _) in rows {
+        assert_eq!(
+            item.payload["uid_raw_hex"], TAG_A,
+            "raw UID is stored exactly as the device reported it"
+        );
+    }
+}
+
+#[test]
 fn release_failure_does_not_lose_later_reads() {
     let store = common::store();
     let mut gate = SimGate::new(GateKind::Records, true);

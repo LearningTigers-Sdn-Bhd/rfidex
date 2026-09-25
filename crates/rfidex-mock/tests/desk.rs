@@ -212,6 +212,78 @@ async fn offline_desk_uses_cache_and_queues() {
 }
 
 #[tokio::test]
+async fn configure_switches_mode_and_uid_rule_on_a_live_desk() {
+    let (base, state) = common::spawn(RfidMode::Bind).await;
+    let store = common::store();
+    let mut d = DeskStation::new(
+        SimDesk::new(),
+        store.clone(),
+        common::client(&base, "desk-1"),
+        RfidMode::Bind,
+        UidRule::AsIs,
+        0,
+    );
+    let aina = d.scan_ticket(&id(1).to_string()).await.unwrap().ticket;
+    d.reader.place(tag(TAG_A, 4, 28));
+    let t = d.detect_tag().unwrap();
+    assert_eq!(
+        d.link(&aina, &t, None).await.unwrap().binding.unwrap().mode,
+        BindMode::Bind
+    );
+    assert_eq!(
+        d.reader.tag(&t.uid_raw).unwrap().memory,
+        vec![0; 112],
+        "bind mode never writes"
+    );
+
+    d.configure(RfidMode::Write, UidRule::AsIs);
+    assert_eq!(d.mode(), RfidMode::Write);
+    let ben = d.scan_ticket(&id(2).to_string()).await.unwrap().ticket;
+    d.reader.clear();
+    d.reader.place(tag(TAG_B, 4, 28));
+    let b = d.detect_tag().unwrap();
+    let linked = d.link(&ben, &b, None).await.unwrap();
+    assert_eq!(linked.binding.unwrap().mode, BindMode::Written);
+    assert_eq!(
+        codec::decode(&d.reader.tag(&b.uid_raw).unwrap().memory),
+        Ok(id(2)),
+        "the reconfigured desk wrote the ticket into the sticker"
+    );
+    assert_eq!(state.mock.lock().unwrap().active_bindings().len(), 2);
+
+    // Still the same desk, now offline: the new UID rule decides the local
+    // binding key, but the request still carries the raw UID unreordered.
+    rfidex_core::sync::SyncWorker::new(store.clone(), common::client(&base, "desk-1"))
+        .refresh_cache()
+        .await
+        .unwrap();
+    state.faults.lock().unwrap().down = true;
+    d.configure(RfidMode::Bind, UidRule::Reversed);
+    let aina_again = d.scan_ticket(&id(1).to_string()).await.unwrap().ticket;
+    d.reader.clear();
+    d.reader.place(tag(TAG_A, 4, 28));
+    let a = d.detect_tag().unwrap();
+    // Offline the station cannot know that the reversed key is the very same
+    // sticker, so it asks before replacing Aina's known sticker.
+    assert!(matches!(
+        d.link(&aina_again, &a, None).await,
+        Err(DeskError::NeedsConfirm(Warning::TicketHasSticker))
+    ));
+    assert!(
+        d.link(&aina_again, &a, confirm("uid rule changed"))
+            .await
+            .unwrap()
+            .offline
+    );
+
+    let s = store.lock().unwrap();
+    assert_eq!(s.binding_holder("E0040150ABCD1234").unwrap(), Some(id(1)));
+    assert_eq!(s.binding_holder(TAG_A).unwrap(), None);
+    let pending = s.due(OutboxKind::Binding, 10, chrono::Utc::now()).unwrap();
+    assert_eq!(pending[0].payload["uid_raw_hex"], TAG_A);
+}
+
+#[tokio::test]
 async fn write_mode_checks_existing_sticker_before_writing() {
     let (mut d, state) = desk(RfidMode::Write).await;
     state

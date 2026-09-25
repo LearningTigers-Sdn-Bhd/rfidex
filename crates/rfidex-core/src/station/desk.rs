@@ -104,6 +104,17 @@ impl<R: TagReaderWriter> DeskStation<R> {
         }
     }
 
+    /// Apply settings that arrived from a heartbeat or from Setup. The reader
+    /// and store stay untouched, so a live station keeps working.
+    pub fn configure(&mut self, mode: RfidMode, uid_rule: UidRule) {
+        self.mode = mode;
+        self.uid_rule = uid_rule;
+    }
+
+    pub fn mode(&self) -> RfidMode {
+        self.mode
+    }
+
     pub async fn scan_ticket(&mut self, code: &str) -> Result<Scanned, DeskError> {
         let public_id = Uuid::parse_str(code.trim()).map_err(|_| DeskError::TicketNotFound)?;
         let req = DeskScanReq {

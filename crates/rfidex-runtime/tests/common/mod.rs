@@ -58,7 +58,10 @@ pub fn fast_options() -> RuntimeOptions {
     RuntimeOptions {
         heartbeat: Duration::from_millis(20),
         gate_poll: Duration::from_millis(10),
-        client_timeout: Duration::from_millis(100),
+        // Generous: a slow CI runner (Windows, Defender) must not turn a normal
+        // loopback request into "offline". Offline paths use the mock's `down`
+        // switch, and the shutdown test's 1 s bound stays below this timeout.
+        client_timeout: Duration::from_secs(2),
     }
 }
 

@@ -7,17 +7,18 @@ use rfidex_core::tag::{hex_upper, parse_hex, tag_key, UidRule};
 use serde::Deserialize;
 use uuid::Uuid;
 
-pub type ApiFailure = (u16, ErrorBody);
+/// Boxed body keeps `Result<_, ApiFailure>` small; `ErrorBody` is ~184 bytes.
+pub type ApiFailure = (u16, Box<ErrorBody>);
 
 fn fail(status: u16, error: ErrorCode, message: &str) -> ApiFailure {
     (
         status,
-        ErrorBody {
+        Box::new(ErrorBody {
             error,
             message: message.into(),
             holder: None,
             binding: None,
-        },
+        }),
     )
 }
 
@@ -123,9 +124,6 @@ impl MockState {
         self.observations.len()
     }
 
-    // `ApiFailure` is the contract's error shape, serialized verbatim by the HTTP
-    // layer, so it stays inline instead of boxed.
-    #[allow(clippy::result_large_err)]
     fn check_ticket(&self, id: Uuid) -> Result<(), ApiFailure> {
         let t = self
             .tickets
@@ -183,7 +181,6 @@ impl MockState {
         }
     }
 
-    #[allow(clippy::result_large_err)]
     pub fn desk_scan(&mut self, req: DeskScanReq) -> Result<DeskScanResp, ApiFailure> {
         if let Some(r) = self.desk_ops.get(&req.operation_id) {
             return Ok(r.clone());
@@ -201,7 +198,6 @@ impl MockState {
         Ok(resp)
     }
 
-    #[allow(clippy::result_large_err)]
     pub fn bind(&mut self, req: BindingReq) -> Result<(u16, BindingResp), ApiFailure> {
         if let Some(r) = self.bind_ops.get(&req.operation_id) {
             return Ok((200, r.clone()));

@@ -40,12 +40,12 @@ impl AppState {
 fn error(status: u16, code: ErrorCode, message: &str) -> Response {
     failure((
         status,
-        ErrorBody {
+        Box::new(ErrorBody {
             error: code,
             message: message.into(),
             holder: None,
             binding: None,
-        },
+        }),
     ))
 }
 
@@ -57,10 +57,11 @@ fn failure((status, body): ApiFailure) -> Response {
         .into_response()
 }
 
-async fn pre(s: &AppState, headers: &HeaderMap) -> Result<String, Response> {
+/// The rejection is boxed: axum's `Response` is over clippy's large-error limit.
+async fn pre(s: &AppState, headers: &HeaderMap) -> Result<String, Box<Response>> {
     let f = s.faults.lock().unwrap().clone();
     if f.down {
-        return Err(error(503, ErrorCode::Malformed, "mock is down"));
+        return Err(Box::new(error(503, ErrorCode::Malformed, "mock is down")));
     }
     if f.delay_ms > 0 {
         tokio::time::sleep(Duration::from_millis(f.delay_ms)).await;
@@ -69,11 +70,17 @@ async fn pre(s: &AppState, headers: &HeaderMap) -> Result<String, Response> {
         let mut f = s.faults.lock().unwrap();
         if f.fail_5xx > 0 {
             f.fail_5xx -= 1;
-            return Err(error(500, ErrorCode::Malformed, "injected server error"));
+            return Err(Box::new(error(
+                500,
+                ErrorCode::Malformed,
+                "injected server error",
+            )));
         }
         if f.bad_body > 0 {
             f.bad_body -= 1;
-            return Err(Json(serde_json::json!({ "unexpected": true })).into_response());
+            return Err(Box::new(
+                Json(serde_json::json!({ "unexpected": true })).into_response(),
+            ));
         }
     }
     let key = headers
@@ -81,14 +88,24 @@ async fn pre(s: &AppState, headers: &HeaderMap) -> Result<String, Response> {
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
     if key != s.mock.lock().unwrap().api_key {
-        return Err(error(401, ErrorCode::Unauthorized, "invalid api key"));
+        return Err(Box::new(error(
+            401,
+            ErrorCode::Unauthorized,
+            "invalid api key",
+        )));
     }
     headers
         .get(HEADER_STATION)
         .and_then(|v| v.to_str().ok())
         .filter(|v| !v.is_empty())
         .map(str::to_owned)
-        .ok_or_else(|| error(400, ErrorCode::Malformed, "missing X-RfiDex-Station header"))
+        .ok_or_else(|| {
+            Box::new(error(
+                400,
+                ErrorCode::Malformed,
+                "missing X-RfiDex-Station header",
+            ))
+        })
 }
 
 async fn post_commit(s: &AppState) {
@@ -112,7 +129,7 @@ async fn heartbeat(
 ) -> Response {
     let station = match pre(&s, &headers).await {
         Ok(st) => st,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     let resp = s.mock.lock().unwrap().heartbeat(&station, req);
     post_commit(&s).await;
@@ -121,7 +138,7 @@ async fn heartbeat(
 
 async fn cache(State(s): State<Arc<AppState>>, headers: HeaderMap) -> Response {
     if let Err(r) = pre(&s, &headers).await {
-        return r;
+        return *r;
     }
     let resp = s.mock.lock().unwrap().cache();
     Json(resp).into_response()
@@ -133,7 +150,7 @@ async fn desk_scans(
     Json(req): Json<DeskScanReq>,
 ) -> Response {
     if let Err(r) = pre(&s, &headers).await {
-        return r;
+        return *r;
     }
     let result = s.mock.lock().unwrap().desk_scan(req);
     post_commit(&s).await;
@@ -149,7 +166,7 @@ async fn bindings(
     Json(req): Json<BindingReq>,
 ) -> Response {
     if let Err(r) = pre(&s, &headers).await {
-        return r;
+        return *r;
     }
     let result = s.mock.lock().unwrap().bind(req);
     post_commit(&s).await;
@@ -174,7 +191,7 @@ async fn lookup(
     Query(q): Query<LookupQuery>,
 ) -> Response {
     if let Err(r) = pre(&s, &headers).await {
-        return r;
+        return *r;
     }
     let resp = s.mock.lock().unwrap().lookup(&q.uid_raw_hex);
     Json(resp).into_response()
@@ -187,7 +204,7 @@ async fn observations(
 ) -> Response {
     let station = match pre(&s, &headers).await {
         Ok(st) => st,
-        Err(r) => return r,
+        Err(r) => return *r,
     };
     if req.observations.len() > MAX_OBSERVATION_BATCH {
         return error(

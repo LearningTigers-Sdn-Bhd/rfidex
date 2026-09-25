@@ -17,8 +17,10 @@ pub enum ApiError {
     /// HTTP 2xx whose body does not match the contract (server/app version drift).
     #[error("unreadable server reply: {0}")]
     BadResponse(String),
+    /// `body` is boxed: `ErrorBody` is ~184 bytes and would otherwise make
+    /// every `Result<_, ApiError>` (and the errors wrapping it) oversized.
     #[error("rejected with {status}: {}", body.message)]
-    Rejected { status: u16, body: ErrorBody },
+    Rejected { status: u16, body: Box<ErrorBody> },
 }
 
 #[derive(Clone)]
@@ -106,15 +108,18 @@ impl ApiClient {
         if status.is_server_error() || status == StatusCode::TOO_MANY_REQUESTS {
             return Err(ApiError::Retryable(format!("http {status}")));
         }
-        let body = resp.json::<ErrorBody>().await.unwrap_or(ErrorBody {
-            error: ErrorCode::Malformed,
-            message: format!("http {status}"),
-            holder: None,
-            binding: None,
-        });
+        let body = resp
+            .json::<ErrorBody>()
+            .await
+            .unwrap_or_else(|_| ErrorBody {
+                error: ErrorCode::Malformed,
+                message: format!("http {status}"),
+                holder: None,
+                binding: None,
+            });
         Err(ApiError::Rejected {
             status: status.as_u16(),
-            body,
+            body: Box::new(body),
         })
     }
 }

@@ -1,10 +1,4 @@
 //! Registration desk flow (spec §3.1 Bind, §3.2 Write).
-//!
-//! `DeskError` is larger than clippy's `result_large_err` threshold because its
-//! `Api` variant carries the server's `ErrorBody` (holder name, binding) that
-//! staff need to see. The error enum is part of the station interface, so it
-//! stays inline rather than boxed.
-#![allow(clippy::result_large_err)]
 
 use std::sync::{Arc, Mutex};
 

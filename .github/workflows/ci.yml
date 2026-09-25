@@ -1,14 +1,25 @@
 name: ci
 on:
   push:
+    paths-ignore: ["**.md"]
   pull_request:
+    paths-ignore: ["**.md"]
+
+# A newer push makes the running check pointless.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # No debug info: CI never attaches a debugger, and it cuts compile and
+  # (slow, on Windows) link time.
+  CARGO_PROFILE_DEV_DEBUG: 0
+
 jobs:
-  test:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+  # fmt and clippy are platform-neutral here, so they run once, in parallel
+  # with the tests, on the fastest runner.
+  lint:
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       # The app crate embeds the built frontend, so the frontend goes first.
@@ -17,20 +28,18 @@ jobs:
           node-version: lts/*
           cache: npm
           cache-dependency-path: app/package-lock.json
-      - run: npm ci
-        working-directory: app
-      - run: npm run build
+      - run: npm ci && npm run build
         working-directory: app
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all -- --check
+      - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace
-  windows-app:
-    # The shipping target is Windows, so build the real native binary there.
-    # This is a development build, not an installer.
+
+  # Windows is the shipping target. `cargo test --workspace` also compiles the
+  # Tauri app crate, so no separate app build job is needed.
+  test:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -39,10 +48,8 @@ jobs:
           node-version: lts/*
           cache: npm
           cache-dependency-path: app/package-lock.json
-      - run: npm ci
-        working-directory: app
-      - run: npm run build
+      - run: npm ci && npm run build
         working-directory: app
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build -p rfidex-app
+      - run: cargo test --workspace

@@ -1,211 +1,306 @@
+<div align="center">
+
+<img src="app/app-icon.svg" alt="RfiDex" width="112" height="112" />
+
 # RfiDex
 
-RFID registration desk + entry/exit gate app for EventzFlow.
+**RFID registration desk and entry/exit gates for EventzFlow events.**<br/>
+Scan a ticket, tag a sticker, walk through a gate — online or off.
 
-Design: `../docs/superpowers/specs/2026-09-25-rfidex-design.md` (§0, §2, §3).
+[![CI](https://github.com/LearningTigers-Sdn-Bhd/rfidex/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/LearningTigers-Sdn-Bhd/rfidex/actions/workflows/ci.yml)
+![Tests](https://img.shields.io/badge/tests-108_passing-2ea44f?style=for-the-badge&logo=checkmarx&logoColor=white)
+![Platform](https://img.shields.io/badge/platform-Windows_x64-0078D4?style=for-the-badge&logo=windows&logoColor=white)
+![Status](https://img.shields.io/badge/status-simulator_ready-f5a623?style=for-the-badge)
 
-Simulated devices only. There is no real-hardware adapter, no vendor DLL, no
-installer and no rehearsal runner here: those are Plan 3 / P4.
+![Rust](https://img.shields.io/badge/Rust-stable-000000?style=flat-square&logo=rust&logoColor=white)
+![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB?style=flat-square&logo=tauri&logoColor=white)
+![React](https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react&logoColor=black)
+![TypeScript](https://img.shields.io/badge/TypeScript-7-3178C6?style=flat-square&logo=typescript&logoColor=white)
+![Vite](https://img.shields.io/badge/Vite-8-646CFF?style=flat-square&logo=vite&logoColor=white)
+![SQLite](https://img.shields.io/badge/SQLite-WAL-003B57?style=flat-square&logo=sqlite&logoColor=white)
+![Tokio](https://img.shields.io/badge/Tokio-async-6E4A7E?style=flat-square)
+![Axum](https://img.shields.io/badge/Axum-0.8_mock_server-7B3F00?style=flat-square)
 
-## What is in the repository
+[Features](#-features) ·
+[Roadmap](#%EF%B8%8F-roadmap) ·
+[Architecture](#%EF%B8%8F-architecture) ·
+[Development](#-development) ·
+[Operations](#-operations) ·
+[Privacy](#-privacy)
 
-- `rfidex-core` — device-neutral logic: tags, sticker codec, outbox, sync, stations.
-- `rfidex-mock` — in-memory mock of the EventzFlow device API, for development and tests.
-- `rfidex-runtime` — the application logic: per-station stores and workers, desk and
-  gate views, problems, status, diagnostics. No Tauri types.
-- `app/` — the desktop shell: React + Vite + TypeScript screens (`app/src`) and a thin
-  Tauri 2 command layer (`app/src-tauri`). Every operator message is written in Rust;
-  the UI renders it.
+</div>
 
-## Prerequisites
+---
 
-- Rust stable (the toolchain in `rust-toolchain` terms: `cargo 1.96`, `rustfmt` and
-  `clippy` components).
-- Node 20.19+ and npm (Vite 8 requires it). Only npm is used; there is no Bun setup.
-- Tauri 2 system prerequisites for your OS (on macOS, Xcode command line tools; on
-  Windows, WebView2 — present by default on Windows 10 21H2+ and 11).
+## ✨ Features
 
-## Develop
+<table>
+<tr>
+<td width="50%" valign="top">
+
+### 🎫 Registration desk
+- Keyboard-wedge QR scan — the scanner types, Enter submits
+- **Bind mode:** links the sticker's UID to the ticket
+- **Write mode:** writes the ticket onto the sticker, reads it back, *and* binds the UID
+- Sticker already in use? Shows whose it is and asks for a reason before replacing
+- Two stickers on the reader are refused, never guessed
+
+</td>
+<td width="50%" valign="top">
+
+### 🚪 Entry & exit gates
+- Large result panel: name, direction, **Welcome** / **Goodbye**
+- The station's configured role is authoritative, whatever the reader reports
+- Repeat entry, entry without check-in and payload mismatches shown as plain-language warnings
+- Unknown sticker is denied — never a made-up name
+- Records or live-inventory gates, with per-station debounce
+
+</td>
+</tr>
+<tr>
+<td valign="top">
+
+### 📡 Offline-first
+- Every action committed to SQLite **before** it's acknowledged
+- Offline passages say **Recorded**, never *Accepted*
+- Durable outbox with backoff; the same row flips to accepted on reconnect
+- An offline desk says the badge prints when the connection returns — no false promises
+
+</td>
+<td valign="top">
+
+### 🛡️ Safe by construction
+- One PC runs any mix of desk + gates, each with its **own** store, client and UUID
+- **Event guard:** queued work never reaches a different event
+- Problems list: dismissing hides, never deletes evidence
+- Diagnostics CSV is allowlisted — no names, no full UIDs, no key
+
+</td>
+</tr>
+</table>
+
+---
+
+## 🗺️ Roadmap
+
+```text
+Overall  ███████░░░░░░░░░░░░░░  2 / 6 plans complete
+```
+
+| # | Phase | Scope | Status |
+|:-:|:--|:--|:--|
+| 1 | **P0 + P1** | Core logic, sticker codec, durable outbox, mock EventzFlow server | ![done](https://img.shields.io/badge/-done-2ea44f?style=flat-square) |
+| 2 | **P2** | Tauri desktop app — setup, desk, gates, problems, simulator | ![done](https://img.shields.io/badge/-done-2ea44f?style=flat-square) |
+| 3 | **P3** | 500-ticket simulated event rehearsal + Windows installer | ![next](https://img.shields.io/badge/-next-f5a623?style=flat-square) |
+| 4 | **P4** | Real ECRFID desk and gate hardware | ![waiting](https://img.shields.io/badge/-on_hardware_arrival-lightgrey?style=flat-square) |
+| 5 | **P5** | EventzFlow backend: RFID endpoints, visits, reports | ![approval](https://img.shields.io/badge/-needs_approval-lightgrey?style=flat-square) |
+| 6 | **P6** | EventzFlow panel RFID tab | ![approval](https://img.shields.io/badge/-needs_approval-lightgrey?style=flat-square) |
+
+```mermaid
+flowchart LR
+    P1["✅ P0+P1<br/>Core + mock"] --> P2["✅ P2<br/>Desktop app"]
+    P2 --> P3["⏳ P3<br/>Rehearsal + installer"]
+    P2 --> P4["⏳ P4<br/>Hardware"]
+    P3 --> P5["🔒 P5<br/>Backend"]
+    P4 --> P5
+    P5 --> P6["🔒 P6<br/>Panel"]
+    classDef done fill:#2ea44f,stroke:#1a7f37,color:#fff
+    classDef next fill:#f5a623,stroke:#c78100,color:#000
+    classDef locked fill:#d0d7de,stroke:#8c959f,color:#24292f
+    class P1,P2 done
+    class P3,P4 next
+    class P5,P6 locked
+```
+
+---
+
+## 🏗️ Architecture
+
+```mermaid
+flowchart TB
+    subgraph APP["🖥️ app/ — Tauri 2 shell"]
+        UI["React screens<br/>Setup · Desk · Gate · Problems · Simulator"]
+        CMD["Thin command layer<br/>RwLock around the runtime"]
+        UI -- "invoke()" --> CMD
+    end
+
+    subgraph RT["⚙️ rfidex-runtime"]
+        RUN["Runtime<br/>per-station tasks · status · sync · shutdown"]
+        VIEWS["Desk session · Gate views<br/>Problems · Diagnostics"]
+    end
+
+    subgraph CORE["🧩 rfidex-core"]
+        ST["DeskStation / GateStation"]
+        SYNC["SyncWorker + backoff"]
+        STORE[("SQLite per station<br/>WAL · synchronous=FULL")]
+        DEV["Device traits<br/>SimDesk · SimGate · ECRFID in P4"]
+    end
+
+    SERVER["☁️ EventzFlow API<br/>rfidex-mock in development"]
+
+    CMD --> RUN --> VIEWS
+    RUN --> ST
+    RUN --> SYNC
+    ST --> DEV
+    ST --> STORE
+    SYNC --> STORE
+    SYNC -- "HTTPS · API key · X-RfiDex-Station" --> SERVER
+```
+
+| Crate | Role |
+|:--|:--|
+| [`rfidex-core`](crates/rfidex-core) | Device-neutral logic: tag keys, 20-byte sticker codec with CRC-8, outbox, sync, desk & gate stations, health |
+| [`rfidex-mock`](crates/rfidex-mock) | In-memory EventzFlow device API with fault switches: down, delay, 5xx, hang-after-commit, bad body |
+| [`rfidex-runtime`](crates/rfidex-runtime) | All application behaviour and every operator sentence — no Tauri types |
+| [`app/`](app) | React + Vite + TypeScript screens and a thin Tauri command layer |
+
+> [!TIP]
+> Every decision and every message the operator reads is written in Rust. React only renders.
+
+### 🔄 Desk flow
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Staff
+    participant Desk as RfiDex desk
+    participant DB as Station SQLite
+    participant API as EventzFlow
+
+    Staff->>Desk: Scan ticket QR
+    Desk->>API: Desk scan (check-in, badge prints)
+    alt online
+        API-->>Desk: Ticket + current sticker
+    else offline
+        Desk->>DB: Queue scan, use cached ticket
+        Desk-->>Staff: Offline — badge will print later
+    end
+    Staff->>Desk: Place one sticker
+    opt sticker already in use
+        Desk-->>Staff: Belongs to someone else. Replace? (reason required)
+    end
+    Desk->>DB: Commit binding (write mode writes + reads back first)
+    Desk->>API: Send binding now or on reconnect
+    Desk-->>Staff: ✅ Sticker linked
+```
+
+---
+
+## 🚀 Development
+
+**Prerequisites:** Rust stable with `rustfmt` + `clippy` · Node 20.19+ with npm · [Tauri 2 prerequisites](https://v2.tauri.app/start/prerequisites/) (Xcode command line tools on macOS, WebView2 on Windows).
 
 ```bash
-# everything headless
-cargo test --workspace
-
-# the mock EventzFlow server (development and tests only)
+# 1 — the mock EventzFlow server (development only)
 cargo run -p rfidex-mock -- \
   --port 4010 \
-  --api-key <32+ characters, no spaces> \
+  --api-key rfidex_demo_key_0123456789abcdefghij \
   --tickets app/dev/tickets.json \
   --event-name "RfiDex Demo" \
-  --mode bind
+  --mode bind            # or: write
 ```
-
-`app/dev/tickets.json` holds four fictional demo tickets (Aina, Ben, Chong, Devi).
-`--mode write` starts the event in sticker-write mode instead of bind mode; the mode
-is an event setting on the server, never a local switch.
 
 ```bash
-# the desktop app
+# 2 — the desktop app
 cd app
 npm ci
-npm run build          # tsc --noEmit && vite build
-npm run tauri dev      # dev window against the Vite server on 127.0.0.1:1420
+npm run tauri dev        # native window, Vite on 127.0.0.1:1420
 ```
 
-The app crate embeds `app/dist`, so **build the frontend before any cargo command that
-builds `rfidex-app`** — that ordering is what CI does too.
+Then in **Setup**: server `http://127.0.0.1:4010`, the key above, then add one desk plus an entry and an exit gate. Demo tickets are fictional: Aina and Ben (valid), Chong (unpaid), Devi (cancelled).
 
-## Setup, and what it deliberately does not have
+> [!IMPORTANT]
+> The app crate embeds `app/dist`. **Run `npm run build` before any cargo command that builds `rfidex-app`** — CI does the same.
 
-There is **no PIN, no staff login and no per-device credential**. Setup opens from the
-Setup button for anyone standing at the computer, by an explicit decision on
-2026-09-25 to keep the system simple. Two things protect it instead:
+### ✅ Checks
 
-- the saved API key is never sent back to the UI — Setup only learns whether a key
-  exists, so editing shows `has_api_key` and a blank field;
-- changing a gate's entry/exit direction asks for confirmation in a dialog that names
-  the station and the move, because it changes what every later passage means.
+```bash
+(cd app && npm ci && npm run build)
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace          # 108 tests
+cargo build -p rfidex-app
+```
 
-Both the server address and the API key can be changed at any time, even with work
-still queued: a revoked or wrong key is exactly what stops a queue draining, so
-blocking the change would strand the work. Wrong-event delivery is prevented by the
-event guard below, not by blocking setup.
+<details>
+<summary><b>📋 Runtime acceptance suite</b> — the real runtime against the real mock over HTTP</summary>
+<br/>
 
-Editing with a blank key keeps the saved one. A corrupt config file is reported as an
-error rather than looking like a fresh install, so station UUIDs are never silently
-lost. Removing a station while it still has pending or problem rows is refused, and a
-removed station's database is **kept**, never deleted or reused for a different
-station.
+| Scenario | Test |
+|:--|:--|
+| Three stations register under their own UUIDs | `heartbeat_registers_three_stations` |
+| Desk follows the event's bind/write mode | `desk_follows_the_event_mode` |
+| Link waits for a scan and exactly one sticker | `bind_flow_waits_for_scan_and_one_sticker` |
+| A failed scan can't link the previous attendee | `a_failed_scan_cannot_link_the_previous_attendee` |
+| Replacement needs a reason and binds only the warned sticker | `confirm_is_required_and_binds_only_the_sticker_that_was_warned_about` |
+| Written sticker → Welcome at entry, Goodbye at exit | `written_sticker_yields_welcome_and_goodbye` |
+| Offline passage recorded, then accepted on the same row | `an_offline_passage_is_recorded_then_accepted_on_the_same_row` |
+| Offline conflict names the holder and can be dismissed | `an_offline_conflict_names_the_holder_and_can_be_dismissed` |
+| Event guard parks rows for another event | `event_guard_parks_rows_for_another_event` |
+| Rejected key is *unauthorized*, not *offline* | `a_rejected_key_is_unauthorized_rather_than_offline` |
+| Connection test changes nothing on the server | `connection_test_reports_and_changes_nothing` |
+| Diagnostics keep names and raw UIDs out | `diagnostics_export_keeps_people_and_raw_uid_out` |
+| Shutdown finishes even when the server stalls | `shutdown_finishes_even_when_the_server_stalls` |
 
-### The event guard
+</details>
 
-Sync pauses until a heartbeat has confirmed which event this station's rows belong to.
-If the key has been moved to a different event while rows are waiting, the rows stay
-queued, the saved settings are left alone, and the status line says so. With an empty
-queue the station adopts the new event instead of blocking.
+---
 
-## Offline behaviour
+## 🧭 Operations
 
-Each station has its own SQLite store: ticket and binding cache, config, and a durable
-outbox. Every write is committed (WAL, `synchronous = FULL`) before a function returns,
-and a gate read is only released to the device after it is committed.
+### Setup — simple on purpose
 
-- Desk work continues from the cache while offline and says **"Offline — badge will
-  print when connection returns."** Badge printing is triggered by the server after
-  check-in, so an offline desk cannot print. This is a stated limitation, not a bug.
-- A gate passage taken offline shows as **Recorded — waiting for the server**, never as
-  accepted. When the server returns, the same local row becomes accepted or denied.
-- **Sync now** means "try a normal sync pass now". It respects the retry backoff; it
-  does not reset attempts or force a retry that is not due yet.
+There is **no PIN, no staff login and no per-device credential.** Instead:
 
-## Where the data lives
+- the saved API key is **never sent back** to the screen — editing shows a blank field, and leaving it blank keeps the saved key;
+- changing a gate between **entry and exit** asks for confirmation, because it changes what every later passage means;
+- the server address and key can change at any time, even with work queued — the **event guard** holds that work back from a different event. With an empty queue, a new event is simply adopted.
 
-The app root is exactly Tauri's `app_local_data_dir()`:
+### Status at a glance
+
+| You see | It means |
+|:--|:--|
+| 🟢 **Accepted** — Welcome / Goodbye | The server confirmed the passage |
+| 🟡 **Recorded — waiting for the server** | Saved locally; sends on reconnect |
+| 🔴 **Denied** + reason | Unknown, replaced, wrong-event or invalid sticker |
+| 🟠 **Problem** | Conflict or unsendable row — see Problems |
+| **Unauthorized** | The server rejected the API key (not the same as offline) |
+| **Different event** | The key belongs to another event while work is queued — rows held |
+
+> [!NOTE]
+> **Sync now** means "try a normal pass now" — it respects retry backoff.
+> **Dismiss from this list** hides a problem; it does not delete, retry or fix it.
+
+### Where data lives
 
 | OS | Path |
-|---|---|
-| Windows | `%LOCALAPPDATA%\com.eventzflow.rfidex\` — per user, not ProgramData and not a shared installation folder |
-| macOS | `~/Library/Application Support/com.eventzflow.rfidex/` |
+|:--|:--|
+| 🪟 Windows | `%LOCALAPPDATA%\com.eventzflow.rfidex\` (per user) |
+| 🍎 macOS | `~/Library/Application Support/com.eventzflow.rfidex/` |
 
+```text
+config.json          server address, API key, station list
+stations/<uuid>.db   one SQLite database per station (kept even if the station is removed)
+exports/             diagnostics CSV files
 ```
-config.json                 server address, API key, station list
-stations/<uuid>.db          one database per station
-exports/                    diagnostics CSV files
-```
 
-**Privacy and audit.** The API key is stored in plain text in `config.json`, and each
-station database contains attendee names from the ticket cache. They are protected only
-by the operating system's per-user permissions for that directory: there is no
-encryption at rest and no isolation beyond the OS account. On a shared PC, any account
-that can read those files can read the attendee names. This is recorded as an audit
-item rather than a solved problem.
+---
 
-## Diagnostics
+## 🔒 Privacy
 
-**Export diagnostics** writes an allowlisted CSV to `<app root>/exports/` and shows the
-path. Columns:
+> [!WARNING]
+> The API key is stored in plain text in `config.json`, and station databases hold attendee names from the ticket cache. They are protected **only by the OS user account's file permissions** — there is no encryption at rest. Use a dedicated Windows account on shared PCs.
+
+The **diagnostics export** is built from an allowlist, so personal data can't leak by accident:
 
 ```csv
 station_id,row_id,kind,state,captured_at,attempts,uid_last4,outcome,problem_code
 ```
 
-It never contains attendee names, ticket ids, full sticker UIDs, the API key, raw
-server replies or memory payloads — those are not read while building the file, so they
-cannot leak by accident. `uid_last4` is the last four characters of a validated UID, and
-every cell is quoted with leading formula characters defused. A new export is always a
-new file; a failed write removes the half-written one.
+No names, ticket IDs, full UIDs, API key, server replies or sticker memory. Every cell is quoted and leading formula characters (`= + - @`) are defused.
 
-**Test connection** in Setup checks the address and key by reading one binding lookup.
-It does not register a station, scan, bind or post anything.
+---
 
-## Stations, workers and what the screens show
-
-One PC can run any mix of desk and gates. Each station owns its own store, its own API
-client carrying its own UUID in `X-RfiDex-Station`, and its own sync worker.
-
-- **Desk** — scan the ticket code (a keyboard-wedge scanner types into the focused
-  field and presses Enter), then place one sticker. Two stickers are refused rather
-  than guessed at. A sticker or ticket that is already linked asks for a reason before
-  replacing it, and confirming one sticker never authorises a different one.
-- **Gate** — the newest passage fills the top panel and older ones list below. A
-  passage that has not reached the server says so in words, and server warnings are
-  shown as sentences rather than enum names.
-- **Problems** — conflicts and parked rows from every station, newest first.
-  **"Dismiss from this list" hides the row; it does not delete it, retry it, or fix
-  the server's answer.** The row keeps its payload and its server reply as evidence.
-- **Simulator** — visible only for a simulated station, and visually separated from the
-  operator screens. It stands in for hardware that is not here yet.
-
-Status apart from the screen: a rejected API key is `unauthorized`, which is not the
-same as offline; a failed disk measurement says so rather than reporting a healthy
-value; and a quiet heartbeat cannot hide a local save or reader failure.
-
-## Tests
-
-```bash
-cargo test --workspace        # 108 tests
-cd app && npm run build       # type-check and bundle
-cargo build -p rfidex-app     # the native binary
-```
-
-The runtime acceptance set runs the real `rfidex-runtime` against the real
-`rfidex-mock` over HTTP — not against command mocks:
-
-| Scenario | Test |
-|---|---|
-| Three stations register under their own UUIDs; the desk follows the event mode | `heartbeat_registers_three_stations`, `desk_follows_the_event_mode` |
-| Link before scan, no tag, place tag, linked | `bind_flow_waits_for_scan_and_one_sticker` |
-| Confirmation requires a reason and binds only the sticker warned about | `confirm_is_required_and_binds_only_the_sticker_that_was_warned_about` |
-| A written sticker yields Welcome at entry and Goodbye at exit | `written_sticker_yields_welcome_and_goodbye` |
-| Offline passage recorded, then accepted on the same row | `an_offline_passage_is_recorded_then_accepted_on_the_same_row` |
-| Offline conflict names the holder and can be dismissed | `an_offline_conflict_names_the_holder_and_can_be_dismissed` |
-| Export contains no names or full UID | `diagnostics_export_keeps_people_and_raw_uid_out` |
-| A bad key is unauthorized, not offline | `a_rejected_key_is_unauthorized_rather_than_offline` |
-| Connection check good and bad, with no side effects | `connection_test_reports_and_changes_nothing` |
-| Shutdown finishes within its budget | `shutdown_finishes_even_when_the_server_stalls` |
-| Event guard parks rows for another event | `event_guard_parks_rows_for_another_event` |
-
-## Verification evidence
-
-Screenshots and transcripts for the Plan 2 verification live outside this repository
-in `../docs/rfidex-evidence/plan2/`.
-
-- `native-run/` — the real Tauri window, in write mode, driven through the real screens
-  by a temporary in-window fixture (deleted afterwards). The desk checked in two
-  attendees, wrote and bound two stickers, and one sticker then passed both gates; the
-  mock shows both bindings with `mode: "written"`, the gate databases show both
-  passages accepted with no anomalies, and the block data each gate read decodes to the
-  ticket that was written. A failure would have left an unknown sticker's denial in the
-  entry database.
-- `browser-*.png` — the operator screens rendered at 1366×768 with the Tauri IPC
-  transport stubbed. **Supplementary only:** they show the layout, and the Rust side is
-  never stubbed anywhere. Native screenshots could not be taken on the verification
-  machine, which grants no Screen Recording permission.
-
-Not verified on that machine: the Windows CI job (no remote may be pushed, and no
-Windows SDK is available locally) and anything requiring a Windows build.
-
-## Not in this plan
-
-No installer is produced or certified, no rehearsal scenario runner exists, and no
-real-hardware adapter is present or claimed to work. Those are Plan 3 and P4.
+<div align="center">
+<sub>Built for EventzFlow · Windows x64 · Simulator-verified, hardware pending (P4)</sub>
+</div>

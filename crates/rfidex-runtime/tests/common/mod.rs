@@ -48,6 +48,9 @@ pub fn seeds() -> Vec<SeedTicket> {
         seed(2, "Ben", true, false),
         seed(3, "Chong", false, false),
         seed(4, "Devi", true, true),
+        // A second valid ticket with no sticker, so a test can create a
+        // genuine two-sided conflict without one side having to replace.
+        seed(5, "Ely", true, false),
     ]
 }
 

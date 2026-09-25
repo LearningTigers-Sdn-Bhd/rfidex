@@ -793,3 +793,155 @@ async fn an_empty_gate_denies_with_a_reason_and_never_a_welcome() {
     assert!(rows[0].name.is_none(), "no fabricated name");
     h.stop().await;
 }
+
+/// Everything the connection check must not touch.
+fn server_fingerprint(h: &Harness) -> (Vec<String>, usize, usize, usize) {
+    let mock = h.server.mock.lock().unwrap();
+    let mut stations: Vec<String> = mock.stations.keys().cloned().collect();
+    stations.sort();
+    (
+        stations,
+        mock.scan_log_count,
+        mock.active_bindings().len(),
+        mock.observation_count(),
+    )
+}
+
+#[tokio::test]
+async fn connection_test_reports_and_changes_nothing() {
+    let mut h = Harness::start(RfidMode::Bind).await;
+    let before = server_fingerprint(&h);
+
+    let good = rfidex_runtime::test_connection(&h.base, common::KEY).await;
+    assert!(good.ok);
+    assert_eq!(good.code, "connected");
+    assert_eq!(good.message, "Connection works.");
+
+    let bad = rfidex_runtime::test_connection(&h.base, "wrong_key_wrong_key_wrong_key_xx").await;
+    assert!(!bad.ok);
+    assert_eq!(bad.code, "unauthorized");
+
+    for (url, key) in [
+        ("not a url", common::KEY),
+        ("http://example.test", common::KEY),
+        (&h.base.clone(), "too_short"),
+        (&h.base.clone(), "has spaces in it which is not allowed"),
+    ] {
+        let invalid = rfidex_runtime::test_connection(url, key).await;
+        assert!(
+            !invalid.ok,
+            "{url} / {key} must be refused before any request"
+        );
+        assert_eq!(invalid.code, "invalid_setup");
+        assert!(!invalid.message.is_empty());
+    }
+
+    let dead = rfidex_runtime::test_connection("http://127.0.0.1:9", common::KEY).await;
+    assert!(!dead.ok);
+    assert_eq!(dead.code, "offline");
+
+    assert_eq!(
+        before,
+        server_fingerprint(&h),
+        "a connection check must not register a station or change attendee state"
+    );
+    h.stop().await;
+}
+
+#[tokio::test]
+async fn diagnostics_export_keeps_people_and_raw_uid_out() {
+    let mut h = Harness::start(RfidMode::Write).await;
+    let desk = desk_id();
+
+    // A real link, a real accepted passage, and a real conflict to export.
+    h.runtime
+        .desk_scan(desk, &ticket(2).to_string())
+        .await
+        .unwrap();
+    h.runtime.sim_place(desk, TAG_A).await.unwrap();
+    h.runtime.desk_link(desk, None).await.unwrap();
+    h.runtime.sim_clear(desk).await.unwrap();
+    h.runtime.sim_pass(exit_id(), TAG_A).await.unwrap();
+    eventually("the passage to be accepted", || async {
+        h.observations() == 1
+    })
+    .await;
+
+    // Offline, Ely takes TAG_B; meanwhile the server gives TAG_B to Aina.
+    h.set_down(true);
+    h.runtime
+        .desk_scan(desk, &ticket(5).to_string())
+        .await
+        .unwrap();
+    h.runtime.sim_place(desk, TAG_B).await.unwrap();
+    assert!(h.runtime.desk_link(desk, None).await.unwrap().offline);
+    let bound = h
+        .server
+        .mock
+        .lock()
+        .unwrap()
+        .bind(rfidex_core::contract::BindingReq {
+            public_id: ticket(1),
+            protocol: rfidex_core::tag::Protocol::Iso15693,
+            uid_raw_hex: TAG_B.into(),
+            mode: rfidex_core::contract::BindMode::Bind,
+            payload_version: None,
+            operation_id: ticket(9002),
+            captured_at: chrono::Utc::now(),
+            replace: false,
+            reason: None,
+        });
+    assert!(bound.is_ok(), "the competing binding must be created");
+    h.set_down(false);
+    eventually("the conflict to land", || async {
+        let _ = h.runtime.sync_now().await;
+        h.store_of(desk).count(OutboxState::Conflict).unwrap() == 1
+    })
+    .await;
+
+    let path = h.runtime.export_diagnostics().await.unwrap();
+    assert!(path.starts_with(h.paths.exports()));
+    let text = std::fs::read_to_string(&path).unwrap();
+
+    for secret in [
+        "Aina",
+        "Ben",
+        "Chong",
+        "Devi",
+        "Ely",
+        common::KEY,
+        TAG_A,
+        TAG_B,
+        &ticket(1).to_string(),
+        &ticket(2).to_string(),
+        &ticket(5).to_string(),
+        "uid_raw_hex",
+        "payload_hex",
+        "holder",
+        "api_key",
+    ] {
+        assert!(
+            !text.contains(secret),
+            "diagnostics must not contain {secret:?}"
+        );
+    }
+
+    assert!(text.starts_with(
+        "station_id,row_id,kind,state,captured_at,attempts,uid_last4,outcome,problem_code\r\n"
+    ));
+    assert!(
+        text.contains("04E0"),
+        "a short UID suffix is kept for support"
+    );
+    assert!(text.contains("observation"));
+    assert!(text.contains("binding"));
+    assert!(text.contains("accepted"));
+    assert!(text.contains("uid_bound_elsewhere"));
+    assert!(text.contains(&desk.to_string()));
+
+    // A second export is a second file, never an overwrite.
+    let second = h.runtime.export_diagnostics().await.unwrap();
+    assert_ne!(path, second);
+    assert!(path.exists() && second.exists());
+    h.stop().await;
+}

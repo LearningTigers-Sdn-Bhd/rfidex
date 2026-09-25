@@ -8,6 +8,7 @@ use std::fmt;
 pub mod config;
 pub mod desk;
 pub mod devices;
+pub mod diagnostics;
 pub mod gate;
 pub mod problems;
 pub mod runtime;
@@ -17,6 +18,7 @@ pub use config::{
     StationConfig,
 };
 pub use desk::{DeskStep, DeskView};
+pub use diagnostics::{test_connection, ConnectionView};
 pub use gate::{GateStatus, GateView};
 pub use problems::ProblemView;
 pub use runtime::{AppStatus, Runtime, RuntimeOptions, StationStatus};

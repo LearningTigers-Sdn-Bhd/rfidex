@@ -176,6 +176,20 @@ impl StationRuntime {
             .map_err(|_| store_failure())
     }
 
+    /// Outbox rows read under the store lock and returned before any file work
+    /// begins, so the diagnostics export never writes while holding it.
+    pub(crate) fn outbox_rows(
+        &self,
+        states: &[OutboxState],
+        kind: Option<OutboxKind>,
+        limit: usize,
+    ) -> Result<Vec<rfidex_core::store::OutboxRow>, rfidex_core::store::StoreError> {
+        self.store
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .rows(states, kind, limit)
+    }
+
     async fn device_info(&self) -> Option<rfidex_core::device::DeviceInfo> {
         match &self.device {
             StationDevice::Desk(d) => {

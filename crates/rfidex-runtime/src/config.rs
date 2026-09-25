@@ -19,6 +19,7 @@ pub enum ConfigError {
     Json(#[from] serde_json::Error),
 }
 
+#[derive(Debug, Clone)]
 pub struct AppPaths {
     root: PathBuf,
     pub config_file: PathBuf,

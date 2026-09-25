@@ -1,3 +1,17 @@
+# Deviations from the plan
+
+One entry per deviation: task, what changed, why.
+
+## Plan 2 / Task 3 — `desk.rs` created one task early
+
+- **What changed:** `crates/rfidex-runtime/src/desk.rs` exists after Task 3 instead of first appearing in Task 4. It holds only `DeskView`, `DeskStep`, `PendingConfirm` and the `DeskSession` constructor; Task 4 adds the transitions.
+- **Why:** Task 3 Step 3 owns `StationDevice::Desk(tokio::sync::Mutex<DeskSession>)`, so the session type has to compile before Task 4's file map says the file is created. No behaviour is implemented early.
+
+## Plan 2 / Task 3 — clippy `large_enum_variant` on `StationDevice`
+
+- **What changed:** both variants are boxed — `Desk(Box<tokio::sync::Mutex<DeskSession>>)` and `Gate(Box<tokio::sync::Mutex<GateStation<GateDevice>>>)` — with a comment. The enum, its matching, and every call site are otherwise unchanged.
+- **Why:** clippy 1.96 reports `large size difference between variants` (`-D warnings`), first at 448 vs 232 bytes and again at 232 vs 8 once only the desk was boxed. Boxing both is one allocation per station at startup and removes the lint without an `#[allow]`.
+
 # Deviations from `docs/superpowers/plans/2026-09-25-rfidex-1-core-and-mock.md`
 
 One entry per deviation: task, what changed, why.

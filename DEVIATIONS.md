@@ -2,6 +2,11 @@
 
 One entry per deviation: task, what changed, why.
 
+## Plan 2 / Task 9 — the live walkthrough could not be driven, and Windows CI could not run
+
+- **What changed:** nothing in the code. The live evidence is limited to what the running app can be observed doing from outside: it started all three stations, followed the event from bind to write mode, and left the saved settings untouched under a rejected key. The interaction-driven rows of Task 9 Step 5, and the `windows-app` job result, are recorded as unverified rather than passed.
+- **Why:** the verification machine grants neither Screen Recording (`screencapture`: `could not create image from display`) nor assistive access (`osascript ... is not allowed assistive access (-1719)`), so the window cannot be seen or clicked; ScreenCaptureKit needs the same permission. GitHub Actions cannot be run without pushing or creating a remote, which this run is not allowed to do, and a Windows cross-build is not possible from macOS without the Windows SDK. Every behaviour those rows describe is covered headlessly against the real mock — see the README's acceptance table — but that is headless evidence, not a native walkthrough.
+
 ## Plan 2 / Task 8 — `src/vite-env.d.ts` for the CSS import
 
 - **What changed:** added `app/src/vite-env.d.ts` containing `/// <reference types="vite/client" />`. The file map does not list it.

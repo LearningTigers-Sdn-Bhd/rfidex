@@ -1,0 +1,6 @@
+[
+  { "public_id": "00000000-0000-0000-0000-000000000001", "name": "Aina Demo", "ticket_type": "VIP", "paid": true, "cancelled": false },
+  { "public_id": "00000000-0000-0000-0000-000000000002", "name": "Ben Demo", "ticket_type": "General", "paid": true, "cancelled": false },
+  { "public_id": "00000000-0000-0000-0000-000000000003", "name": "Chong Demo", "ticket_type": "General", "paid": false, "cancelled": false },
+  { "public_id": "00000000-0000-0000-0000-000000000004", "name": "Devi Demo", "ticket_type": "General", "paid": true, "cancelled": true }
+]

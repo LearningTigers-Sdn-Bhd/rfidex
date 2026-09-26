@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
 use rfidex_core::client::{ApiClient, ApiError};
-use rfidex_core::contract::{HeartbeatReq, HeartbeatResp, RfidMode, Role, StationKind};
+use rfidex_core::contract::{HeartbeatReq, HeartbeatResp, RfidMode, Role, SearchBy, StationKind};
 use rfidex_core::device::{DeviceError, GateKind, GateSource, TagReaderWriter};
 use rfidex_core::station::desk::DeskStation;
 use rfidex_core::station::gate::{GateError, GateStation};
@@ -415,7 +415,7 @@ impl StationRuntime {
     }
 }
 
-fn store_failure() -> RuntimeError {
+pub(crate) fn store_failure() -> RuntimeError {
     RuntimeError::new(
         "save_failed",
         "Could not save this action on this computer. Stop and ask for help.",
@@ -717,6 +717,26 @@ impl Runtime {
     pub async fn desk_reset(&self, station: Uuid) -> Result<DeskView, RuntimeError> {
         let (_, mut session) = self.desk_session(station).await?;
         Ok(crate::desk::reset(&mut session))
+    }
+
+    /// Find a guest by name, email or phone. A question, never an action: no
+    /// check-in, no print, no queue row, and no lock held over the request.
+    pub async fn desk_search(
+        &self,
+        station: Uuid,
+        by: SearchBy,
+        query: &str,
+    ) -> Result<crate::search::SearchView, RuntimeError> {
+        let runtime = self.station(station)?;
+        if runtime.kind() != StationKind::Desk {
+            return Err(wrong_station("search for a ticket"));
+        }
+        // Rows belong to another event: searching would show this desk the
+        // wrong guests, so the cache is not used either.
+        if runtime.event_mismatch() {
+            return Err(RuntimeError::new("different_event", DIFFERENT_EVENT));
+        }
+        crate::search::desk_search(&runtime.client, &runtime.store, by, query).await
     }
 
     async fn desk_session(

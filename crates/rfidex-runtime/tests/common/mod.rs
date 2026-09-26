@@ -88,6 +88,7 @@ pub fn desk_station() -> StationConfig {
         device: DeviceChoice::SimDesk,
         debounce_secs: 5,
         write_start_block: 0,
+        printer_url: rfidex_runtime::default_printer_url(),
     }
 }
 
@@ -103,6 +104,7 @@ pub fn gate_station(id: Uuid, name: &str, role: Role) -> StationConfig {
         },
         debounce_secs: 5,
         write_start_block: 0,
+        printer_url: rfidex_runtime::default_printer_url(),
     }
 }
 

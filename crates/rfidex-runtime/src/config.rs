@@ -86,10 +86,19 @@ pub struct StationConfig {
     pub debounce_secs: u64,
     #[serde(default)]
     pub write_start_block: u8,
+    /// The badge printer app on this PC. A desk prints; a gate does not, but
+    /// the field is kept on every station so a change of kind is not a
+    /// migration. Old config files acquire the default and lose nothing.
+    #[serde(default = "default_printer_url")]
+    pub printer_url: String,
 }
 
 fn default_debounce() -> u64 {
     5
+}
+
+pub fn default_printer_url() -> String {
+    "http://127.0.0.1:8000".into()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -139,6 +148,8 @@ impl AppConfig {
         let mut stations = input.stations;
         for station in &mut stations {
             station.name = station.name.trim().to_string();
+            // One address, one spelling: the saved form never ends in a slash.
+            station.printer_url = station.printer_url.trim().trim_end_matches('/').to_string();
         }
         let config = AppConfig {
             server_url: input.server_url.trim().trim_end_matches('/').to_string(),
@@ -174,7 +185,7 @@ pub fn validate_connection(url: &str, key: &str) -> Result<(), ConfigError> {
     let host = parsed.host_str().unwrap_or_default();
     match parsed.scheme() {
         "https" if !host.is_empty() => {}
-        "http" if matches!(host, "localhost" | "127.0.0.1" | "[::1]") => {}
+        "http" if is_loopback_host(host) => {}
         _ => {
             return Err(ConfigError::Invalid(
                 "Use https:// for the server address. Plain http:// works only on this computer."
@@ -198,10 +209,53 @@ pub fn validate_connection(url: &str, key: &str) -> Result<(), ConfigError> {
     Ok(())
 }
 
+/// The one loopback rule: plain http is allowed, and a badge printer is
+/// allowed, only for an address that names this computer. `[::1]` is how
+/// `Url::host_str` reports the IPv6 loopback.
+pub fn is_loopback_host(host: &str) -> bool {
+    matches!(host, "localhost" | "127.0.0.1" | "[::1]")
+}
+
+/// A badge printer is on this PC or it is not a printer this app may use: a
+/// remote address is refused even over https, and the address may only be the
+/// root of the host.
+pub fn validate_printer_url(value: &str) -> Result<reqwest::Url, ConfigError> {
+    let parsed = reqwest::Url::parse(value.trim())
+        .map_err(|_| ConfigError::Invalid("Enter the printer address on this PC.".into()))?;
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err(ConfigError::Invalid(
+            "The printer address cannot contain a username or password.".into(),
+        ));
+    }
+    if parsed.query().is_some() || parsed.fragment().is_some() {
+        return Err(ConfigError::Invalid(
+            "The printer address cannot contain a query or fragment.".into(),
+        ));
+    }
+    if !matches!(parsed.scheme(), "http" | "https")
+        || !is_loopback_host(parsed.host_str().unwrap_or_default())
+    {
+        return Err(ConfigError::Invalid(
+            "The badge printer must be on this PC. Keep http://127.0.0.1:8000 unless the printer app uses another port.".into(),
+        ));
+    }
+    if parsed.path() != "/" {
+        return Err(ConfigError::Invalid(
+            "The printer address cannot have a path.".into(),
+        ));
+    }
+    Ok(parsed)
+}
+
 fn validate_stations(stations: &[StationConfig]) -> Result<(), ConfigError> {
     let mut ids = std::collections::HashSet::new();
     let mut names = std::collections::HashSet::new();
     for station in stations {
+        // Only a desk prints. A gate keeps the field but is never blocked by
+        // it, so switching a station between kinds cannot strand a save.
+        if station.kind == StationKind::Desk {
+            validate_printer_url(&station.printer_url)?;
+        }
         if !ids.insert(station.id) {
             return Err(ConfigError::Invalid(
                 "Two stations share the same id. Remove one and add it again.".into(),
@@ -260,6 +314,7 @@ mod tests {
             device: DeviceChoice::SimDesk,
             debounce_secs: 5,
             write_start_block: 0,
+            printer_url: default_printer_url(),
         }
     }
 
@@ -275,6 +330,7 @@ mod tests {
             },
             debounce_secs: 5,
             write_start_block: 0,
+            printer_url: default_printer_url(),
         }
     }
 
@@ -565,6 +621,146 @@ mod tests {
         assert!(
             paths.load().is_err(),
             "a config that no longer validates is reported, not silently reloaded"
+        );
+    }
+
+    #[test]
+    fn printer_addresses_are_this_pc_only() {
+        for url in [
+            "http://127.0.0.1:8000",
+            "http://localhost:9100",
+            "http://[::1]:8000",
+            "https://127.0.0.1:8443",
+            "http://127.0.0.1:8000/",
+        ] {
+            assert!(
+                validate_printer_url(url).is_ok(),
+                "{url} should be accepted"
+            );
+        }
+        for url in [
+            "http://192.168.1.50:8000",
+            "http://10.0.0.7:8000",
+            "https://printer.example.com",
+            "http://printer.example.com",
+            "http://0.0.0.0:8000",
+            "http://localhost.example.com:8000",
+            "http://127.0.0.1.example.com:8000",
+            "http://user:pass@127.0.0.1:8000",
+            "http://127.0.0.1:8000?job=1",
+            "http://127.0.0.1:8000#top",
+            "ftp://127.0.0.1:8000",
+            "file:///etc/passwd",
+            "http://127.0.0.1:8000/api",
+            "http://127.0.0.1:8000/print/",
+            "",
+            "not a url",
+        ] {
+            assert!(
+                validate_printer_url(url).is_err(),
+                "{url} should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn a_saved_config_from_before_printing_gains_the_default() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = AppPaths::new(dir.path().to_path_buf());
+        let old = serde_json::json!({
+            "server_url": "https://example.test",
+            "api_key": KEY,
+            "stations": [{
+                "id": "00000000-0000-0000-0000-000000000001",
+                "name": "Desk",
+                "kind": "desk",
+                "role": null,
+                "device": { "type": "sim_desk" }
+            }]
+        });
+        std::fs::write(&paths.config_file, old.to_string()).unwrap();
+
+        let loaded = paths.load().unwrap().unwrap();
+        assert_eq!(loaded.stations[0].printer_url, default_printer_url());
+        assert_eq!(loaded.api_key, KEY, "the saved key is untouched");
+        let json = serde_json::to_string(&loaded.setup_view()).unwrap();
+        assert!(!json.contains(KEY), "the saved key still never leaves Rust");
+        assert!(
+            json.contains("http://127.0.0.1:8000"),
+            "the desk gained the printer address without a migration step"
+        );
+    }
+
+    #[test]
+    fn two_desks_keep_their_own_printer_and_their_own_database() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = AppPaths::new(dir.path().to_path_buf());
+        let mut first = desk(1, "Desk A");
+        first.printer_url = "http://127.0.0.1:9100".into();
+        let mut second = desk(2, "Desk B");
+        second.printer_url = "http://127.0.0.1:9200".into();
+        for id in [1u128, 2] {
+            std::fs::create_dir_all(dir.path().join("stations")).unwrap();
+            rfidex_core::store::Store::open(&paths.station_db(Uuid::from_u128(id))).unwrap();
+        }
+
+        paths
+            .save(&config(
+                "https://example.test",
+                KEY,
+                vec![first.clone(), second.clone()],
+            ))
+            .unwrap();
+        let loaded = paths.load().unwrap().unwrap();
+        assert_eq!(loaded.stations[0].printer_url, "http://127.0.0.1:9100");
+        assert_eq!(loaded.stations[1].printer_url, "http://127.0.0.1:9200");
+        assert_eq!(
+            (loaded.stations[0].id, loaded.stations[1].id),
+            (Uuid::from_u128(1), Uuid::from_u128(2)),
+            "a reload keeps every station id"
+        );
+        for id in [1u128, 2] {
+            let db = paths.station_db(Uuid::from_u128(id));
+            assert!(db.is_file(), "{} must survive the save", db.display());
+            rfidex_core::store::Store::open(&db).unwrap();
+        }
+    }
+
+    #[test]
+    fn the_printer_address_is_normalized_and_only_desks_need_one() {
+        let saved = AppConfig::from_input(
+            None,
+            input("https://example.test", KEY, vec![desk(1, "Desk")]),
+        )
+        .unwrap();
+        assert_eq!(saved.stations[0].printer_url, default_printer_url());
+
+        let mut trailing = desk(1, "Desk");
+        trailing.printer_url = "http://127.0.0.1:9100/".into();
+        let saved = AppConfig::from_input(None, input("https://example.test", KEY, vec![trailing]))
+            .unwrap();
+        assert_eq!(saved.stations[0].printer_url, "http://127.0.0.1:9100");
+
+        let mut remote = desk(1, "Desk");
+        remote.printer_url = "http://192.168.1.50:8000".into();
+        assert!(matches!(
+            AppConfig::from_input(None, input("https://example.test", KEY, vec![remote])),
+            Err(ConfigError::Invalid(_))
+        ));
+
+        let mut empty = desk(1, "Desk");
+        empty.printer_url = String::new();
+        assert!(matches!(
+            AppConfig::from_input(None, input("https://example.test", KEY, vec![empty])),
+            Err(ConfigError::Invalid(_))
+        ));
+
+        let mut no_printer = gate(2, "Entry");
+        no_printer.printer_url = String::new();
+        assert!(
+            AppConfig::from_input(None, input("https://example.test", KEY, vec![no_printer]))
+                .is_ok(),
+            "a gate has no printer, so it cannot be blocked by one"
         );
     }
 }

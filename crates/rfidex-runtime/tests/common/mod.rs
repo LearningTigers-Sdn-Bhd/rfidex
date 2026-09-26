@@ -2,6 +2,7 @@
 
 //! A real mock server, a real runtime and a real temp data root per test.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -9,6 +10,7 @@ use rfidex_core::contract::{EventSettings, HeartbeatResp, RfidMode, Role, Statio
 use rfidex_core::device::GateKind;
 use rfidex_core::store::Store;
 use rfidex_mock::http::{serve, AppState};
+use rfidex_mock::printer::Printer;
 use rfidex_mock::state::{MockState, SeedTicket};
 use rfidex_runtime::config::{AppConfig, AppPaths, DeviceChoice, StationConfig};
 use rfidex_runtime::{Runtime, RuntimeOptions};
@@ -122,6 +124,9 @@ pub struct Harness {
     pub paths: AppPaths,
     pub base: String,
     pub opts: RuntimeOptions,
+    /// One fake printer per desk, on its own ephemeral port. A test never
+    /// reaches the real printer address or another test's printer.
+    printers: HashMap<Uuid, Printer>,
     temp: tempfile::TempDir,
     handle: tokio::task::JoinHandle<()>,
 }
@@ -216,6 +221,17 @@ impl Harness {
             .await
             .unwrap();
         let base = format!("http://{addr}");
+        // Every desk gets its own fake printer on an ephemeral port, so no test
+        // can touch port 8000 or another test's printer.
+        let mut printers = HashMap::new();
+        let mut stations = stations;
+        for station in &mut stations {
+            if station.kind == StationKind::Desk {
+                let printer = Printer::start().await;
+                station.printer_url = printer.base().to_string();
+                printers.insert(station.id, printer);
+            }
+        }
         let temp = tempfile::tempdir().unwrap();
         let paths = AppPaths::new(temp.path().to_path_buf());
         let config = AppConfig {
@@ -233,6 +249,7 @@ impl Harness {
             paths,
             base,
             opts,
+            printers,
             temp,
             handle,
         }
@@ -303,6 +320,11 @@ impl Harness {
             .iter()
             .find(|s| s.id() == id)
             .expect("station is configured")
+    }
+
+    /// The fake printer this harness gave a desk.
+    pub fn printer(&self, station: Uuid) -> &Printer {
+        self.printers.get(&station).expect("a desk with a printer")
     }
 
     /// Read the settings this station has saved to its own database, the way a

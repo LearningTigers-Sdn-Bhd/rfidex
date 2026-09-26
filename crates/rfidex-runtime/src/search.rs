@@ -51,13 +51,20 @@ pub struct SearchView {
     pub rows: Vec<SearchRow>,
 }
 
-/// The check-in time as this PC's clock reads it, 24-hour. The zone is a
-/// parameter so the wording can be tested against a fixed offset.
+/// A time as this PC's clock reads it, 24-hour. The zone is a parameter so the
+/// wording can be tested against a fixed offset.
+pub fn clock<Tz: TimeZone>(at: DateTime<Utc>, zone: &Tz) -> String
+where
+    Tz::Offset: std::fmt::Display,
+{
+    at.with_timezone(zone).format("%H:%M").to_string()
+}
+
 pub fn checked_in_message<Tz: TimeZone>(at: DateTime<Utc>, zone: &Tz) -> String
 where
     Tz::Offset: std::fmt::Display,
 {
-    format!("{CHECKED_IN} {}", at.with_timezone(zone).format("%H:%M"))
+    format!("{CHECKED_IN} {}", clock(at, zone))
 }
 
 fn minimum(by: SearchBy) -> &'static str {

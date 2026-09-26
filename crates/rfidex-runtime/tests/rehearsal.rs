@@ -307,7 +307,6 @@ async fn register(h: &Harness, desk: Uuid, n: u128) {
 
 /// Register the reserved last ticket from the cache while the server is down.
 async fn register_offline(h: &Harness, desk: Uuid, n: u128) {
-    let offline_note = "Offline — badge will print when connection returns.";
     h.runtime.desk_reset(desk).await.expect("reset the desk");
     let scanned = h
         .runtime
@@ -320,9 +319,8 @@ async fn register_offline(h: &Harness, desk: Uuid, n: u128) {
         "the reserved scan must be queued, not sent"
     );
     assert!(
-        scanned.message.contains(offline_note),
-        "the operator is told the badge prints later: {}",
-        scanned.message
+        !scanned.badge.print_now && scanned.badge.can_reprint,
+        "an offline scan is queued for an explicit reprint, never printed"
     );
     assert_eq!(
         scanned.ticket.as_ref().map(|t| t.public_id),
@@ -341,11 +339,6 @@ async fn register_offline(h: &Harness, desk: Uuid, n: u128) {
         .expect("link the reserved sticker offline");
     assert_eq!(linked.step, DeskStep::Linked);
     assert!(linked.offline, "the reserved link must be queued, not sent");
-    assert!(
-        linked.message.contains(offline_note),
-        "the operator is told the badge prints later: {}",
-        linked.message
-    );
     h.runtime.sim_clear(desk).await.expect("remove the sticker");
 }
 

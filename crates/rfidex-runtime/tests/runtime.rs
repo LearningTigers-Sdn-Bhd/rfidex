@@ -476,7 +476,7 @@ async fn a_reason_without_a_warning_links_but_never_replaces() {
 }
 
 #[tokio::test]
-async fn an_offline_desk_says_the_badge_prints_later() {
+async fn an_offline_desk_never_prints_by_itself_and_offers_a_reprint() {
     let mut h = Harness::start(RfidMode::Bind).await;
     let desk = desk_id();
     h.set_down(true);
@@ -487,17 +487,20 @@ async fn an_offline_desk_says_the_badge_prints_later() {
         .unwrap();
     assert_eq!(scanned.step, DeskStep::Scanned);
     assert!(scanned.offline);
-    assert!(scanned
-        .message
-        .contains("Offline — badge will print when connection returns."));
+    assert!(
+        !scanned.badge.print_now,
+        "an offline scan cannot know it was a first check-in"
+    );
+    assert!(scanned.badge.can_reprint && scanned.badge.hold);
+    assert_eq!(
+        scanned.badge.message.as_deref(),
+        Some("Offline — press Reprint when back online")
+    );
 
     h.runtime.sim_place(desk, TAG_A).await.unwrap();
     let linked = h.runtime.desk_link(desk, None).await.unwrap();
     assert_eq!(linked.step, DeskStep::Linked);
     assert!(linked.offline);
-    assert!(linked
-        .message
-        .contains("Offline — badge will print when connection returns."));
 
     h.set_down(false);
     eventually("the queued desk work to drain", || async {
@@ -505,6 +508,11 @@ async fn an_offline_desk_says_the_badge_prints_later() {
         mock.scan_log_count == 1 && mock.active_bindings().len() == 1
     })
     .await;
+    assert_eq!(
+        h.printer(desk).count(),
+        0,
+        "reconnecting must not print on its own"
+    );
     h.stop().await;
 }
 

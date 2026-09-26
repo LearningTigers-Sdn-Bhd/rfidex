@@ -9,11 +9,13 @@
 //! `DeskError`-free wording. Only a wrong station or a broken device selection
 //! is a `RuntimeError`, because that is not something the desk screen can fix.
 
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
-use rfidex_core::contract::{RfidMode, TicketSummary};
+use chrono::Local;
+use rfidex_core::contract::{CheckInResult, RfidMode, TicketSummary};
 use rfidex_core::device::DeviceError;
-use rfidex_core::station::desk::{Confirm, DeskError, DeskStation, Warning};
+use rfidex_core::station::desk::{Confirm, DeskError, DeskStation, Scanned, Warning};
 use rfidex_core::store::Store;
 use rfidex_core::tag::hex_upper;
 use uuid::Uuid;
@@ -25,9 +27,10 @@ pub const TAP_MESSAGE: &str = "Place one sticker on the reader.";
 pub const LINKED_MESSAGE: &str = "Sticker linked.";
 pub const SCAN_FIRST_MESSAGE: &str = "Scan a ticket first.";
 pub const CONNECT_FIRST_MESSAGE: &str = "Connect to the server once before using this station.";
-/// Printing is triggered by the server after check-in, so an offline desk
-/// cannot print. Say so plainly instead of promising a badge.
-const OFFLINE_NOTE: &str = " Offline — badge will print when connection returns.";
+pub const PRINTING_MESSAGE: &str = "Printing badge…";
+pub const PRINTED_MESSAGE: &str = "Badge sent to printer";
+pub const PRINT_FAILED_MESSAGE: &str = "Badge not printed — press Reprint";
+pub const OFFLINE_PRINT_MESSAGE: &str = "Offline — press Reprint when back online";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -39,6 +42,30 @@ pub enum DeskStep {
     Error,
 }
 
+/// What the desk knows about the guest's badge. The printing itself is a
+/// separate command, so the sticker step never waits for a printer.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct BadgeView {
+    /// Rust decided this scan should print now: the UI calls `desk_print` once.
+    pub print_now: bool,
+    pub can_reprint: bool,
+    /// Keep the guest on screen (no 3 s auto-reset) until staff act.
+    pub hold: bool,
+    pub message: Option<String>,
+}
+
+impl BadgeView {
+    /// Nothing to do with a badge yet: used before any scan.
+    fn idle() -> BadgeView {
+        BadgeView {
+            print_now: false,
+            can_reprint: false,
+            hold: false,
+            message: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct DeskView {
     pub step: DeskStep,
@@ -47,10 +74,15 @@ pub struct DeskView {
     pub ticket: Option<TicketSummary>,
     pub offline: bool,
     pub mode: RfidMode,
+    /// Identifies the guest on screen. A print result is only allowed to land
+    /// on the session that asked for it.
+    pub session_id: Uuid,
+    pub badge: BadgeView,
 }
 
 impl DeskView {
     pub fn ready(mode: RfidMode) -> DeskView {
+        // The session fills in its own id and badge in `DeskSession::show`.
         DeskView {
             step: DeskStep::Ready,
             code: None,
@@ -58,6 +90,8 @@ impl DeskView {
             ticket: None,
             offline: false,
             mode,
+            session_id: Uuid::nil(),
+            badge: BadgeView::idle(),
         }
     }
 
@@ -69,7 +103,38 @@ impl DeskView {
             ticket: None,
             offline: false,
             mode,
+            session_id: Uuid::nil(),
+            badge: BadgeView::idle(),
         }
+    }
+}
+
+/// The badge state for a scan that just happened, straight from the server's
+/// own answer. Printing is offered only for a first check-in: a guest who was
+/// already in needs a sticker, not necessarily a second badge.
+fn badge_for_scan(scanned: &Scanned) -> BadgeView {
+    match &scanned.check_in {
+        Some(check_in) if check_in.result == CheckInResult::CheckedIn => BadgeView {
+            print_now: true,
+            can_reprint: false,
+            hold: true,
+            message: Some(PRINTING_MESSAGE.to_string()),
+        },
+        Some(check_in) => BadgeView {
+            print_now: false,
+            can_reprint: true,
+            hold: true,
+            message: Some(format!(
+                "Already checked in at {}",
+                crate::search::clock(check_in.checked_in_at, &Local)
+            )),
+        },
+        None => BadgeView {
+            print_now: false,
+            can_reprint: true,
+            hold: true,
+            message: Some(OFFLINE_PRINT_MESSAGE.to_string()),
+        },
     }
 }
 
@@ -93,6 +158,13 @@ pub struct DeskSession {
     /// The UID rule already applied to this station, so a heartbeat that
     /// changes nothing does not throw away a half-answered warning.
     pub uid_rule: rfidex_core::tag::UidRule,
+    /// New on every scan and every reset, so a late print answer can never be
+    /// shown against a different guest.
+    pub session_id: Uuid,
+    pub badge: BadgeView,
+    /// One print in flight per desk: a second press joins the one running
+    /// instead of sending a second job.
+    pub printing: Arc<AtomicBool>,
 }
 
 impl DeskSession {
@@ -101,12 +173,17 @@ impl DeskSession {
         mode: RfidMode,
         uid_rule: rfidex_core::tag::UidRule,
     ) -> DeskSession {
+        let session_id = Uuid::new_v4();
+        let badge = BadgeView::idle();
         DeskSession {
             station,
             view: DeskView::ready(mode),
             ticket: None,
             pending: None,
             uid_rule,
+            session_id,
+            badge,
+            printing: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -123,7 +200,21 @@ impl DeskSession {
         }
     }
 
-    fn show(&mut self, view: DeskView) -> DeskView {
+    /// A new guest on screen: a new session id, so nothing in flight for the
+    /// old one can land on this one.
+    pub fn new_session(&mut self) {
+        self.session_id = Uuid::new_v4();
+        self.printing.store(false, Ordering::SeqCst);
+    }
+
+    pub fn set_badge(&mut self, badge: BadgeView) {
+        self.badge = badge;
+        self.view.badge = self.badge.clone();
+    }
+
+    fn show(&mut self, mut view: DeskView) -> DeskView {
+        view.session_id = self.session_id;
+        view.badge = self.badge.clone();
         self.view = view;
         self.view.clone()
     }
@@ -137,6 +228,8 @@ impl DeskSession {
             ticket: self.ticket.clone(),
             offline: false,
             mode,
+            session_id: self.session_id,
+            badge: self.badge.clone(),
         };
         self.show(view)
     }
@@ -148,6 +241,7 @@ impl DeskSession {
         let mode = self.station.mode();
         self.ticket = None;
         self.pending = None;
+        self.new_session();
         self.show(DeskView::error(
             mode,
             "connect_first",
@@ -160,6 +254,8 @@ impl DeskSession {
 pub fn reset(session: &mut DeskSession) -> DeskView {
     session.ticket = None;
     session.pending = None;
+    session.new_session();
+    session.set_badge(BadgeView::idle());
     let mode = session.station.mode();
     session.show(DeskView::ready(mode))
 }
@@ -169,24 +265,25 @@ pub fn reset(session: &mut DeskSession) -> DeskView {
 pub async fn scan(session: &mut DeskSession, store: &Mutex<Store>, code: &str) -> DeskView {
     session.ticket = None;
     session.pending = None;
+    session.new_session();
     let mode = session.station.mode();
     match session.station.scan_ticket(code).await {
         Ok(scanned) => {
             session.ticket = Some(scanned.ticket.clone());
-            let mut message = TAP_MESSAGE.to_string();
-            if scanned.offline {
-                message.push_str(OFFLINE_NOTE);
-            }
+            session.set_badge(badge_for_scan(&scanned));
             session.show(DeskView {
                 step: DeskStep::Scanned,
                 code: None,
-                message,
+                message: TAP_MESSAGE.to_string(),
                 ticket: Some(scanned.ticket),
                 offline: scanned.offline,
                 mode,
+                session_id: session.session_id,
+                badge: session.badge.clone(),
             })
         }
         Err(e) => {
+            session.set_badge(BadgeView::idle());
             let (code, message) = failure(&e, store);
             session.error(&code, &message)
         }
@@ -228,6 +325,8 @@ pub async fn link(
                     ticket: Some(ticket),
                     offline: false,
                     mode,
+                    session_id: session.session_id,
+                    badge: session.badge.clone(),
                 });
             };
             Some(Confirm { reason })
@@ -244,17 +343,15 @@ pub async fn link(
     match session.station.link(&ticket, &tag, confirm).await {
         Ok(linked) => {
             session.pending = None;
-            let mut message = LINKED_MESSAGE.to_string();
-            if linked.offline {
-                message.push_str(OFFLINE_NOTE);
-            }
             session.show(DeskView {
                 step: DeskStep::Linked,
                 code: None,
-                message,
+                message: LINKED_MESSAGE.to_string(),
                 ticket: Some(ticket),
                 offline: linked.offline,
                 mode,
+                session_id: session.session_id,
+                badge: session.badge.clone(),
             })
         }
         Err(DeskError::NeedsConfirm(warning)) => {
@@ -272,6 +369,8 @@ pub async fn link(
                 ticket: Some(ticket),
                 offline: false,
                 mode,
+                session_id: session.session_id,
+                badge: session.badge.clone(),
             })
         }
         Err(e) => {

@@ -739,6 +739,90 @@ impl Runtime {
         crate::search::desk_search(&runtime.client, &runtime.store, by, query).await
     }
 
+    /// Print the badge for the guest on screen. The same call serves the first
+    /// print and every Reprint: Rust never prints on its own.
+    ///
+    /// The desk lock is held only long enough to check the session and copy
+    /// what is needed; the HTTP call happens with no lock held, so a print can
+    /// never delay the sticker.
+    pub async fn desk_print(
+        &self,
+        station: Uuid,
+        session_id: Uuid,
+    ) -> Result<crate::BadgeView, RuntimeError> {
+        let runtime = self.station(station)?;
+        let StationDevice::Desk(device) = &runtime.device else {
+            return Err(wrong_station("print a badge"));
+        };
+        let printer_url = runtime.config.printer_url.clone();
+
+        let prepared = {
+            let mut session = device.lock().await;
+            if session.session_id != session_id {
+                return Err(RuntimeError::new(
+                    "stale_session",
+                    "That badge belongs to a guest who is no longer on screen. Scan the ticket again.",
+                ));
+            }
+            let Some(ticket) = session.ticket.clone() else {
+                return Err(RuntimeError::new(
+                    "scan_first",
+                    crate::desk::SCAN_FIRST_MESSAGE,
+                ));
+            };
+            if !runtime.online() {
+                // There is no printer when this PC cannot reach the event
+                // server: event-printing looks the ticket up there.
+                session.set_badge(crate::BadgeView {
+                    print_now: false,
+                    can_reprint: true,
+                    hold: true,
+                    message: Some(crate::desk::OFFLINE_PRINT_MESSAGE.to_string()),
+                });
+                return Ok(session.badge.clone());
+            }
+            if session.printing.swap(true, Ordering::SeqCst) {
+                // One print in flight per desk: this press joins it.
+                return Ok(session.badge.clone());
+            }
+            session.set_badge(crate::BadgeView {
+                print_now: false,
+                can_reprint: false,
+                hold: true,
+                message: Some(crate::desk::PRINTING_MESSAGE.to_string()),
+            });
+            (ticket.public_id, session.printing.clone())
+        };
+
+        let outcome = match crate::PrinterClient::new(&printer_url) {
+            Ok(client) => client.reprint(prepared.0).await,
+            Err(e) => Err(e),
+        };
+
+        let mut session = device.lock().await;
+        prepared.1.store(false, Ordering::SeqCst);
+        if session.session_id != session_id {
+            // A newer scan owns the screen: the job went out for the guest who
+            // was on it, and its result must not land on anyone else.
+            return Ok(session.badge.clone());
+        }
+        session.set_badge(match outcome {
+            Ok(()) => crate::BadgeView {
+                print_now: false,
+                can_reprint: false,
+                hold: false,
+                message: Some(crate::desk::PRINTED_MESSAGE.to_string()),
+            },
+            Err(_) => crate::BadgeView {
+                print_now: false,
+                can_reprint: true,
+                hold: true,
+                message: Some(crate::desk::PRINT_FAILED_MESSAGE.to_string()),
+            },
+        });
+        Ok(session.badge.clone())
+    }
+
     async fn desk_session(
         &self,
         id: Uuid,

@@ -19,7 +19,7 @@ pub use config::{
     default_printer_url, is_loopback_host, validate_connection, validate_printer_url, AppConfig,
     AppPaths, ConfigError, DeviceChoice, SetupInput, SetupView, StationConfig,
 };
-pub use desk::{DeskStep, DeskView};
+pub use desk::{BadgeView, DeskStep, DeskView};
 pub use diagnostics::{test_connection, ConnectionView};
 pub use gate::{GateStatus, GateView};
 pub use printer::{test_printer, PrinterClient};

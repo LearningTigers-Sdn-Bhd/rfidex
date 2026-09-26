@@ -54,6 +54,16 @@ pub fn seeds() -> Vec<SeedTicket> {
     ]
 }
 
+/// The event the fixture helpers use: id 1, five tickets, four of them valid.
+pub fn fixture_event(mode: RfidMode) -> EventSettings {
+    EventSettings {
+        event_id: 1,
+        name: "Test Expo".into(),
+        rfid_mode: mode,
+        require_check_in: false,
+    }
+}
+
 pub fn fast_options() -> RuntimeOptions {
     RuntimeOptions {
         heartbeat: Duration::from_millis(20),
@@ -147,6 +157,21 @@ impl Harness {
         .await
     }
 
+    /// A runtime over a caller-supplied event and ticket set. The rehearsal uses
+    /// this so nothing it proves can come from the five-ticket fixture or from
+    /// event id 1 by accident.
+    pub async fn start_seeded(
+        event: EventSettings,
+        tickets: Vec<SeedTicket>,
+        opts: RuntimeOptions,
+        stations: Vec<StationConfig>,
+    ) -> Harness {
+        let first_ticket = tickets.first().map(|t| t.public_id);
+        let harness = Harness::build_seeded(event, tickets, opts, stations, KEY, false).await;
+        harness.await_seeded_ready(first_ticket).await;
+        harness
+    }
+
     async fn build(
         mode: RfidMode,
         opts: RuntimeOptions,
@@ -163,13 +188,21 @@ impl Harness {
         down: bool,
         key: &str,
     ) -> Harness {
-        let event = EventSettings {
-            event_id: 1,
-            name: "Test Expo".into(),
-            rfid_mode: mode,
-            require_check_in: false,
-        };
-        let state = Arc::new(AppState::new(MockState::new(KEY.into(), event, seeds())));
+        Harness::build_seeded(fixture_event(mode), seeds(), opts, stations, key, down).await
+    }
+
+    /// The one place the server, the data root, the config and the runtime are
+    /// put together. `key` is what the client sends; the server always expects
+    /// [`KEY`], so a test can hand the runtime a wrong one.
+    async fn build_seeded(
+        event: EventSettings,
+        tickets: Vec<SeedTicket>,
+        opts: RuntimeOptions,
+        stations: Vec<StationConfig>,
+        key: &str,
+        down: bool,
+    ) -> Harness {
+        let state = Arc::new(AppState::new(MockState::new(KEY.into(), event, tickets)));
         if down {
             state.faults.lock().unwrap().down = true;
         }
@@ -227,6 +260,28 @@ impl Harness {
         })
         .await;
         self.await_cached(desk_station().id, ticket(1)).await;
+    }
+
+    /// Readiness for a seeded harness: every station online with the settings it
+    /// asked for, then a real cache refresh, so no test has to guess a poll
+    /// interval before its first scan. Nothing here is named after the fixture.
+    async fn await_seeded_ready(&self, first_ticket: Option<Uuid>) {
+        eventually("every station to be online with its settings", || async {
+            self.runtime
+                .stations()
+                .iter()
+                .all(|s| s.connected() && s.online() && s.event_ok())
+        })
+        .await;
+        self.runtime
+            .sync_now()
+            .await
+            .expect("the first sync pass of a fresh runtime");
+        if let Some(id) = first_ticket {
+            for station in self.runtime.stations() {
+                self.await_cached(station.id(), id).await;
+            }
+        }
     }
 
     pub async fn await_cached(&self, station: Uuid, id: Uuid) {

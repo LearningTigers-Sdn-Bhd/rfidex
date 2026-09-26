@@ -120,6 +120,38 @@ impl MockState {
             .collect()
     }
 
+    /// Every binding row ever created, revoked ones included. Distinct from
+    /// [`Self::binding_operation_count`]: one replayed operation creates one row.
+    pub fn binding_count(&self) -> usize {
+        self.bindings.len()
+    }
+
+    /// Binding operations the server has accepted or replayed, as opposed to
+    /// binding rows. A replay adds to neither; a repeat of an already-bound
+    /// ticket/sticker pair through a **new** operation adds only to this.
+    pub fn binding_operation_count(&self) -> usize {
+        self.bind_ops.len()
+    }
+
+    /// Desk scan operations, the same way: a replayed `operation_id` is one
+    /// operation however many times it arrives.
+    pub fn scan_operation_count(&self) -> usize {
+        self.desk_ops.len()
+    }
+
+    /// Every stored observation result once, as `(station UUID, result)`, sorted
+    /// by station then delivery UUID. Read-only: nothing is evaluated here, so
+    /// inspecting can never change what a later request would be told.
+    pub fn observation_results(&self) -> Vec<(String, ObservationResult)> {
+        let mut out: Vec<(String, ObservationResult)> = self
+            .observations
+            .iter()
+            .map(|((station, _), result)| (station.clone(), result.clone()))
+            .collect();
+        out.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.delivery_id.cmp(&b.1.delivery_id)));
+        out
+    }
+
     pub fn observation_count(&self) -> usize {
         self.observations.len()
     }
@@ -585,6 +617,69 @@ mod tests {
         assert!(r
             .anomalies
             .contains(&"payload_binding_mismatch".to_string()));
+    }
+
+    #[test]
+    fn replaying_a_scan_operation_commits_one_scan_log() {
+        let mut s = state();
+        s.desk_scan(scan(1, 1)).unwrap();
+        s.desk_scan(scan(1, 1)).unwrap();
+        assert_eq!(s.scan_log_count, 1);
+        assert_eq!(s.scan_operation_count(), 1);
+        // The same ticket under a new operation is a second logical operation.
+        s.desk_scan(scan(1, 2)).unwrap();
+        assert_eq!((s.scan_log_count, s.scan_operation_count()), (2, 2));
+    }
+
+    #[test]
+    fn replaying_a_binding_operation_commits_one_binding_row() {
+        let mut s = state();
+        s.bind(bind_req(1, TAG_A, 1)).unwrap();
+        s.bind(bind_req(1, TAG_A, 1)).unwrap();
+        assert_eq!(s.binding_count(), 1);
+        assert_eq!(s.binding_operation_count(), 1);
+        // A new operation for the same ticket and sticker: the row count cannot
+        // tell this apart from a replayed operation, the operation count can.
+        s.bind(bind_req(1, TAG_A, 2)).unwrap();
+        assert_eq!(s.binding_count(), 1);
+        assert_eq!(s.binding_operation_count(), 2);
+        // A replacement keeps the revoked row, so rows and operations both grow.
+        s.bind(replace(bind_req(1, TAG_B, 3), "lost")).unwrap();
+        assert_eq!((s.binding_count(), s.active_bindings().len()), (2, 1));
+        assert_eq!(s.binding_operation_count(), 3);
+    }
+
+    #[test]
+    fn replaying_a_delivery_id_keeps_one_result_per_station() {
+        let mut s = state();
+        s.bind(bind_req(1, TAG_A, 1)).unwrap();
+        let first = s.observe("gate-in", obs(1, TAG_A, Role::Entry));
+        assert_eq!(first.outcome, Outcome::Accepted);
+        assert_eq!(s.observe("gate-in", obs(1, TAG_A, Role::Entry)), first);
+        let results = s.observation_results();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].0, "gate-in");
+        assert_eq!(results[0].1, first);
+
+        // The same delivery ID at another station is a distinct mock key, and
+        // it is replayed there too rather than re-evaluated.
+        let exit = s.observe("gate-out", obs(1, TAG_A, Role::Exit));
+        assert_eq!(exit.delivery_id, first.delivery_id);
+        assert_eq!(s.observe("gate-out", obs(1, TAG_A, Role::Entry)), exit);
+        let results = s.observation_results();
+        assert_eq!(
+            results
+                .iter()
+                .map(|(station, r)| (station.as_str(), r.delivery_id))
+                .collect::<Vec<_>>(),
+            vec![
+                ("gate-in", first.delivery_id),
+                ("gate-out", exit.delivery_id)
+            ],
+            "sorted by station, one result per station and delivery"
+        );
+        assert_eq!(s.observation_count(), 2);
+        assert_eq!(s.received_order.len(), 2);
     }
 
     #[test]

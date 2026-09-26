@@ -88,6 +88,7 @@ fn rows_view(offline: bool, rows: Vec<SearchRow>) -> SearchView {
 pub async fn desk_search(
     client: &ApiClient,
     store: &Mutex<Store>,
+    online: bool,
     by: SearchBy,
     query: &str,
 ) -> Result<SearchView, RuntimeError> {
@@ -98,6 +99,11 @@ pub async fn desk_search(
             rows: Vec::new(),
         });
     };
+    // Known offline: answer from the cache now instead of waiting out the
+    // server timeout on every keystroke.
+    if !online {
+        return offline(store, by, &query);
+    }
     match client.search_tickets(by, &query).await {
         Ok(resp) => Ok(rows_view(
             false,

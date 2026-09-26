@@ -736,7 +736,10 @@ impl Runtime {
         if runtime.event_mismatch() {
             return Err(RuntimeError::new("different_event", DIFFERENT_EVENT));
         }
-        crate::search::desk_search(&runtime.client, &runtime.store, by, query).await
+        // Only a heartbeat that failed on the network skips the server; a
+        // rejected key or a station not heard from yet still asks it.
+        let known_offline = runtime.lock().network_error.is_some();
+        crate::search::desk_search(&runtime.client, &runtime.store, !known_offline, by, query).await
     }
 
     /// Print the badge for the guest on screen. The same call serves the first

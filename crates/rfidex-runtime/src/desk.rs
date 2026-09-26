@@ -9,7 +9,7 @@
 //! `DeskError`-free wording. Only a wrong station or a broken device selection
 //! is a `RuntimeError`, because that is not something the desk screen can fix.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
 use chrono::Local;
@@ -204,7 +204,9 @@ impl DeskSession {
     /// old one can land on this one.
     pub fn new_session(&mut self) {
         self.session_id = Uuid::new_v4();
-        self.printing.store(false, Ordering::SeqCst);
+        // A fresh flag, not a reset one: a print still running for the old
+        // guest must not clear the new guest's in-flight flag when it ends.
+        self.printing = Arc::new(AtomicBool::new(false));
     }
 
     pub fn set_badge(&mut self, badge: BadgeView) {

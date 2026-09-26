@@ -246,6 +246,12 @@ jobs:
         with:
           name: rfidex-windows-x64-unsigned-${{ github.sha }}-${{ github.run_id }}
           path: dist
+      # Test tool only: attached so a tester needs no GitHub login, never
+      # bundled into the installer.
+      - uses: actions/download-artifact@v4
+        with:
+          name: rfidex-test-tools-${{ github.sha }}-${{ github.run_id }}
+          path: tools
       - name: Publish pre-release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -255,6 +261,9 @@ jobs:
           setup=$(ls dist/target/x86_64-pc-windows-msvc/release/bundle/nsis/*-setup.exe 2>/dev/null \
             || ls dist/*-setup.exe)
           sums=$(dirname "$setup")/SHA256SUMS.txt
+          mock=tools/target/x86_64-pc-windows-msvc/release/rfidex-mock.exe
+          tickets=tools/app/dev/tickets.json
+          mock_sha=$(sha256sum "$mock" | cut -d' ' -f1 | tr a-f A-F)
           cat > notes.md <<NOTES
           Test build of RfiDex ${TAG#rfidex-v} for Windows 10/11 x64. **Simulator only** — no real RFID hardware yet.
 
@@ -262,7 +271,17 @@ jobs:
           Installs for the current user; no admin rights needed. If WebView2 is missing, the installer downloads it, so the first install needs internet.
 
           SHA-256: \`$(cut -d' ' -f1 "$sums")\`
+
+          ### Test tool: mock server (not part of RfiDex)
+
+          \`rfidex-mock.exe\` is a stand-in EventzFlow server for trying RfiDex before the real backend has RFID support. It is never installed with RfiDex. Put it in a folder with \`tickets.json\` (fictional attendees) and run:
+
+          \`rfidex-mock.exe --port 4010 --api-key rfidex_demo_key_0123456789abcdefghij --tickets tickets.json\`
+
+          Then in RfiDex Setup use server \`http://127.0.0.1:4010\` and that key. Add \`--mode write\` to try sticker-writing mode.
+
+          Mock SHA-256: \`${mock_sha}\`
           NOTES
-          gh release create "$TAG" "$setup" "$sums" \
+          gh release create "$TAG" "$setup" "$sums" "$mock" "$tickets" \
             --repo "$GITHUB_REPOSITORY" --prerelease \
             --title "RfiDex ${TAG#rfidex-v} (test build)" --notes-file notes.md

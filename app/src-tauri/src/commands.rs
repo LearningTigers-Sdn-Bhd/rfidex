@@ -351,3 +351,66 @@ pub async fn shutdown_runtime(state: &AppState) {
         let _ = running.shutdown().await;
     }
 }
+
+#[derive(Serialize)]
+pub struct UpdateView {
+    pub current: String,
+    /// The newer version on the release page, or `None` when this is the latest.
+    pub available: Option<String>,
+    pub notes: Option<String>,
+}
+
+fn update_failed() -> RuntimeError {
+    RuntimeError::new(
+        "update_unavailable",
+        "Could not reach the update server. Check the internet connection and try again. RfiDex keeps working as it is.",
+    )
+}
+
+async fn find_update(
+    app: &tauri::AppHandle,
+) -> Result<Option<tauri_plugin_updater::Update>, RuntimeError> {
+    use tauri_plugin_updater::UpdaterExt;
+    let updater = app.updater().map_err(|_| update_failed())?;
+    updater.check().await.map_err(|_| update_failed())
+}
+
+#[tauri::command]
+pub async fn update_check(app: tauri::AppHandle) -> Result<UpdateView, RuntimeError> {
+    let update = find_update(&app).await?;
+    Ok(UpdateView {
+        current: app.package_info().version.to_string(),
+        available: update.as_ref().map(|u| u.version.clone()),
+        notes: update.and_then(|u| u.body),
+    })
+}
+
+/// Stops the stations, then hands over to the installer, which closes RfiDex
+/// and reopens it on the new version. Saved setup and waiting work live in the
+/// data folder, which the installer never touches.
+#[tauri::command]
+pub async fn update_install(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), RuntimeError> {
+    let Some(update) = find_update(&app).await? else {
+        return Err(RuntimeError::new(
+            "up_to_date",
+            "RfiDex is already on the latest version.",
+        ));
+    };
+    let bytes = update
+        .download(|_, _| {}, || {})
+        .await
+        .map_err(|_| update_failed())?;
+    shutdown_runtime(&state).await;
+    if update.install(bytes).is_err() {
+        // The stations must come back if the installer never started.
+        try_restore(&state, &mut *state.runtime.write().await).await;
+        return Err(RuntimeError::new(
+            "update_failed",
+            "The update was downloaded but could not start. RfiDex keeps working as it is; try again or install the new version from the release page.",
+        ));
+    }
+    Ok(())
+}

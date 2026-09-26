@@ -188,6 +188,10 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
             spellCheck={false}
             placeholder="https://events.example.com"
           />
+          <small className="field-help">
+            The EventzFlow web address your organiser gave you. Copy it exactly,
+            starting with https://.
+          </small>
 
           <label htmlFor="api-key">API key</label>
           <input
@@ -198,6 +202,10 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
             autoComplete="new-password"
             placeholder={keyOnFile ? "Leave blank to keep current key" : "Paste the event API key"}
           />
+          <small className="field-help">
+            A long code that links this computer to one event. Get it from the
+            event admin in EventzFlow. Press Test connection to check both fields.
+          </small>
 
           <div className="actions">
             <button type="button" onClick={() => void testConnection()} disabled={busy}>
@@ -218,6 +226,11 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
 
         <fieldset>
           <legend>Stations on this computer</legend>
+          <p className="hint">
+            A station is one RFID reader plugged into this computer: a desk
+            that links tickets to tags, or a gate that records guests passing.
+            Add one for each reader.
+          </p>
           {stations.length === 0 && (
             <p className="empty">No stations yet. Add the ones this PC runs.</p>
           )}
@@ -232,6 +245,9 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
                       onChange={(event) => patch(station.id, { name: event.target.value })}
                       autoComplete="off"
                     />
+                    <small className="field-help">
+                      Any label staff will recognise, e.g. "Main desk" or "Hall A gate".
+                    </small>
                   </label>
                   <label>
                     Type
@@ -244,6 +260,10 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
                       <option value="desk">Desk</option>
                       <option value="gate">Gate</option>
                     </select>
+                    <small className="field-help">
+                      Desk: staff scan a ticket and link it to a wristband or
+                      sticker. Gate: a reader records guests walking past.
+                    </small>
                   </label>
                   {station.kind === "gate" && (
                     <label>
@@ -257,32 +277,47 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
                         <option value="entry">Entry</option>
                         <option value="exit">Exit</option>
                       </select>
+                      <small className="field-help">
+                        Entry counts guests coming in, Exit counts guests leaving.
+                      </small>
                     </label>
                   )}
-                  <label>
-                    Wait between repeats (seconds)
-                    <input
-                      type="number"
-                      min={1}
-                      max={60}
-                      value={station.debounce_secs}
-                      onChange={(event) =>
-                        patch(station.id, { debounce_secs: Number(event.target.value) })
-                      }
-                    />
-                  </label>
-                  <label>
-                    Write start block
-                    <input
-                      type="number"
-                      min={0}
-                      max={255}
-                      value={station.write_start_block}
-                      onChange={(event) =>
-                        patch(station.id, { write_start_block: Number(event.target.value) })
-                      }
-                    />
-                  </label>
+                  {station.kind === "gate" && (
+                    <label>
+                      Wait between repeats (seconds)
+                      <input
+                        type="number"
+                        min={1}
+                        max={60}
+                        value={station.debounce_secs}
+                        onChange={(event) =>
+                          patch(station.id, { debounce_secs: Number(event.target.value) })
+                        }
+                      />
+                      <small className="field-help">
+                        A guest standing near the reader is counted once in this
+                        time. 5 suits most gates.
+                      </small>
+                    </label>
+                  )}
+                  {station.kind === "desk" && (
+                    <label>
+                      Write start block
+                      <input
+                        type="number"
+                        min={0}
+                        max={255}
+                        value={station.write_start_block}
+                        onChange={(event) =>
+                          patch(station.id, { write_start_block: Number(event.target.value) })
+                        }
+                      />
+                      <small className="field-help">
+                        Technical: where on the sticker the ticket is written in
+                        Write mode. Leave at 0 unless your RFID supplier says otherwise.
+                      </small>
+                    </label>
+                  )}
                 </div>
 
                 {station.device.type === "sim_gate" && (
@@ -300,6 +335,11 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
                         <option value="records">Stored records</option>
                         <option value="live_inventory">Live inventory</option>
                       </select>
+                      <small className="field-help">
+                        Practice setting. Stored records: the reader keeps a list
+                        of passes. Live inventory: it reports every tag it sees
+                        right now.
+                      </small>
                     </label>
                     <label className="checkbox">
                       <input

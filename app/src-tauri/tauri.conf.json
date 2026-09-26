@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "RfiDex",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "identifier": "com.eventzflow.rfidex",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -26,7 +26,9 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": [
+      "nsis"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -41,6 +43,18 @@
       },
       "nsis": {
         "installMode": "currentUser"
+      }
+    },
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEE5NEZGQUJBNEE0NzMwMTUKUldRVk1FZEt1dnBQcWE0UW1lRmpFeVVTUWpid05zSXczSGRGNFNwWFd2MVFnSG1LelJRek13ZUsK",
+      "endpoints": [
+        "https://github.com/LearningTigers-Sdn-Bhd/rfidex/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
       }
     }
   }

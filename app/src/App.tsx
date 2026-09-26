@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 
-import { appState, errorText, exportDiagnostics, failureOf, inDesktopApp, status, syncNow } from "./api";
-import type { AppFailure, AppStatus, AppView, StationStatus } from "./api";
+import { appState, errorText, exportDiagnostics, failureOf, inDesktopApp, status, syncNow, updateCheck, updateInstall } from "./api";
+import type { AppFailure, AppStatus, AppView, StationStatus, UpdateView } from "./api";
 import { Desk } from "./Desk";
 import { Gate } from "./Gate";
 import { Problems } from "./Problems";
@@ -244,6 +244,7 @@ export function App() {
       </main>
 
       <StatusBar status={view.status} />
+      <Updates />
     </div>
   );
 }
@@ -282,6 +283,68 @@ function StatusBar({ status }: { status: AppStatus | null }) {
           </p>
         ))}
     </footer>
+  );
+}
+
+/**
+ * Checks once when the app opens, quietly: no internet at a venue is normal.
+ * The button checks again and says what it found.
+ */
+function Updates() {
+  const [info, setInfo] = useState<UpdateView | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    updateCheck().then(setInfo, () => {});
+  }, []);
+
+  const check = async () => {
+    setBusy(true);
+    setMessage(null);
+    try {
+      const next = await updateCheck();
+      setInfo(next);
+      if (!next.available) setMessage(`RfiDex ${next.current} is the latest version.`);
+    } catch (problem) {
+      setMessage(errorText(problem));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const install = async () => {
+    setBusy(true);
+    setMessage("Downloading the update. RfiDex will close and reopen by itself…");
+    try {
+      await updateInstall();
+    } catch (problem) {
+      setMessage(errorText(problem));
+      setBusy(false);
+    }
+  };
+
+  return (
+    <aside className={info?.available ? "updates has-update" : "updates"} aria-live="polite">
+      {info?.available ? (
+        <p>
+          <strong>RfiDex {info.available} is ready to install</strong>
+          <span> · you have {info.current}. Setup and waiting scans are kept.</span>
+        </p>
+      ) : (
+        <p>RfiDex {info?.current ?? ""}</p>
+      )}
+      {message && <p className="update-message">{message}</p>}
+      {info?.available ? (
+        <button className="primary" type="button" onClick={() => void install()} disabled={busy}>
+          {busy ? "Updating…" : "Update now"}
+        </button>
+      ) : (
+        <button type="button" onClick={() => void check()} disabled={busy}>
+          {busy ? "Checking…" : "Check for updates"}
+        </button>
+      )}
+    </aside>
   );
 }
 

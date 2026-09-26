@@ -112,6 +112,12 @@ export interface AppView {
   status: AppStatus | null;
 }
 
+export interface UpdateView {
+  current: string;
+  available: string | null;
+  notes: string | null;
+}
+
 export const appState = () => invoke<AppView>("app_state");
 export const setupGet = () => invoke<SetupView | null>("setup_get");
 export const setupSave = (input: SetupInput) => invoke<AppView>("setup_save", { input });
@@ -137,6 +143,8 @@ export const simPass = (station: string, uidHex: string) =>
   invoke<void>("sim_pass", { station, uidHex });
 export const simSetConnected = (station: string, connected: boolean) =>
   invoke<void>("sim_set_connected", { station, connected });
+export const updateCheck = () => invoke<UpdateView>("update_check");
+export const updateInstall = () => invoke<void>("update_install");
 
 /**
  * A failed command carries the Rust message. Anything else is a transport

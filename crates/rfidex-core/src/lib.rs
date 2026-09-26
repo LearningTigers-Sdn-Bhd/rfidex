@@ -7,6 +7,7 @@ pub mod codec;
 pub mod contract;
 pub mod device;
 pub mod health;
+pub mod search;
 pub mod station;
 pub mod store;
 pub mod sync;

@@ -42,6 +42,10 @@ pub fn seeds() -> Vec<SeedTicket> {
         ticket_type: "VIP".into(),
         paid,
         cancelled,
+        email: None,
+        phone: None,
+        created_at: None,
+        checked_in_at: None,
     };
     vec![
         seed(1, "Aina", true, false),

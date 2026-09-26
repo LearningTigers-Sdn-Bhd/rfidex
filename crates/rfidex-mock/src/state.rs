@@ -35,6 +35,42 @@ pub struct SeedTicket {
     pub paid: bool,
     #[serde(default)]
     pub cancelled: bool,
+    /// Contacts are for search only: they never reach a DTO, the cache, or a
+    /// station. Raw values stay private to this server.
+    #[serde(default)]
+    pub email: Option<String>,
+    #[serde(default)]
+    pub phone: Option<String>,
+    /// Explicit creation time. Without one, the seed order decides: later rows
+    /// are newer.
+    #[serde(default)]
+    pub created_at: Option<chrono::DateTime<Utc>>,
+    /// A guest who was already checked in before this run.
+    #[serde(default)]
+    pub checked_in_at: Option<chrono::DateTime<Utc>>,
+}
+
+/// The creation time given to a seed that carries none, before its position in
+/// the seed list is added.
+fn seed_epoch() -> chrono::DateTime<Utc> {
+    "2026-01-01T00:00:00Z".parse().expect("a fixed epoch")
+}
+
+/// At most two visible characters of the local part, and never the whole local
+/// part: a one-character local part shows none.
+fn mask_email(value: &str) -> String {
+    let (local, domain) = value.split_once('@').unwrap_or((value, ""));
+    let visible = local.chars().count().saturating_sub(1).min(2);
+    let shown: String = local.chars().take(visible).collect();
+    format!("{shown}***@{domain}")
+}
+
+/// At most four trailing digits, and never the whole number.
+fn mask_phone(value: &str) -> String {
+    let digits: Vec<char> = value.chars().filter(char::is_ascii_digit).collect();
+    let shown = digits.len().saturating_sub(1).min(4);
+    let suffix: String = digits[digits.len() - shown..].iter().collect();
+    format!("•••• {suffix}")
 }
 
 struct MockTicket {
@@ -44,6 +80,15 @@ struct MockTicket {
     /// The first check-in this ticket ever had. Private: it never leaves the
     /// server except as the check-in metadata on a desk scan.
     checked_in_at: Option<chrono::DateTime<Utc>>,
+    /// Search keys, and the masked hints an answer may carry.
+    name_norm: String,
+    email_norm: Option<String>,
+    phone_norm: Option<String>,
+    email_hint: Option<String>,
+    phone_hint: Option<String>,
+    /// When this row ranks in a newest-first search: its explicit creation
+    /// time, or the fixed epoch plus its seed position.
+    created_at: chrono::DateTime<Utc>,
 }
 
 struct MockBinding {
@@ -77,21 +122,40 @@ impl MockState {
     pub fn new(api_key: String, event: EventSettings, seeds: Vec<SeedTicket>) -> MockState {
         let tickets = seeds
             .into_iter()
-            .map(|s| {
+            .enumerate()
+            .map(|(order, s)| {
                 let summary = TicketSummary {
                     public_id: s.public_id,
-                    name: s.name,
+                    name: s.name.clone(),
                     ticket_type: s.ticket_type,
                     valid: s.paid && !s.cancelled,
-                    checked_in: false,
+                    checked_in: s.checked_in_at.is_some(),
                 };
+                // A seed without a creation time is ordered by its position in
+                // the list, so the order is fixed at construction and can never
+                // come from hash iteration.
+                let created_at = s
+                    .created_at
+                    .unwrap_or_else(|| seed_epoch() + chrono::Duration::seconds(order as i64));
+                let name_norm = rfidex_core::search::normalize_name(&s.name);
+                let email_norm = s.email.as_deref().map(rfidex_core::search::normalize_email);
+                let phone_norm = s.phone.as_deref().map(rfidex_core::search::normalize_phone);
                 (
                     s.public_id,
                     MockTicket {
                         summary,
                         paid: s.paid,
                         cancelled: s.cancelled,
-                        checked_in_at: None,
+                        checked_in_at: s.checked_in_at,
+                        name_norm,
+                        // The hints reveal the stored, normalised contact, so a
+                        // hint can never show a different value than the one a
+                        // search matches.
+                        email_hint: email_norm.as_deref().map(mask_email),
+                        phone_hint: phone_norm.as_deref().map(mask_phone),
+                        email_norm,
+                        phone_norm,
+                        created_at,
                     },
                 )
             })
@@ -186,6 +250,49 @@ impl MockState {
             .iter()
             .find(|b| b.active && b.info.public_id == id)
             .map(|b| &b.info)
+    }
+
+    /// Paid tickets only, newest first, at most ten — the same rule the
+    /// EventzFlow check-in page uses. Matching is literal in memory, so `%` and
+    /// `_` are ordinary characters and cannot expand to every row.
+    pub fn search_tickets(&self, by: SearchBy, query: &str) -> TicketSearchResp {
+        let Some(q) = rfidex_core::search::normalized_query(by, query) else {
+            return TicketSearchResp { tickets: vec![] };
+        };
+        let mut rows: Vec<&MockTicket> = self
+            .tickets
+            .values()
+            .filter(|t| t.paid)
+            .filter(|t| match by {
+                SearchBy::Name => t.name_norm.contains(&q),
+                SearchBy::Email => t.email_norm.as_deref() == Some(q.as_str()),
+                SearchBy::Phone => t
+                    .phone_norm
+                    .as_deref()
+                    .is_some_and(|stored| stored.contains(&q)),
+            })
+            .collect();
+        rows.sort_by(|a, b| {
+            b.created_at
+                .cmp(&a.created_at)
+                .then(a.summary.public_id.cmp(&b.summary.public_id))
+        });
+        rows.truncate(10);
+        TicketSearchResp {
+            tickets: rows
+                .into_iter()
+                .map(|t| TicketSearchItem {
+                    public_id: t.summary.public_id,
+                    name: t.summary.name.clone(),
+                    ticket_type: t.summary.ticket_type.clone(),
+                    valid: t.summary.valid,
+                    checked_in: t.summary.checked_in,
+                    checked_in_at: t.checked_in_at,
+                    email_hint: t.email_hint.clone(),
+                    phone_hint: t.phone_hint.clone(),
+                })
+                .collect(),
+        }
     }
 
     pub fn heartbeat(&mut self, station: &str, req: HeartbeatReq) -> HeartbeatResp {
@@ -435,6 +542,10 @@ mod tests {
             ticket_type: "VIP".into(),
             paid,
             cancelled,
+            email: None,
+            phone: None,
+            created_at: None,
+            checked_in_at: None,
         };
         MockState::new(
             "k".repeat(32),

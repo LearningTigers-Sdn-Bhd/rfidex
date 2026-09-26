@@ -119,6 +119,10 @@ fn rehearsal_tickets(first: u128, count: usize) -> Vec<SeedTicket> {
             ticket_type: "General".into(),
             paid: true,
             cancelled: false,
+            email: None,
+            phone: None,
+            created_at: None,
+            checked_in_at: None,
         })
         .collect()
 }

@@ -185,6 +185,32 @@ struct LookupQuery {
     uid_raw_hex: String,
 }
 
+/// Every field is optional so a malformed query is a typed error from this
+/// handler instead of axum's own text.
+#[derive(Default, Deserialize)]
+struct SearchQuery {
+    by: Option<String>,
+    q: Option<String>,
+}
+
+async fn ticket_search(
+    State(s): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Query(query): Query<SearchQuery>,
+) -> Response {
+    if let Err(r) = pre(&s, &headers).await {
+        return *r;
+    }
+    let Some(by) = query.by.as_deref().and_then(SearchBy::parse) else {
+        return error(400, ErrorCode::Malformed, "by must be name, email or phone");
+    };
+    let Some(text) = query.q else {
+        return error(400, ErrorCode::Malformed, "q is required");
+    };
+    let resp = s.mock.lock().unwrap().search_tickets(by, &text);
+    Json(resp).into_response()
+}
+
 async fn lookup(
     State(s): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -234,6 +260,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route(paths::HEARTBEAT, post(heartbeat))
         .route(paths::CACHE, get(cache))
         .route(paths::DESK_SCANS, post(desk_scans))
+        .route(paths::TICKET_SEARCH, get(ticket_search))
         .route(paths::BINDINGS, post(bindings))
         .route(paths::LOOKUP, get(lookup))
         .route(paths::OBSERVATIONS, post(observations))

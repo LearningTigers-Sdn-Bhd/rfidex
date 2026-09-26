@@ -68,6 +68,21 @@ impl ApiClient {
             .await
     }
 
+    /// Search is a query string, never a built URL: the caller's text is
+    /// percent-encoded by reqwest, so it cannot change the request.
+    pub async fn search_tickets(
+        &self,
+        by: SearchBy,
+        query: &str,
+    ) -> Result<TicketSearchResp, ApiError> {
+        self.send(
+            self.http
+                .get(self.url(paths::TICKET_SEARCH))
+                .query(&[("by", by.as_str()), ("q", query)]),
+        )
+        .await
+    }
+
     pub async fn lookup(&self, uid_raw_hex: &str) -> Result<LookupResp, ApiError> {
         self.send(
             self.http

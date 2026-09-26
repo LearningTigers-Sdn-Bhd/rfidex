@@ -14,6 +14,7 @@ pub mod paths {
     pub const HEARTBEAT: &str = "/v1/rfid/stations/heartbeat";
     pub const CACHE: &str = "/v1/rfid/cache";
     pub const DESK_SCANS: &str = "/v1/rfid/desk_scans";
+    pub const TICKET_SEARCH: &str = "/v1/rfid/tickets/search";
     pub const BINDINGS: &str = "/v1/rfid/bindings";
     pub const LOOKUP: &str = "/v1/rfid/bindings/lookup";
     pub const OBSERVATIONS: &str = "/v1/rfid/observations";

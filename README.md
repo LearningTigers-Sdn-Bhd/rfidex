@@ -8,7 +8,7 @@
 Scan a ticket, tag a sticker, walk through a gate — online or off.
 
 [![CI](https://github.com/LearningTigers-Sdn-Bhd/rfidex/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/LearningTigers-Sdn-Bhd/rfidex/actions/workflows/ci.yml)
-![Tests](https://img.shields.io/badge/tests-108_passing-2ea44f?style=for-the-badge&logo=checkmarx&logoColor=white)
+![Tests](https://img.shields.io/badge/tests-113_passing-2ea44f?style=for-the-badge&logo=checkmarx&logoColor=white)
 ![Platform](https://img.shields.io/badge/platform-Windows_x64-0078D4?style=for-the-badge&logo=windows&logoColor=white)
 ![Status](https://img.shields.io/badge/status-simulator_ready-f5a623?style=for-the-badge)
 
@@ -237,13 +237,40 @@ Measured locally (macOS, debug build): smoke ≈ 0.9 s, full ≈ 2.4 s. The numb
 > [!NOTE]
 > **Status: the Windows installer is not built yet.** The NSIS packaging workflow and the clean-Windows manual acceptance are the rest of Plan 3. Nothing on this page is a claim that a Windows install was tested. The installer will be **unsigned** until a signing decision is made, and the embedded WebView2 bootstrapper **downloads the runtime when it is missing**, so a first install on a machine without WebView2 needs internet.
 
+### 📦 Windows installer (unsigned)
+
+The installer is built by a workflow of its own, never by ordinary CI:
+
+```bash
+gh workflow run windows-package.yml --repo LearningTigers-Sdn-Bhd/rfidex --ref main
+gh run list --repo LearningTigers-Sdn-Bhd/rfidex --workflow windows-package.yml --limit 5
+```
+
+Against one checkout that run: fires the full rehearsal (smoke **and** 500); builds `rfidex.exe` and exactly one NSIS `*-setup.exe` for `x86_64-pc-windows-msvc` with `STATIC_VCRUNTIME=true`; builds `rfidex-mock.exe` with a static CRT as a **test tool** that is never part of the installer; audits every shipped binary's imports with `dumpbin /DEPENDENTS` and fails if a VC++ redistributable import appears; writes a SHA-256 manifest and the signing status. Nothing is uploaded until the rehearsal, the build and the import gate have all passed. A tag run also fails if the tag after `rfidex-v` disagrees with the declared version.
+
+| Artifact | Contents |
+|:--|:--|
+| `rfidex-windows-x64-unsigned-<sha>-<run-id>` | the NSIS setup, `SHA256SUMS.txt`, rehearsal and import evidence |
+| `rfidex-test-tools-<sha>-<run-id>` | `rfidex-mock.exe` and `tickets.json`, labelled test-only |
+
+```bash
+gh run download <run-id> --repo LearningTigers-Sdn-Bhd/rfidex --name rfidex-windows-x64-unsigned-<sha>-<run-id>
+```
+
+**Install prerequisites and behaviour**
+
+- Windows 10 or 11, x64. The install is **per user**, so it does not need administrator rights.
+- WebView2 is reused when it is already present. On a machine without it, the embedded bootstrapper **downloads** the runtime, so a first install needs internet — this is not an offline installer.
+- No Visual C++ redistributable step: the release app links the static VC runtime, and the workflow fails the build if a shipped binary ever imports one again.
+- The installer is **unsigned** until a signing decision is made, so Windows can show an Unknown publisher or SmartScreen warning. Never disable those protections to make an install pass.
+
 ### ✅ Checks
 
 ```bash
 (cd app && npm ci && npm run build)
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace          # 108 tests
+cargo test --workspace          # 113 tests
 cargo build -p rfidex-app
 ```
 

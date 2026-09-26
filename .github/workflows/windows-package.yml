@@ -232,3 +232,37 @@ jobs:
             test-tools/README.txt
           if-no-files-found: error
           retention-days: 14
+
+  # Tag pushes only: publish the installer that `package` built, rehearsed and
+  # audited as a GitHub pre-release. Write access lives in this job alone.
+  prerelease:
+    needs: package
+    if: startsWith(github.ref, 'refs/tags/rfidex-v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: rfidex-windows-x64-unsigned-${{ github.sha }}-${{ github.run_id }}
+          path: dist
+      - name: Publish pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          setup=$(ls dist/target/x86_64-pc-windows-msvc/release/bundle/nsis/*-setup.exe 2>/dev/null \
+            || ls dist/*-setup.exe)
+          sums=$(dirname "$setup")/SHA256SUMS.txt
+          cat > notes.md <<NOTES
+          Test build of RfiDex ${TAG#rfidex-v} for Windows 10/11 x64. **Simulator only** — no real RFID hardware yet.
+
+          **Unsigned.** Windows SmartScreen will say "Windows protected your PC": choose **More info → Run anyway**.
+          Installs for the current user; no admin rights needed. If WebView2 is missing, the installer downloads it, so the first install needs internet.
+
+          SHA-256: \`$(cut -d' ' -f1 "$sums")\`
+          NOTES
+          gh release create "$TAG" "$setup" "$sums" \
+            --repo "$GITHUB_REPOSITORY" --prerelease \
+            --title "RfiDex ${TAG#rfidex-v} (test build)" --notes-file notes.md

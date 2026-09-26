@@ -40,10 +40,12 @@ Scan a ticket, tag a sticker, walk through a gate — online or off.
 
 ### 🎫 Registration desk
 - Keyboard-wedge QR scan — the scanner types, Enter submits
+- **Search** by name, email or phone when the QR will not scan
 - **Bind mode:** links the sticker's UID to the ticket
 - **Write mode:** writes the ticket onto the sticker, reads it back, *and* binds the UID
 - Sticker already in use? Shows whose it is and asks for a reason before replacing
 - Two stickers on the reader are refused, never guessed
+- Badge prints on a first check-in; **Reprint badge** whenever staff decide
 
 </td>
 <td width="50%" valign="top">
@@ -64,7 +66,7 @@ Scan a ticket, tag a sticker, walk through a gate — online or off.
 - Every action committed to SQLite **before** it's acknowledged
 - Offline passages say **Recorded**, never *Accepted*
 - Durable outbox with backoff; the same row flips to accepted on reconnect
-- An offline desk says the badge prints when the connection returns — no false promises
+- An offline desk never prints on its own — no false promises
 
 </td>
 <td valign="top">
@@ -167,13 +169,16 @@ sequenceDiagram
     participant DB as Station SQLite
     participant API as EventzFlow
 
-    Staff->>Desk: Scan ticket QR
-    Desk->>API: Desk scan (check-in, badge prints)
-    alt online
-        API-->>Desk: Ticket + current sticker
+    Staff->>Desk: Scan ticket QR, or search name / email / phone
+    Desk->>API: Desk scan (check-in)
+    alt first check-in
+        API-->>Desk: Checked in
+        Desk->>Printer: Reprint badge (on this PC, no key)
+    else already checked in
+        API-->>Desk: Already checked in at 09:14 — Reprint offered
     else offline
         Desk->>DB: Queue scan, use cached ticket
-        Desk-->>Staff: Offline — badge will print later
+        Desk-->>Staff: Offline — press Reprint when back online
     end
     Staff->>Desk: Place one sticker
     opt sticker already in use
@@ -207,7 +212,14 @@ npm ci
 npm run tauri dev        # native window, Vite on 127.0.0.1:1420
 ```
 
-Then in **Setup**: server `http://127.0.0.1:4010`, the key above, then add one desk plus an entry and an exit gate. Demo tickets are fictional: Aina and Ben (valid), Chong (unpaid), Devi (cancelled).
+Then in **Setup**: server `http://127.0.0.1:4010`, the key above, then add one desk plus an entry and an exit gate. Demo tickets are fictional: Aina and Ben (valid), Chong (unpaid), Devi (cancelled). Each demo ticket carries a fictional email and phone so search can be tried.
+
+```bash
+# 3 — the badge printer app, on the same PC as the desk (optional)
+#     event-printing, in direct mode: point it at a backend and an event slug.
+#     RfiDex only asks it to reprint one ticket id; no key is sent to it.
+python run_server.py            # listens on 127.0.0.1:8000 by default
+```
 
 > [!IMPORTANT]
 > The app crate embeds `app/dist`. **Run `npm run build` before any cargo command that builds `rfidex-app`** — CI does the same.
@@ -307,6 +319,38 @@ Startup and browser-only screens pair a bundled window illustration with the ori
 On Desk, the ticket-code field keeps scanner focus whenever no dialog is open. **Open simulator** opens hardware test controls in a dialog; closing it returns focus to the scanner. Replacement confirmation still requires a reason, and all runtime messages and decisions remain unchanged.
 
 For a frontend focus smoke check, open a configured simulated Desk in the dev WebView and run `await (await import('/dev/desk-focus-check.js')).checkDeskFocus()` in its developer console. This checks focus recovery and modal isolation without scanning or linking a ticket.
+
+### Finding a ticket
+
+The QR scan is the main path; **Search by name, email or phone** is the fallback for a lost or unreadable code. One search box with a Name / Email / Phone switch:
+
+| `by` | Rule | Minimum input |
+|:--|:--|:--|
+| name | anywhere in the name; case and spacing are ignored, and `%` / `_` are ordinary characters | 2 characters |
+| email | the whole address, case-insensitive | contains `@` |
+| phone | the digits only; a leading `60` or `0` is dropped, so `012-345 6789`, `0123456789` and `+60 12 345 6789` find the same guest | 4 digits |
+
+Paid tickets only, newest first, **at most 10 rows**, and email and phone are **masked by the server** — only a hint such as `ah***@example.com` or `•••• 4521` reaches this computer. A row says `Checked in 09:14` when the guest is already in; that time is this PC's own clock, 24-hour, so **set the desk PC's timezone correctly**. Selecting a row runs the ordinary desk scan with that ticket, so the sticker step is exactly the same.
+
+Offline, RfiDex searches **its own saved ticket list by name only** — the local cache holds no email or phone, by design, so an email or phone search offline says `Needs internet — search by name or scan QR` instead of pretending to have searched. An offline result list is ordered by name, not newest first, and a checked-in guest shows `Checked in` with no time, because the cache has none.
+
+### Badge printing
+
+RfiDex prints through **event-printing**, the badge printer app on the desk's own PC. Each desk has its own **Printer address** in Setup, default `http://127.0.0.1:8000`, with a **Test printer** button that reports the printer app's name. Only a loopback address is accepted: a printer on another PC is not supported yet. RfiDex asks event-printing to reprint **one ticket id** and event-printing applies its own badge layout, so the badge mapping lives in one place and **no API key is sent to the printer app**.
+
+event-printing must be set up in **direct mode on that PC**: the EventzFlow backend URL and the event slug, so it can look the ticket up itself.
+
+| When | What happens |
+|:--|:--|
+| The scan made the **first** check-in | One badge is printed once. The guest stays on screen until the answer arrives. |
+| The guest was **already** checked in | No automatic print. The screen says `Already checked in at HH:MM` and offers **Reprint badge**. |
+| The scan was **offline** (queued) | No print at all. The screen says `Offline — press Reprint when back online`. |
+| Reprint, or after a failure | **Reprint badge**, as many times as staff decide. |
+
+Printing is fire-and-report: it never blocks the sticker step, and a bad sticker, a failed print or a slow printer never stops a guest being linked. The timeout is 10 seconds, and a timeout is reported as a failure because the job may already have printed — RfiDex never retries by itself. Nothing prints from a queue drain, a cache refresh, a heartbeat or a restart: only staff asking.
+
+> [!WARNING]
+> **The SalesCatalyst print workflow must stay OFF for RfiDex events — keep it built as a backup only.** The `ticket.scanned` webhook fires for RfiDex check-ins too, and its payload does not say which app checked the guest in, so a workflow that prints on that webhook produces **two badges per guest**. Switch it on only if RfiDex printing fails at the event and staff stop using it. On each desk PC event-printing runs in direct mode instead.
 
 ### Setup — simple on purpose
 

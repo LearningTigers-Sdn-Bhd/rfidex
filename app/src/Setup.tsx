@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 
-import { errorText, setupGet, setupSave, setupTest } from "./api";
+import { errorText, setupGet, setupSave, setupTest, setupTestPrinter } from "./api";
 import type {
   AppStatus,
   AppView,
@@ -11,6 +11,8 @@ import type {
   StationConfig,
   StationKind,
 } from "./api";
+
+const DEFAULT_PRINTER_URL = "http://127.0.0.1:8000";
 
 interface Props {
   hasSavedConfig: boolean;
@@ -39,6 +41,11 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const [tested, setTested] = useState<ConnectionView | null>(null);
+  // Keyed by station id, and only shown while the address it tested is still
+  // the address on screen: a changed or removed station's result is ignored.
+  const [printerTests, setPrinterTests] = useState<
+    Record<string, { url: string; view: ConnectionView }>
+  >({});
   const [roleChange, setRoleChange] = useState<RoleChange[] | null>(null);
   const dialogRef = useRef<HTMLDialogElement>(null);
 
@@ -93,6 +100,11 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
                   : s.device.type === "sim_desk"
                     ? s.device
                     : { type: "sim_desk" as const },
+              // A gate may have no printer address; a desk needs one.
+              printer_url:
+                kind === "desk" && s.printer_url.trim() === ""
+                  ? DEFAULT_PRINTER_URL
+                  : s.printer_url,
             }
           : s,
       ),
@@ -109,6 +121,7 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
         device: { type: "sim_desk" },
         debounce_secs: 5,
         write_start_block: 0,
+        printer_url: DEFAULT_PRINTER_URL,
       },
     ]);
 
@@ -120,6 +133,20 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
     } catch (problem) {
       setFailure(errorText(problem));
       setTested(null);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const testPrinter = async (station: StationConfig) => {
+    const url = station.printer_url.trim();
+    setBusy(true);
+    try {
+      const view = await setupTestPrinter(url);
+      setPrinterTests((all) => ({ ...all, [station.id]: { url, view } }));
+      setFailure(null);
+    } catch (problem) {
+      setFailure(errorText(problem));
     } finally {
       setBusy(false);
     }
@@ -317,6 +344,46 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
                         Write mode. Leave at 0 unless your RFID supplier says otherwise.
                       </small>
                     </label>
+                  )}
+                  {station.kind === "desk" && (
+                    <div className="printer-field">
+                      <label htmlFor={`printer-${station.id}`}>
+                        Printer address
+                        <input
+                          id={`printer-${station.id}`}
+                          value={station.printer_url}
+                          onChange={(event) =>
+                            patch(station.id, { printer_url: event.target.value })
+                          }
+                          autoComplete="off"
+                          spellCheck={false}
+                          placeholder={DEFAULT_PRINTER_URL}
+                        />
+                        <small className="field-help">
+                          The badge printer app on this computer. Keep
+                          http://127.0.0.1:8000 unless the printer app uses another
+                          port. Start the printer app, then press Test printer. This
+                          is not the EventzFlow server address.
+                        </small>
+                      </label>
+                      <div className="actions">
+                        <button
+                          type="button"
+                          onClick={() => void testPrinter(station)}
+                          disabled={busy}
+                        >
+                          Test printer
+                        </button>
+                      </div>
+                      {printerTests[station.id]?.url === station.printer_url.trim() && (
+                        <p
+                          className={printerTests[station.id].view.ok ? "note" : "failure"}
+                          role="status"
+                        >
+                          {printerTests[station.id].view.message}
+                        </p>
+                      )}
+                    </div>
                   )}
                 </div>
 

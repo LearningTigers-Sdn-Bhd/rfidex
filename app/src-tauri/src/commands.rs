@@ -2,11 +2,12 @@
 //! operator should read, whether a save is safe — belongs to `rfidex-runtime`.
 //! These functions hold the app state lock and forward arguments.
 
+use rfidex_core::contract::SearchBy;
 use rfidex_core::store::{OutboxState, Store};
 use rfidex_runtime::config::{AppConfig, AppPaths, ConfigError, SetupInput, SetupView};
 use rfidex_runtime::{
-    test_connection, AppStatus, ConnectionView, DeskView, GateView, ProblemView, Runtime,
-    RuntimeError, RuntimeOptions,
+    test_connection, test_printer, AppStatus, BadgeView, ConnectionView, DeskView, GateView,
+    ProblemView, Runtime, RuntimeError, RuntimeOptions, SearchView,
 };
 use serde::Serialize;
 use tokio::sync::{RwLock, RwLockReadGuard};
@@ -170,6 +171,13 @@ pub async fn setup_test(
 }
 
 #[tauri::command]
+pub async fn setup_test_printer(url: String) -> Result<ConnectionView, RuntimeError> {
+    // An address that has not been saved yet, and no key at all: the printer
+    // app never sees the event API key.
+    Ok(test_printer(&url).await)
+}
+
+#[tauri::command]
 pub async fn setup_save(
     state: tauri::State<'_, AppState>,
     input: SetupInput,
@@ -259,6 +267,27 @@ pub async fn desk_reset(
 ) -> Result<DeskView, RuntimeError> {
     let slot = current(&state).await?;
     runtime(&slot)?.desk_reset(station).await
+}
+
+#[tauri::command]
+pub async fn desk_search(
+    state: tauri::State<'_, AppState>,
+    station: Uuid,
+    by: SearchBy,
+    query: String,
+) -> Result<SearchView, RuntimeError> {
+    let slot = current(&state).await?;
+    runtime(&slot)?.desk_search(station, by, &query).await
+}
+
+#[tauri::command]
+pub async fn desk_print(
+    state: tauri::State<'_, AppState>,
+    station: Uuid,
+    session_id: Uuid,
+) -> Result<BadgeView, RuntimeError> {
+    let slot = current(&state).await?;
+    runtime(&slot)?.desk_print(station, session_id).await
 }
 
 #[tauri::command]

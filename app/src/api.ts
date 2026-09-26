@@ -7,6 +7,7 @@ export type RfidMode = "bind" | "write";
 export type StationKind = "desk" | "gate";
 export type Role = "entry" | "exit";
 export type GateKind = "records" | "live_inventory";
+export type SearchBy = "name" | "email" | "phone";
 
 export type DeviceChoice =
   | { type: "sim_desk" }
@@ -20,6 +21,8 @@ export interface StationConfig {
   device: DeviceChoice;
   debounce_secs: number;
   write_start_block: number;
+  /** The badge printer app on this PC. Only a desk ever prints. */
+  printer_url: string;
 }
 
 export interface SetupView {
@@ -50,6 +53,18 @@ export interface TicketSummary {
 
 export type DeskStep = "ready" | "scanned" | "linked" | "needs_confirm" | "error";
 
+/**
+ * What Rust decided about this guest's badge. `print_now` is the one signal to
+ * call `deskPrint`; every sentence here is Rust's, including the check-in time.
+ */
+export interface BadgeView {
+  print_now: boolean;
+  can_reprint: boolean;
+  /** Keep the guest on screen (no 3 s auto-reset) until staff act. */
+  hold: boolean;
+  message: string | null;
+}
+
 export interface DeskView {
   step: DeskStep;
   code: string | null;
@@ -57,6 +72,27 @@ export interface DeskView {
   ticket: TicketSummary | null;
   offline: boolean;
   mode: RfidMode;
+  /** Identifies the guest on screen; a print result may only land on its own. */
+  session_id: string;
+  badge: BadgeView;
+}
+
+export interface SearchRow {
+  public_id: string;
+  name: string;
+  ticket_type: string;
+  /** Masked by the server; never present offline. */
+  email_hint: string | null;
+  phone_hint: string | null;
+  /** "Checked in 09:14" online, "Checked in" offline, null if not in. */
+  checked_in_message: string | null;
+}
+
+export interface SearchView {
+  offline: boolean;
+  /** The minimum-input hint, "No matching tickets", or the offline message. */
+  message: string | null;
+  rows: SearchRow[];
 }
 
 export type GateStatus = "recorded" | "accepted" | "denied" | "problem";
@@ -123,12 +159,18 @@ export const setupGet = () => invoke<SetupView | null>("setup_get");
 export const setupSave = (input: SetupInput) => invoke<AppView>("setup_save", { input });
 export const setupTest = (url: string, key: string) =>
   invoke<ConnectionView>("setup_test", { url, key });
+export const setupTestPrinter = (url: string) =>
+  invoke<ConnectionView>("setup_test_printer", { url });
 export const status = () => invoke<AppStatus>("status");
 export const deskScan = (station: string, code: string) =>
   invoke<DeskView>("desk_scan", { station, code });
 export const deskLink = (station: string, reason: string | null) =>
   invoke<DeskView>("desk_link", { station, reason });
 export const deskReset = (station: string) => invoke<DeskView>("desk_reset", { station });
+export const deskSearch = (station: string, by: SearchBy, query: string) =>
+  invoke<SearchView>("desk_search", { station, by, query });
+export const deskPrint = (station: string, sessionId: string) =>
+  invoke<BadgeView>("desk_print", { station, sessionId });
 export const gateRecent = (station: string, limit = 30) =>
   invoke<GateView[]>("gate_recent", { station, limit });
 export const problems = () => invoke<ProblemView[]>("problems");

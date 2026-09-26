@@ -9,7 +9,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::Value;
 use uuid::Uuid;
 
-use crate::contract::{CacheResp, TicketSummary};
+use crate::contract::{CacheResp, SearchBy, TicketSummary};
 
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
@@ -118,7 +118,8 @@ PRAGMA synchronous = FULL;
 CREATE TABLE IF NOT EXISTS config (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS tickets (
   public_id TEXT PRIMARY KEY, name TEXT NOT NULL, ticket_type TEXT NOT NULL,
-  valid INTEGER NOT NULL, checked_in INTEGER NOT NULL
+  valid INTEGER NOT NULL, checked_in INTEGER NOT NULL,
+  name_norm TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS bindings (tag_key TEXT PRIMARY KEY, public_id TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS bindings_ticket ON bindings(public_id);
@@ -137,6 +138,10 @@ CREATE TABLE IF NOT EXISTS outbox (
 CREATE INDEX IF NOT EXISTS outbox_due ON outbox(state, kind, next_attempt_at, id);
 ";
 
+/// The offline search matches on this column, so a row written before it
+/// existed has to be filled in from the name that is already stored.
+const NAME_NORM: &str = "name_norm";
+
 fn ts(t: DateTime<Utc>) -> String {
     t.to_rfc3339_opts(SecondsFormat::Millis, true)
 }
@@ -145,6 +150,57 @@ fn parse_ts(s: &str) -> DateTime<Utc> {
     DateTime::parse_from_rfc3339(s)
         .map(|t| t.with_timezone(&Utc))
         .unwrap_or_default()
+}
+
+/// `%`, `_` and the escape character itself are ordinary characters in a name,
+/// so they are escaped before the pattern is built. Order matters: the escape
+/// character first.
+fn escape_like(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
+}
+
+/// One initialisation for both open paths: the schema, then the migration that
+/// brings an older station database up to it. Finished before the store is
+/// handed out, so no caller can ever see a half-migrated table.
+fn initialize(conn: &Connection) -> StoreResult<()> {
+    conn.execute_batch(SCHEMA)?;
+    migrate_name_norm(conn)
+}
+
+/// Add the normalized-name column to a database created before Plan 7, and
+/// backfill every stored name in one transaction. The table is never dropped or
+/// recreated: the rows are the station's own work.
+fn migrate_name_norm(conn: &Connection) -> StoreResult<()> {
+    let present: bool = conn
+        .prepare("SELECT 1 FROM pragma_table_info('tickets') WHERE name = ?1")?
+        .exists([NAME_NORM])?;
+    if present {
+        return Ok(());
+    }
+    conn.execute_batch("BEGIN IMMEDIATE")?;
+    let result = (|| -> StoreResult<()> {
+        conn.execute_batch("ALTER TABLE tickets ADD COLUMN name_norm TEXT NOT NULL DEFAULT ''")?;
+        let rows: Vec<(String, String)> = {
+            let mut stmt = conn.prepare("SELECT public_id, name FROM tickets")?;
+            let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+        for (public_id, name) in rows {
+            conn.execute(
+                "UPDATE tickets SET name_norm = ?2 WHERE public_id = ?1",
+                params![public_id, crate::search::normalize_name(&name)],
+            )?;
+        }
+        Ok(())
+    })();
+    match result {
+        Ok(()) => conn.execute_batch("COMMIT")?,
+        Err(_) => conn.execute_batch("ROLLBACK")?,
+    }
+    result
 }
 
 fn row_to_item(r: &rusqlite::Row<'_>) -> rusqlite::Result<StoreResult<OutboxItem>> {
@@ -169,13 +225,13 @@ fn row_to_item(r: &rusqlite::Row<'_>) -> rusqlite::Result<StoreResult<OutboxItem
 impl Store {
     pub fn open(path: &Path) -> StoreResult<Store> {
         let conn = Connection::open(path)?;
-        conn.execute_batch(SCHEMA)?;
+        initialize(&conn)?;
         Ok(Store { conn })
     }
 
     pub fn open_in_memory() -> StoreResult<Store> {
         let conn = Connection::open_in_memory()?;
-        conn.execute_batch(SCHEMA)?;
+        initialize(&conn)?;
         Ok(Store { conn })
     }
 
@@ -382,12 +438,54 @@ impl Store {
 
     pub fn upsert_ticket(&self, t: &TicketSummary) -> StoreResult<()> {
         self.conn.execute(
-            "INSERT INTO tickets (public_id, name, ticket_type, valid, checked_in) VALUES (?1, ?2, ?3, ?4, ?5)
+            "INSERT INTO tickets (public_id, name, ticket_type, valid, checked_in, name_norm)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
              ON CONFLICT(public_id) DO UPDATE SET name = excluded.name, ticket_type = excluded.ticket_type,
-               valid = excluded.valid, checked_in = excluded.checked_in",
-            params![t.public_id.to_string(), t.name, t.ticket_type, t.valid, t.checked_in],
+               valid = excluded.valid, checked_in = excluded.checked_in, name_norm = excluded.name_norm",
+            params![
+                t.public_id.to_string(),
+                t.name,
+                t.ticket_type,
+                t.valid,
+                t.checked_in,
+                crate::search::normalize_name(&t.name)
+            ],
         )?;
         Ok(())
+    }
+
+    /// The offline half of desk search: name only, because the cache holds no
+    /// email or phone by design. The same minimum and the same `%q%` rule as the
+    /// server apply, on the stored normalised name. The cache holds no creation
+    /// time, so rows come back in a stable name-then-id order instead of
+    /// newest-first, and a checked-in row carries no time for the same reason.
+    pub fn search_tickets_by_name(&self, query: &str) -> StoreResult<Vec<TicketSummary>> {
+        let Some(query) = crate::search::normalized_query(SearchBy::Name, query) else {
+            return Ok(Vec::new());
+        };
+        let pattern = format!("%{}%", escape_like(&query));
+        let mut stmt = self.conn.prepare(
+            "SELECT public_id, name, ticket_type, valid, checked_in
+             FROM tickets
+             WHERE valid = 1 AND name_norm LIKE ?1 ESCAPE '\\'
+             ORDER BY name_norm, public_id
+             LIMIT 10",
+        )?;
+        let rows = stmt.query_map([pattern], |r| {
+            let public_id: String = r.get(0)?;
+            Ok(TicketSummary {
+                public_id: Uuid::parse_str(&public_id).unwrap_or_default(),
+                name: r.get(1)?,
+                ticket_type: r.get(2)?,
+                valid: r.get(3)?,
+                checked_in: r.get(4)?,
+            })
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
     }
 
     pub fn ticket(&self, public_id: Uuid) -> StoreResult<Option<TicketSummary>> {
@@ -734,5 +832,212 @@ mod tests {
         assert!(s.ticket(Uuid::from_u128(1)).unwrap().is_some());
         assert_eq!(s.binding_holder("AA").unwrap(), Some(Uuid::from_u128(1)));
         assert_eq!(s.binding_holder("OLD").unwrap(), None);
+    }
+
+    /// The `tickets` table as it existed before Plan 7: no normalised name.
+    fn write_pre_p7_database(path: &std::path::Path) {
+        let conn = Connection::open(path).unwrap();
+        conn.execute_batch(
+            "CREATE TABLE tickets (
+               public_id TEXT PRIMARY KEY, name TEXT NOT NULL, ticket_type TEXT NOT NULL,
+               valid INTEGER NOT NULL, checked_in INTEGER NOT NULL
+             );
+             CREATE TABLE bindings (tag_key TEXT PRIMARY KEY, public_id TEXT NOT NULL);
+             CREATE INDEX bindings_ticket ON bindings(public_id);
+             CREATE TABLE outbox (
+               id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL,
+               idem_key TEXT NOT NULL UNIQUE, payload TEXT NOT NULL, captured_at TEXT NOT NULL,
+               state TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0,
+               next_attempt_at TEXT NOT NULL, last_error TEXT, result TEXT
+             );",
+        )
+        .unwrap();
+        let insert = |id: u128, name: &str, valid: bool| {
+            conn.execute(
+                "INSERT INTO tickets (public_id, name, ticket_type, valid, checked_in)
+                 VALUES (?1, ?2, 'VIP', ?3, 0)",
+                params![Uuid::from_u128(id).to_string(), name, valid],
+            )
+            .unwrap();
+        };
+        insert(1, "  Ahmad   BIN Ali  ", true);
+        insert(2, "Ahmad Bin Unpaid", false);
+        insert(3, "安田 Ahmad", true);
+        conn.execute(
+            "INSERT INTO bindings (tag_key, public_id) VALUES ('TAG-A', ?1)",
+            [Uuid::from_u128(1).to_string()],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO outbox (kind, idem_key, payload, captured_at, next_attempt_at)
+             VALUES ('desk_scan', 'op-1', '{\"public_id\":\"00000000-0000-0000-0000-000000000001\"}',
+                     '2026-09-26T09:00:00.000Z', '2026-09-26T09:00:00.000Z')",
+            [],
+        )
+        .unwrap();
+    }
+
+    fn column_names(store: &Store, table: &str) -> Vec<String> {
+        let mut stmt = store
+            .conn
+            .prepare(&format!("SELECT name FROM pragma_table_info('{table}')"))
+            .unwrap();
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0)).unwrap();
+        rows.map(Result::unwrap).collect()
+    }
+
+    #[test]
+    fn an_old_database_is_migrated_and_keeps_every_row() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("station.db");
+        write_pre_p7_database(&path);
+
+        let expected = Uuid::from_u128(1);
+        let store = Store::open(&path).unwrap();
+        let rows = store.search_tickets_by_name("  AHMAD   BIN ").unwrap();
+        assert_eq!(
+            rows.iter().map(|t| t.public_id).collect::<Vec<_>>(),
+            vec![expected],
+            "the stored mixed-case name is normalised, and the invalid row is out"
+        );
+        assert_eq!(
+            store
+                .search_tickets_by_name("ahmad")
+                .unwrap()
+                .iter()
+                .map(|t| t.public_id)
+                .collect::<Vec<_>>(),
+            vec![expected, Uuid::from_u128(3)],
+            "a Unicode name is searched by its normalized form, in name order"
+        );
+        assert!(store.search_tickets_by_name("a").unwrap().is_empty());
+        assert!(store.search_tickets_by_name("%_").unwrap().is_empty());
+        assert_eq!(
+            column_names(&store, "tickets"),
+            vec![
+                "public_id",
+                "name",
+                "ticket_type",
+                "valid",
+                "checked_in",
+                "name_norm"
+            ],
+            "the migration adds the normalised name and nothing else"
+        );
+        drop(store);
+
+        // Reopening must not migrate twice, duplicate rows or lose queued work.
+        let store = Store::open(&path).unwrap();
+        assert_eq!(
+            store.ticket(expected).unwrap().unwrap().name,
+            "  Ahmad   BIN Ali  "
+        );
+        assert_eq!(store.count(OutboxState::Pending).unwrap(), 1);
+        assert_eq!(
+            store.items(OutboxState::Pending, 10).unwrap()[0].0.idem_key,
+            "op-1"
+        );
+        assert_eq!(store.binding_holder("TAG-A").unwrap(), Some(expected));
+        assert_eq!(
+            store.search_tickets_by_name("ahmad bin ali").unwrap().len(),
+            1
+        );
+    }
+
+    #[test]
+    fn offline_name_search_uses_the_same_rules_as_the_server() {
+        let s = Store::open_in_memory().unwrap();
+        s.upsert_ticket(&ticket(1, "  Ahmad   bin Ali ")).unwrap();
+        s.upsert_ticket(&ticket(2, "Siti %_ Nurhaliza")).unwrap();
+        let mut unpaid = ticket(3, "Ahmad Unpaid");
+        unpaid.valid = false;
+        s.upsert_ticket(&unpaid).unwrap();
+
+        assert_eq!(
+            s.search_tickets_by_name("AHMAD BIN")
+                .unwrap()
+                .iter()
+                .map(|t| t.public_id)
+                .collect::<Vec<_>>(),
+            vec![Uuid::from_u128(1)]
+        );
+        assert!(
+            s.search_tickets_by_name("a").unwrap().is_empty(),
+            "below the two-character minimum nothing is queried"
+        );
+        assert!(
+            s.search_tickets_by_name("   ").unwrap().is_empty(),
+            "spaces alone are below the minimum"
+        );
+        let wildcards = s.search_tickets_by_name("%_").unwrap();
+        assert_eq!(wildcards.len(), 1);
+        assert!(wildcards.iter().all(|t| t.name.contains("%_")));
+    }
+
+    #[test]
+    fn offline_name_search_returns_ten_in_name_order() {
+        let s = Store::open_in_memory().unwrap();
+        for n in 1..=14u128 {
+            s.upsert_ticket(&TicketSummary {
+                public_id: Uuid::from_u128(n),
+                name: format!("Cached {n:02}"),
+                ticket_type: "VIP".into(),
+                valid: true,
+                checked_in: false,
+            })
+            .unwrap();
+        }
+        let rows = s.search_tickets_by_name("cached").unwrap();
+        assert_eq!(
+            rows.iter().map(|t| t.public_id).collect::<Vec<_>>(),
+            (1..=10u128).map(Uuid::from_u128).collect::<Vec<_>>(),
+            "ten rows, ordered by normalised name then id"
+        );
+    }
+
+    #[test]
+    fn every_cache_write_keeps_the_normalised_name_current() {
+        use crate::contract::{BindMode, BindingInfo};
+        use crate::tag::Protocol;
+        let s = Store::open_in_memory().unwrap();
+        s.upsert_ticket(&ticket(1, "Aina")).unwrap();
+        s.upsert_ticket(&ticket(1, "Benedict Renamed")).unwrap();
+        assert!(
+            s.search_tickets_by_name("aina").unwrap().is_empty(),
+            "the old name must stop matching after a rename"
+        );
+        assert_eq!(
+            s.search_tickets_by_name("renamed")
+                .unwrap()
+                .iter()
+                .map(|t| t.public_id)
+                .collect::<Vec<_>>(),
+            vec![Uuid::from_u128(1)],
+            "the upsert updates the normalised name, not only the insert"
+        );
+
+        let cache = CacheResp {
+            tickets: vec![ticket(7, "Cache Refreshed")],
+            bindings: vec![BindingInfo {
+                id: 1,
+                public_id: Uuid::from_u128(7),
+                protocol: Protocol::Iso15693,
+                uid_raw_hex: "AA".into(),
+                tag_key: "AA".into(),
+                mode: BindMode::Bind,
+            }],
+            revoked_tag_keys: vec![],
+            server_time: t0(),
+        };
+        s.replace_cache(&cache).unwrap();
+        assert_eq!(
+            s.search_tickets_by_name("refreshed")
+                .unwrap()
+                .iter()
+                .map(|t| t.public_id)
+                .collect::<Vec<_>>(),
+            vec![Uuid::from_u128(7)],
+            "a cache refresh is searchable through the one cache path"
+        );
     }
 }

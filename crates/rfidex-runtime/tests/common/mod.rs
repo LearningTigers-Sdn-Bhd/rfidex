@@ -337,6 +337,12 @@ impl Harness {
         *self.server.faults.lock().unwrap() = rfidex_mock::http::Faults::default();
     }
 
+    /// Arm the whole fault object, so a field left over from an earlier phase
+    /// can never decide what the next request does.
+    pub fn set_faults(&self, faults: rfidex_mock::http::Faults) {
+        *self.server.faults.lock().unwrap() = faults;
+    }
+
     pub fn observations(&self) -> usize {
         self.server.mock.lock().unwrap().observation_count()
     }

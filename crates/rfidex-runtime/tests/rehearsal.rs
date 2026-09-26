@@ -16,17 +16,33 @@
 //!
 //! `rehearsal_smoke` and `rehearsal_500` are `#[ignore]`d: they wait on real
 //! retry backoff, so they run locally and in the windows-package workflow only.
+//!
+//! The other two tests here are fast and run in normal CI. They are a different
+//! layer, and say so when they print: `rehearsal_faults` uses the runtime to
+//! create the work and then stops it, driving one station's own `SyncWorker`
+//! through an explicit clock, and `rehearsal_wrong_role` shows a gate a
+//! direction its configured role disagrees with — then shows it a corrected
+//! role without rewriting the earlier record.
 
 mod common;
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use common::{gate_station, Harness};
+use chrono::{DateTime, Utc};
+use common::{gate_station, Harness, KEY};
+use rfidex_core::client::ApiClient;
 use rfidex_core::codec;
-use rfidex_core::contract::{EventSettings, ObservationItem, Outcome, RfidMode, Role, StationKind};
-use rfidex_core::store::{OutboxKind, OutboxRow, OutboxState};
-use rfidex_core::tag::parse_hex;
+use rfidex_core::contract::{
+    BindMode, BindingReq, EventSettings, ObservationItem, Outcome, RfidMode, Role, StationKind,
+};
+use rfidex_core::device::{sim_gate::SimGate, GateKind, GateRead};
+use rfidex_core::station::gate::GateStation;
+use rfidex_core::store::{OutboxKind, OutboxRow, OutboxState, Store};
+use rfidex_core::sync::{SyncReport, SyncWorker};
+use rfidex_core::tag::{parse_hex, Protocol, UidRule};
+use rfidex_mock::http::Faults;
 use rfidex_mock::state::SeedTicket;
 use rfidex_runtime::config::{AppConfig, DeviceChoice, StationConfig};
 use rfidex_runtime::desk::DeskStep;
@@ -107,17 +123,21 @@ fn rehearsal_tickets(first: u128, count: usize) -> Vec<SeedTicket> {
         .collect()
 }
 
+fn rehearsal_desk(desk: Uuid) -> StationConfig {
+    StationConfig {
+        id: desk,
+        name: "Rehearsal desk".into(),
+        kind: StationKind::Desk,
+        role: None,
+        device: DeviceChoice::SimDesk,
+        debounce_secs: 5,
+        write_start_block: 0,
+    }
+}
+
 fn rehearsal_stations(desk: Uuid) -> Vec<StationConfig> {
     vec![
-        StationConfig {
-            id: desk,
-            name: "Rehearsal desk".into(),
-            kind: StationKind::Desk,
-            role: None,
-            device: DeviceChoice::SimDesk,
-            debounce_secs: 5,
-            write_start_block: 0,
-        },
+        rehearsal_desk(desk),
         gate_station(Uuid::from_u128(ENTRY_GATE), "Entry gate", Role::Entry),
         gate_station(Uuid::from_u128(EXIT_GATE), "Exit gate", Role::Exit),
     ]
@@ -798,4 +818,806 @@ async fn rehearsal_smoke() {
 #[ignore = "500-ticket rehearsal; run explicitly before Windows packaging"]
 async fn rehearsal_500() {
     run_rehearsal(500).await;
+}
+
+// ---------------------------------------------------------------------------
+// Deterministic fault probes.
+//
+// These are a different layer from the event runs above, and say so when they
+// print. The event runs are the proof that the runtime produces and persists
+// real requests; here every fixture is created by that same runtime, and then
+// the runtime is stopped so no heartbeat, cache client or gate poll can steal a
+// one-shot fault. Each probe then drives one station's own `SyncWorker` through
+// an explicit clock — legal test input to `SyncWorker`, not a production change
+// to backoff, deadlines or the event guard.
+// ---------------------------------------------------------------------------
+
+/// The whole probe set, every pass included.
+const FAULT_BOUND: Duration = Duration::from_secs(30);
+const CONTROLLED_TIMEOUT: Duration = Duration::from_secs(2);
+/// Each controlled pass is a minute apart in core time, well past any backoff a
+/// previous pass could have set, without sleeping through it.
+const CLOCK_STEP: i64 = 120;
+
+/// One station's store and its own worker, with the runtime already stopped.
+struct Controlled {
+    label: &'static str,
+    store: Arc<Mutex<Store>>,
+    worker: SyncWorker,
+}
+
+impl Controlled {
+    fn new(h: &Harness, station: Uuid, label: &'static str) -> Controlled {
+        let store = Arc::new(Mutex::new(h.store_of(station)));
+        let worker = SyncWorker::new(
+            store.clone(),
+            ApiClient::new(&h.base, KEY, &station.to_string(), CONTROLLED_TIMEOUT),
+        );
+        Controlled {
+            label,
+            store,
+            worker,
+        }
+    }
+
+    async fn pass(&self, now: DateTime<Utc>) -> SyncReport {
+        self.worker
+            .run_once(now)
+            .await
+            .unwrap_or_else(|e| panic!("{}: {e}", self.label))
+    }
+
+    fn rows(&self, state: OutboxState, kind: OutboxKind) -> Vec<OutboxRow> {
+        self.store
+            .lock()
+            .unwrap()
+            .rows(&[state], Some(kind), usize::MAX)
+            .expect("read the controlled store")
+    }
+
+    fn pending(&self, kind: OutboxKind) -> usize {
+        self.rows(OutboxState::Pending, kind).len()
+    }
+}
+
+/// What the server committed, as one comparable tuple:
+/// `(scan logs, scan operations, binding rows, binding operations, observations)`.
+type Committed = (usize, usize, usize, usize, usize);
+
+fn committed(mock: &MockSnapshot) -> Committed {
+    (
+        mock.scan_logs,
+        mock.scan_operations,
+        mock.bindings,
+        mock.binding_operations,
+        mock.observations,
+    )
+}
+
+fn no_effects() -> MockSnapshot {
+    MockSnapshot {
+        scan_logs: 0,
+        scan_operations: 0,
+        bindings: 0,
+        binding_operations: 0,
+        observations: 0,
+        received: Vec::new(),
+        results: Vec::new(),
+        active: Vec::new(),
+    }
+}
+
+/// What one probe observed, printed as a table row so a failure in CI says
+/// which fault misbehaved without a rerun.
+#[derive(Debug, Clone, Copy)]
+struct FaultEvidence {
+    name: &'static str,
+    first: (usize, usize),
+    later: (usize, usize),
+    committed: Committed,
+}
+
+impl FaultEvidence {
+    fn print(&self) {
+        println!(
+            "fault {:<24} first sent={} retried={} | after clearing sent={} retried={} | \
+             committed scans={} scanning-ops={} bindings={} binding-ops={} observations={}",
+            self.name,
+            self.first.0,
+            self.first.1,
+            self.later.0,
+            self.later.1,
+            self.committed.0,
+            self.committed.1,
+            self.committed.2,
+            self.committed.3,
+            self.committed.4,
+        );
+    }
+}
+
+/// One fictional ticket, real runtime, caches warm, server already down.
+async fn offline_harness() -> Harness {
+    let h = quiet_harness().await;
+    h.set_down(true);
+    h
+}
+
+/// The same, with the server still reachable, for probes that need a synced
+/// prerequisite before their offline step.
+async fn quiet_harness() -> Harness {
+    Harness::start_seeded(
+        rehearsal_event(BIND_EVENT, RfidMode::Bind),
+        rehearsal_tickets(1, 1),
+        rehearsal_options(),
+        rehearsal_stations(desk_for(BIND_EVENT)),
+    )
+    .await
+}
+
+async fn await_saved(h: &Harness, station: Uuid, kind: OutboxKind, count: usize, label: &str) {
+    wait_for(label, STAGE_BOUND, || async {
+        let store = h.store_of(station);
+        store
+            .rows(&[OutboxState::Pending], Some(kind), usize::MAX)
+            .expect("read the station's rows")
+            .len()
+            == count
+    })
+    .await;
+}
+
+/// A binding fixture that originates at core, for the probes where the armed
+/// fault must be able to hit one request and nothing else. The operation id is
+/// fixed: a retry replays the same operation, never a new one.
+fn enqueue_binding(
+    worker: &Controlled,
+    public_id: Uuid,
+    uid_hex: &str,
+    operation_id: Uuid,
+    at: DateTime<Utc>,
+) {
+    let req = BindingReq {
+        public_id,
+        protocol: Protocol::Iso15693,
+        uid_raw_hex: uid_hex.into(),
+        mode: BindMode::Bind,
+        payload_version: None,
+        operation_id,
+        captured_at: at,
+        replace: false,
+        reason: None,
+    };
+    worker
+        .store
+        .lock()
+        .unwrap()
+        .enqueue(
+            OutboxKind::Binding,
+            &operation_id.to_string(),
+            &serde_json::to_value(&req).unwrap(),
+            at,
+        )
+        .expect("enqueue a binding fixture");
+}
+
+/// `down`: nothing is delivered, nothing is lost, and the same rows drain when
+/// the server returns.
+async fn probe_down() -> FaultEvidence {
+    let mut h = offline_harness().await;
+    let desk = desk_for(BIND_EVENT);
+    let entry = Uuid::from_u128(ENTRY_GATE);
+
+    register_offline(&h, desk, 1).await;
+    h.runtime.sim_pass(entry, &uid(1)).await.unwrap();
+    await_saved(&h, desk, OutboxKind::DeskScan, 1, "the offline scan").await;
+    await_saved(&h, desk, OutboxKind::Binding, 1, "the offline binding").await;
+    await_saved(&h, entry, OutboxKind::Observation, 1, "the offline passage").await;
+    h.runtime.shutdown().await.unwrap();
+
+    let desk_worker = Controlled::new(&h, desk, "desk");
+    let gate_worker = Controlled::new(&h, entry, "entry gate");
+    let now = Utc::now() + chrono::Duration::seconds(CLOCK_STEP);
+
+    let desk_first = desk_worker.pass(now).await;
+    let gate_first = gate_worker.pass(now).await;
+    assert_eq!(
+        (desk_first.sent, gate_first.sent),
+        (0, 0),
+        "a down server accepts nothing"
+    );
+    assert!(desk_first.retried >= 1 && gate_first.retried >= 1);
+    assert_eq!(
+        mock_snapshot(&h),
+        no_effects(),
+        "a refused attempt commits nothing"
+    );
+    assert_eq!(
+        (
+            desk_worker.pending(OutboxKind::DeskScan),
+            desk_worker.pending(OutboxKind::Binding),
+            gate_worker.pending(OutboxKind::Observation),
+        ),
+        (1, 1, 1),
+        "every row is still queued"
+    );
+
+    h.clear_faults();
+    let later = now + chrono::Duration::seconds(CLOCK_STEP);
+    let desk_second = desk_worker.pass(later).await;
+    let gate_second = gate_worker.pass(later).await;
+    assert_eq!((desk_second.sent, gate_second.sent), (2, 1));
+    let final_state = mock_snapshot(&h);
+    assert_eq!(committed(&final_state), (1, 1, 1, 1, 1));
+    assert_eq!(final_state.results[0].1.outcome, Outcome::Accepted);
+    assert!(final_state.results[0].1.anomalies.is_empty());
+    assert_eq!(
+        (
+            desk_worker.pending(OutboxKind::DeskScan),
+            desk_worker.pending(OutboxKind::Binding),
+            gate_worker.pending(OutboxKind::Observation),
+        ),
+        (0, 0, 0)
+    );
+
+    h.stop().await;
+    FaultEvidence {
+        name: "down",
+        first: (
+            desk_first.sent + gate_first.sent,
+            desk_first.retried + gate_first.retried,
+        ),
+        later: (
+            desk_second.sent + gate_second.sent,
+            desk_second.retried + gate_second.retried,
+        ),
+        committed: committed(&final_state),
+    }
+}
+
+/// `fail_5xx`: one injected server error refuses the scan, stops nothing, and
+/// the same operation succeeds on its next attempt.
+async fn probe_fail_5xx() -> FaultEvidence {
+    let mut h = offline_harness().await;
+    let desk = desk_for(BIND_EVENT);
+    let entry = Uuid::from_u128(ENTRY_GATE);
+
+    // The scan comes from the runtime; the binding is added later at core level,
+    // so the armed 5xx can only ever be consumed by the scan.
+    let scanned = h
+        .runtime
+        .desk_scan(desk, &ticket(1).to_string())
+        .await
+        .unwrap();
+    assert_eq!(scanned.step, DeskStep::Scanned);
+    assert!(scanned.offline);
+    h.runtime.sim_pass(entry, &uid(1)).await.unwrap();
+    await_saved(&h, desk, OutboxKind::DeskScan, 1, "the offline scan").await;
+    await_saved(&h, entry, OutboxKind::Observation, 1, "the offline passage").await;
+    h.runtime.shutdown().await.unwrap();
+
+    let desk_worker = Controlled::new(&h, desk, "desk");
+    let gate_worker = Controlled::new(&h, entry, "entry gate");
+    let now = Utc::now() + chrono::Duration::seconds(CLOCK_STEP);
+
+    h.set_faults(Faults {
+        fail_5xx: 1,
+        ..Faults::default()
+    });
+    let first = desk_worker.pass(now).await;
+    assert_eq!(
+        (first.sent, first.retried),
+        (0, 1),
+        "the armed 5xx hits the scan and only the scan"
+    );
+    assert_eq!(mock_snapshot(&h), no_effects(), "a 5xx is not a commit");
+    assert_eq!(desk_worker.pending(OutboxKind::DeskScan), 1);
+
+    h.clear_faults();
+    let later = now + chrono::Duration::seconds(CLOCK_STEP);
+    let second = desk_worker.pass(later).await;
+    assert_eq!(second.sent, 1);
+    assert_eq!(committed(&mock_snapshot(&h)), (1, 1, 0, 0, 0));
+
+    enqueue_binding(
+        &desk_worker,
+        ticket(1),
+        &uid(1),
+        Uuid::from_u128(9001),
+        later,
+    );
+    let third = desk_worker.pass(later).await;
+    assert_eq!(third.sent, 1);
+    let fourth = gate_worker.pass(later).await;
+    assert_eq!(fourth.sent, 1);
+
+    let final_state = mock_snapshot(&h);
+    assert_eq!(committed(&final_state), (1, 1, 1, 1, 1));
+    assert_eq!(final_state.results[0].1.outcome, Outcome::Accepted);
+    assert!(final_state.results[0].1.anomalies.is_empty());
+    h.stop().await;
+    FaultEvidence {
+        name: "fail_5xx=1",
+        first: (first.sent, first.retried),
+        later: (second.sent + third.sent + fourth.sent, 0),
+        committed: committed(&final_state),
+    }
+}
+
+/// `bad_body`: a 2xx reply this app cannot read keeps the row pending, parks
+/// nothing on one bad reply, and the normal retry still commits once.
+async fn probe_bad_body() -> FaultEvidence {
+    let mut h = offline_harness().await;
+    let desk = desk_for(BIND_EVENT);
+    let entry = Uuid::from_u128(ENTRY_GATE);
+
+    let scanned = h
+        .runtime
+        .desk_scan(desk, &ticket(1).to_string())
+        .await
+        .unwrap();
+    assert!(scanned.offline);
+    h.runtime.sim_pass(entry, &uid(1)).await.unwrap();
+    await_saved(&h, desk, OutboxKind::DeskScan, 1, "the offline scan").await;
+    await_saved(&h, entry, OutboxKind::Observation, 1, "the offline passage").await;
+    h.runtime.shutdown().await.unwrap();
+
+    let desk_worker = Controlled::new(&h, desk, "desk");
+    let gate_worker = Controlled::new(&h, entry, "entry gate");
+    let now = Utc::now() + chrono::Duration::seconds(CLOCK_STEP);
+
+    h.set_faults(Faults {
+        bad_body: 1,
+        ..Faults::default()
+    });
+    let first = desk_worker.pass(now).await;
+    assert_eq!(
+        (first.sent, first.retried, first.parked),
+        (0, 1, 0),
+        "one unreadable reply is retried, not parked"
+    );
+    assert_eq!(mock_snapshot(&h), no_effects());
+    assert_eq!(desk_worker.pending(OutboxKind::DeskScan), 1);
+
+    h.clear_faults();
+    let later = now + chrono::Duration::seconds(CLOCK_STEP);
+    let second = desk_worker.pass(later).await;
+    assert_eq!(second.sent, 1);
+    assert_eq!(committed(&mock_snapshot(&h)), (1, 1, 0, 0, 0));
+
+    enqueue_binding(
+        &desk_worker,
+        ticket(1),
+        &uid(1),
+        Uuid::from_u128(9002),
+        later,
+    );
+    let third = desk_worker.pass(later).await;
+    let fourth = gate_worker.pass(later).await;
+    assert_eq!((third.sent, fourth.sent), (1, 1));
+
+    let final_state = mock_snapshot(&h);
+    assert_eq!(committed(&final_state), (1, 1, 1, 1, 1));
+    assert_eq!(final_state.results[0].1.outcome, Outcome::Accepted);
+    assert!(
+        desk_worker
+            .rows(OutboxState::Parked, OutboxKind::DeskScan)
+            .is_empty(),
+        "the row must not be parked after a single bad reply"
+    );
+    assert_eq!(
+        gate_worker
+            .rows(OutboxState::Parked, OutboxKind::Observation)
+            .len(),
+        0
+    );
+    h.stop().await;
+    FaultEvidence {
+        name: "bad_body=1",
+        first: (first.sent, first.retried),
+        later: (second.sent + third.sent + fourth.sent, 0),
+        committed: committed(&final_state),
+    }
+}
+
+/// `hang_after_commit` on the desk scan: the server stores the row and the
+/// reply never arrives; the replay returns the stored result, so there is
+/// exactly one scan log and one scan operation.
+async fn probe_hang_scan() -> FaultEvidence {
+    let mut h = offline_harness().await;
+    let desk = desk_for(BIND_EVENT);
+    let scanned = h
+        .runtime
+        .desk_scan(desk, &ticket(1).to_string())
+        .await
+        .unwrap();
+    assert!(scanned.offline);
+    await_saved(&h, desk, OutboxKind::DeskScan, 1, "the offline scan").await;
+    h.runtime.shutdown().await.unwrap();
+
+    let desk_worker = Controlled::new(&h, desk, "desk");
+    let now = Utc::now() + chrono::Duration::seconds(CLOCK_STEP);
+    h.set_faults(Faults {
+        hang_after_commit: 1,
+        ..Faults::default()
+    });
+    let first = desk_worker.pass(now).await;
+    assert_eq!((first.sent, first.retried), (0, 1));
+    assert_eq!(
+        committed(&mock_snapshot(&h)),
+        (1, 1, 0, 0, 0),
+        "the server committed before the reply was lost"
+    );
+    assert_eq!(
+        desk_worker.pending(OutboxKind::DeskScan),
+        1,
+        "the local row cannot know it was committed"
+    );
+    assert_eq!(
+        desk_worker.rows(OutboxState::Pending, OutboxKind::DeskScan)[0]
+            .item
+            .attempts,
+        1
+    );
+
+    h.clear_faults();
+    let later = now + chrono::Duration::seconds(CLOCK_STEP);
+    let second = desk_worker.pass(later).await;
+    assert_eq!(second.sent, 1);
+    let final_state = mock_snapshot(&h);
+    assert_eq!(
+        committed(&final_state),
+        (1, 1, 0, 0, 0),
+        "the replay returned the stored result instead of a second scan"
+    );
+    assert_eq!(desk_worker.pending(OutboxKind::DeskScan), 0);
+    h.stop().await;
+    FaultEvidence {
+        name: "hang_after_commit scan",
+        first: (first.sent, first.retried),
+        later: (second.sent, second.retried),
+        committed: committed(&final_state),
+    }
+}
+
+/// The same fault on the desk binding, after the scan is already synced.
+async fn probe_hang_binding() -> FaultEvidence {
+    let mut h = quiet_harness().await;
+    let desk = desk_for(BIND_EVENT);
+    h.runtime.desk_reset(desk).await.unwrap();
+    let scanned = h
+        .runtime
+        .desk_scan(desk, &ticket(1).to_string())
+        .await
+        .unwrap();
+    assert_eq!(scanned.step, DeskStep::Scanned);
+    assert!(!scanned.offline, "the prerequisite scan is synced first");
+    h.set_down(true);
+    h.runtime.sim_place(desk, &uid(1)).await.unwrap();
+    let linked = h.runtime.desk_link(desk, None).await.unwrap();
+    assert_eq!(linked.step, DeskStep::Linked);
+    assert!(linked.offline);
+    h.runtime.sim_clear(desk).await.unwrap();
+    await_saved(&h, desk, OutboxKind::Binding, 1, "the offline binding").await;
+    h.runtime.shutdown().await.unwrap();
+
+    let desk_worker = Controlled::new(&h, desk, "desk");
+    let now = Utc::now() + chrono::Duration::seconds(CLOCK_STEP);
+    h.set_faults(Faults {
+        hang_after_commit: 1,
+        ..Faults::default()
+    });
+    let first = desk_worker.pass(now).await;
+    assert_eq!((first.sent, first.retried), (0, 1));
+    assert_eq!(committed(&mock_snapshot(&h)), (1, 1, 1, 1, 0));
+    assert_eq!(desk_worker.pending(OutboxKind::Binding), 1);
+
+    h.clear_faults();
+    let later = now + chrono::Duration::seconds(CLOCK_STEP);
+    let second = desk_worker.pass(later).await;
+    assert_eq!(second.sent, 1);
+    let final_state = mock_snapshot(&h);
+    assert_eq!(
+        committed(&final_state),
+        (1, 1, 1, 1, 0),
+        "one binding, not two"
+    );
+    assert_eq!(desk_worker.pending(OutboxKind::Binding), 0);
+    h.stop().await;
+    FaultEvidence {
+        name: "hang_after_commit binding",
+        first: (first.sent, first.retried),
+        later: (second.sent, second.retried),
+        committed: committed(&final_state),
+    }
+}
+
+/// And on a gate observation, after the desk work is already synced: the
+/// delivery ID is stored once and the order carries it once.
+async fn probe_hang_observation() -> FaultEvidence {
+    let mut h = quiet_harness().await;
+    let desk = desk_for(BIND_EVENT);
+    let entry = Uuid::from_u128(ENTRY_GATE);
+    register(&h, desk, 1).await;
+    h.set_down(true);
+    h.runtime.sim_pass(entry, &uid(1)).await.unwrap();
+    await_saved(&h, entry, OutboxKind::Observation, 1, "the offline passage").await;
+    h.runtime.shutdown().await.unwrap();
+
+    let gate_worker = Controlled::new(&h, entry, "entry gate");
+    let now = Utc::now() + chrono::Duration::seconds(CLOCK_STEP);
+    h.set_faults(Faults {
+        hang_after_commit: 1,
+        ..Faults::default()
+    });
+    let first = gate_worker.pass(now).await;
+    assert_eq!((first.sent, first.retried), (0, 1));
+    let after_commit = mock_snapshot(&h);
+    assert_eq!(committed(&after_commit), (1, 1, 1, 1, 1));
+    assert_eq!(after_commit.received.len(), 1);
+    assert_eq!(gate_worker.pending(OutboxKind::Observation), 1);
+
+    h.clear_faults();
+    let later = now + chrono::Duration::seconds(CLOCK_STEP);
+    let second = gate_worker.pass(later).await;
+    assert_eq!(second.sent, 1);
+    let final_state = mock_snapshot(&h);
+    assert_eq!(
+        committed(&final_state),
+        (1, 1, 1, 1, 1),
+        "the replay did not store a second passage"
+    );
+    assert_eq!(final_state.received.len(), 1);
+    assert_eq!(final_state.results.len(), 1);
+    assert_eq!(final_state.results[0].1.outcome, Outcome::Accepted);
+    assert_eq!(gate_worker.pending(OutboxKind::Observation), 0);
+    h.stop().await;
+    FaultEvidence {
+        name: "hang_after_commit passage",
+        first: (first.sent, first.retried),
+        later: (second.sent, second.retried),
+        committed: committed(&final_state),
+    }
+}
+
+/// Every armed fault hits the request it was aimed at, nothing is lost, and
+/// every transient failure commits exactly once. Fast enough for normal CI.
+#[tokio::test]
+async fn rehearsal_faults() {
+    println!("controlled probes: fixtures from the runtime, passes through core SyncWorker");
+    let evidence = tokio::time::timeout(FAULT_BOUND, async {
+        vec![
+            probe_down().await,
+            probe_fail_5xx().await,
+            probe_bad_body().await,
+            probe_hang_scan().await,
+            probe_hang_binding().await,
+            probe_hang_observation().await,
+        ]
+    })
+    .await
+    .expect("the fault probes must finish within 30 s");
+    assert_eq!(evidence.len(), 6, "every probe is an asserted case");
+    for case in &evidence {
+        case.print();
+        // Each probe has already asserted its own exact end state. This is the
+        // property none of them may break: a fault can delay a request or lose
+        // its reply, but it can never make the server commit the same thing
+        // twice, whatever the probe was aiming at.
+        for (label, count) in [
+            ("scan logs", case.committed.0),
+            ("scan operations", case.committed.1),
+            ("binding rows", case.committed.2),
+            ("binding operations", case.committed.3),
+            ("stored observations", case.committed.4),
+        ] {
+            assert!(count <= 1, "{} committed {count} {label}", case.name);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// A gate whose reader reports a different direction than its configured role.
+// ---------------------------------------------------------------------------
+
+/// The station's configured role decides what a passage means; the raw device
+/// direction is stored exactly as it arrived and only compared. Correcting the
+/// role afterwards does not rewrite the earlier record.
+#[tokio::test]
+async fn rehearsal_wrong_role() {
+    let mut h = Harness::start_seeded(
+        rehearsal_event(BIND_EVENT, RfidMode::Bind),
+        rehearsal_tickets(1, 1),
+        rehearsal_options(),
+        vec![rehearsal_desk(desk_for(BIND_EVENT))],
+    )
+    .await;
+    let desk = desk_for(BIND_EVENT);
+    let gate_id = Uuid::from_u128(EXIT_GATE);
+    let uid_hex = uid(1);
+    register(&h, desk, 1).await;
+    h.runtime.shutdown().await.unwrap();
+
+    // Phase 1: an Exit gate sees a sticker the reader calls an entry.
+    let now = Utc::now();
+    let (delivery_id, payload_before, result_before) = {
+        let store = Arc::new(Mutex::new(h.store_of(gate_id)));
+        let mut gate = GateStation::new(
+            SimGate::new(GateKind::Records, false),
+            store.clone(),
+            &gate_id.to_string(),
+            Role::Exit,
+            UidRule::AsIs,
+            Duration::from_secs(5),
+        );
+        let mut read = GateRead::sighting(parse_hex(&uid_hex).unwrap());
+        read.device_direction_raw = Some(0);
+        read.device_record_seq = Some(1);
+        gate.gate.push(read);
+        let captured = gate.tick(now).expect("the passage is saved");
+        assert_eq!(captured.len(), 1);
+
+        let worker = SyncWorker::new(
+            store.clone(),
+            ApiClient::new(&h.base, KEY, &gate_id.to_string(), CONTROLLED_TIMEOUT),
+        );
+        let report = worker.run_once(now).await.unwrap();
+        assert_eq!((report.sent, report.retried), (1, 0));
+
+        let rows = store.lock().unwrap().rows(
+            &[OutboxState::Sent],
+            Some(OutboxKind::Observation),
+            usize::MAX,
+        );
+        let rows = rows.expect("read the gate store");
+        assert_eq!(rows.len(), 1);
+        (
+            captured[0].delivery_id,
+            rows[0].item.payload.clone(),
+            rows[0].result.clone(),
+        )
+    };
+
+    let sent: ObservationItem = serde_json::from_value(payload_before.clone()).unwrap();
+    assert_eq!(sent.delivery_id, delivery_id);
+    assert_eq!(
+        sent.role,
+        Role::Exit,
+        "the configured station role is what was stored"
+    );
+    assert_eq!(
+        sent.device_direction_raw,
+        Some(0),
+        "the raw direction is stored unchanged"
+    );
+    let mock = mock_snapshot(&h);
+    assert_eq!(committed(&mock), (1, 1, 1, 1, 1));
+    assert_eq!(mock.results.len(), 1);
+    assert_eq!(mock.results[0].0, gate_id.to_string());
+    assert_eq!(mock.results[0].1.outcome, Outcome::Accepted);
+    assert_eq!(
+        mock.results[0].1.anomalies,
+        vec!["role_mismatch".to_string()],
+        "exactly the direction warning, and nothing else"
+    );
+
+    // The operator screen says what the station decided, in plain words.
+    h.runtime = Runtime::start(
+        h.paths.clone(),
+        AppConfig {
+            server_url: h.base.clone(),
+            api_key: KEY.into(),
+            stations: vec![gate_station(gate_id, "Exit gate", Role::Exit)],
+        },
+        h.opts.clone(),
+    )
+    .await
+    .expect("start a gate-only runtime on the same data root");
+    wait_for(
+        "the gate-only runtime to accept its event",
+        STAGE_BOUND,
+        || async {
+            h.runtime
+                .stations()
+                .iter()
+                .all(|s| s.online() && s.event_ok())
+        },
+    )
+    .await;
+    let view = h.runtime.gate_recent(gate_id, 5).await.unwrap();
+    assert_eq!(view.len(), 1);
+    assert_eq!(view[0].status, GateStatus::Accepted);
+    assert_eq!(view[0].role, Role::Exit);
+    assert_eq!(view[0].message, "Goodbye");
+    assert_eq!(view[0].anomalies.len(), 1);
+    assert!(
+        view[0].anomalies[0].contains("different direction")
+            && view[0].anomalies[0].contains("station direction was used"),
+        "the warning is shown in words: {}",
+        view[0].anomalies[0]
+    );
+    h.runtime.shutdown().await.unwrap();
+    assert_eq!(
+        committed(&mock_snapshot(&h)),
+        (1, 1, 1, 1, 1),
+        "reading the screen changes nothing on the server"
+    );
+
+    // Phase 2: the same gate, same UUID, same store, corrected to Entry.
+    let store = Arc::new(Mutex::new(h.store_of(gate_id)));
+    let mut gate = GateStation::new(
+        SimGate::new(GateKind::Records, false),
+        store.clone(),
+        &gate_id.to_string(),
+        Role::Entry,
+        UidRule::AsIs,
+        Duration::from_secs(5),
+    );
+    let mut read = GateRead::sighting(parse_hex(&uid_hex).unwrap());
+    read.device_direction_raw = Some(0);
+    read.device_record_seq = Some(2);
+    gate.gate.push(read);
+    let later = now + chrono::Duration::seconds(1);
+    let captured = gate.tick(later).expect("the corrected passage is saved");
+    assert_eq!(captured.len(), 1);
+    assert_ne!(
+        captured[0].delivery_id, delivery_id,
+        "a second passage is a new delivery, not a replacement"
+    );
+    let worker = SyncWorker::new(
+        store.clone(),
+        ApiClient::new(&h.base, KEY, &gate_id.to_string(), CONTROLLED_TIMEOUT),
+    );
+    let report = worker.run_once(later).await.unwrap();
+    assert_eq!((report.sent, report.retried, report.parked), (1, 0, 0));
+
+    let mock = mock_snapshot(&h);
+    assert_eq!(committed(&mock), (1, 1, 1, 1, 2));
+    assert_eq!(mock.received.len(), 2);
+    let corrected = mock
+        .results
+        .iter()
+        .find(|(_, r)| r.delivery_id == captured[0].delivery_id)
+        .expect("the corrected passage reached the server");
+    assert_eq!(corrected.1.outcome, Outcome::Accepted);
+    assert!(
+        corrected.1.anomalies.is_empty(),
+        "a corrected role has nothing to warn about: {:?}",
+        corrected.1.anomalies
+    );
+    let earlier_result = mock
+        .results
+        .iter()
+        .find(|(_, r)| r.delivery_id == delivery_id)
+        .expect("the earlier passage is still there");
+    assert_eq!(
+        earlier_result.1.anomalies,
+        vec!["role_mismatch".to_string()],
+        "the earlier record keeps its warning"
+    );
+
+    let rows = store
+        .lock()
+        .unwrap()
+        .rows(
+            &[OutboxState::Sent],
+            Some(OutboxKind::Observation),
+            usize::MAX,
+        )
+        .expect("read the gate store");
+    assert_eq!(rows.len(), 2);
+    let earlier_row = rows
+        .iter()
+        .find(|r| {
+            let item: ObservationItem =
+                serde_json::from_value(r.item.payload.clone()).expect("a saved observation");
+            item.delivery_id == delivery_id
+        })
+        .expect("the earlier row is still stored");
+    assert_eq!(
+        earlier_row.item.payload, payload_before,
+        "history is not rewritten by a correction"
+    );
+    assert_eq!(earlier_row.result, result_before);
+    h.stop().await;
 }

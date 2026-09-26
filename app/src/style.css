@@ -113,6 +113,12 @@ p { margin-bottom: 14px; }
 .status-bar.has-offline strong { color: #895e1c; }
 .status-bar.has-offline strong::before { background: #a27124; }
 .status-bar .station-error, .status-bar .alarm { margin-top: 6px; }
+.updates { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 8px 32px; border-top: 1px solid var(--line); background: #fafbf8; color: var(--muted); font-size: 12px; }
+.updates p { margin: 0; }
+.updates button { margin-left: auto; }
+.updates .update-message { flex-basis: 100%; order: 3; }
+.updates.has-update { background: #f0f5ed; color: #375239; font-size: 14px; }
+.field-help { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; font-weight: 400; line-height: 1.4; }
 .failure, .offline-note, .note { border: 1px solid; border-radius: 5px; padding: 12px 16px; margin-top: 16px; overflow-wrap: anywhere; font-size: 14px; }
 .failure { background: #fff3ef; border-color: #e6b9ae; color: #99382c; }
 .offline-note { background: #fff8e9; border-color: #e0cd9c; color: #7a571c; }
@@ -132,7 +138,7 @@ legend { padding: 0 10px; font-size: 17px; font-weight: 600; }
 .setup input, .setup select { width: 100%; }
 .setup fieldset > input { max-width: 620px; display: block; }
 .setup fieldset > .hint { margin: 20px 0 0; }
-.row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 20px; align-items: end; }
+.row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 20px; align-items: start; }
 .row label { margin: 0; }
 .row input, .row select { display: block; margin-top: 7px; }
 .row + .row { margin-top: 20px; }

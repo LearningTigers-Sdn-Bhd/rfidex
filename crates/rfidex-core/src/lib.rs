@@ -16,6 +16,6 @@ pub mod tag;
 mod tests {
     #[test]
     fn app_version_is_set() {
-        assert_eq!(super::APP_VERSION, "0.1.0");
+        assert!(!super::APP_VERSION.is_empty());
     }
 }

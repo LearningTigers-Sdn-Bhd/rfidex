@@ -22,6 +22,7 @@ pub fn run() {
     let guard = closing.clone();
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(move |app| {
             let root = app.path().app_local_data_dir()?;
             app.manage(AppState {
@@ -63,6 +64,8 @@ pub fn run() {
             commands::sim_clear,
             commands::sim_pass,
             commands::sim_set_connected,
+            commands::update_check,
+            commands::update_install,
         ])
         .run(tauri::generate_context!())
         .expect("error while running RfiDex");

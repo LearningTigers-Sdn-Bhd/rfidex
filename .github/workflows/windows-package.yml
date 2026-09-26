@@ -94,9 +94,14 @@ jobs:
 
       # beforeBuildCommand runs `npm run build`, so the frontend is not built
       # twice. Output is the explicit target directory, not target/release.
+      # The updater key signs the installer so installed copies accept it as
+      # an update. It is not Windows code signing: SmartScreen is unaffected.
       - name: Build NSIS installer
         run: npm run tauri build -- --target x86_64-pc-windows-msvc --bundles nsis -- --locked
         working-directory: app
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
 
       # A test tool for the manual Windows check, NOT part of the installer.
       # Static CRT so it cannot add a runtime prerequisite to a clean machine.
@@ -206,6 +211,7 @@ jobs:
           name: rfidex-windows-x64-unsigned-${{ github.sha }}-${{ github.run_id }}
           path: |
             target/x86_64-pc-windows-msvc/release/bundle/nsis/*-setup.exe
+            target/x86_64-pc-windows-msvc/release/bundle/nsis/*-setup.exe.sig
             target/x86_64-pc-windows-msvc/release/bundle/nsis/SHA256SUMS.txt
             evidence/*
           if-no-files-found: error
@@ -234,7 +240,9 @@ jobs:
           retention-days: 14
 
   # Tag pushes only: publish the installer that `package` built, rehearsed and
-  # audited as a GitHub pre-release. Write access lives in this job alone.
+  # audited as the latest GitHub release. Installed copies read latest.json
+  # from releases/latest, so it must not be a pre-release. Write access lives
+  # in this job alone.
   prerelease:
     needs: package
     if: startsWith(github.ref, 'refs/tags/rfidex-v')
@@ -252,7 +260,7 @@ jobs:
         with:
           name: rfidex-test-tools-${{ github.sha }}-${{ github.run_id }}
           path: tools
-      - name: Publish pre-release
+      - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
@@ -261,6 +269,12 @@ jobs:
           setup=$(ls dist/target/x86_64-pc-windows-msvc/release/bundle/nsis/*-setup.exe 2>/dev/null \
             || ls dist/*-setup.exe)
           sums=$(dirname "$setup")/SHA256SUMS.txt
+          version=${TAG#rfidex-v}
+          jq -n --arg v "$version" --arg sig "$(cat "$setup.sig")" \
+            --arg url "https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/$(basename "$setup")" \
+            --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{version: $v, pub_date: $date, notes: "RfiDex \($v)",
+              platforms: {"windows-x86_64": {signature: $sig, url: $url}}}' > latest.json
           mock=tools/target/x86_64-pc-windows-msvc/release/rfidex-mock.exe
           tickets=tools/app/dev/tickets.json
           mock_sha=$(sha256sum "$mock" | cut -d' ' -f1 | tr a-f A-F)
@@ -282,6 +296,6 @@ jobs:
 
           Mock SHA-256: \`${mock_sha}\`
           NOTES
-          gh release create "$TAG" "$setup" "$sums" "$mock" "$tickets" \
-            --repo "$GITHUB_REPOSITORY" --prerelease \
+          gh release create "$TAG" "$setup" "$sums" latest.json "$mock" "$tickets" \
+            --repo "$GITHUB_REPOSITORY" --latest \
             --title "RfiDex ${TAG#rfidex-v} (test build)" --notes-file notes.md

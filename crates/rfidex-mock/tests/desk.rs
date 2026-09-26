@@ -41,6 +41,16 @@ async fn bind_mode_happy_path() {
     let (mut d, state) = desk(RfidMode::Bind).await;
     let scanned = d.scan_ticket(&id(1).to_string()).await.unwrap();
     assert!(scanned.ticket.checked_in && !scanned.offline);
+    let check_in = scanned
+        .check_in
+        .clone()
+        .expect("an online scan reports the check-in");
+    assert_eq!(check_in.result, CheckInResult::CheckedIn);
+    let again = d.scan_ticket(&id(1).to_string()).await.unwrap();
+    assert_eq!(
+        again.check_in.unwrap().result,
+        CheckInResult::AlreadyCheckedIn
+    );
     assert!(matches!(d.detect_tag(), Err(DeskError::NoTag)));
     d.reader.place(tag(TAG_A, 4, 28));
     let t = d.detect_tag().unwrap();
@@ -191,6 +201,10 @@ async fn offline_desk_uses_cache_and_queues() {
     state.faults.lock().unwrap().down = true;
     let scanned = d.scan_ticket(&id(1).to_string()).await.unwrap();
     assert!(scanned.offline);
+    assert_eq!(
+        scanned.check_in, None,
+        "an offline scan cannot know the check-in outcome, so it claims none"
+    );
     assert!(matches!(
         d.scan_ticket(&id(3).to_string()).await,
         Err(DeskError::TicketInvalid)
@@ -202,6 +216,13 @@ async fn offline_desk_uses_cache_and_queues() {
 
     let s = store.lock().unwrap();
     assert_eq!(s.count(OutboxState::Pending).unwrap(), 2);
+    assert_eq!(
+        s.due(OutboxKind::DeskScan, 10, chrono::Utc::now())
+            .unwrap()
+            .len(),
+        1,
+        "the queued check-in is still waiting to be sent"
+    );
     assert_eq!(
         s.due(OutboxKind::Binding, 10, chrono::Utc::now())
             .unwrap()

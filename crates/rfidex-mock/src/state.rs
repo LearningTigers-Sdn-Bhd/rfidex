@@ -41,6 +41,9 @@ struct MockTicket {
     summary: TicketSummary,
     paid: bool,
     cancelled: bool,
+    /// The first check-in this ticket ever had. Private: it never leaves the
+    /// server except as the check-in metadata on a desk scan.
+    checked_in_at: Option<chrono::DateTime<Utc>>,
 }
 
 struct MockBinding {
@@ -88,6 +91,7 @@ impl MockState {
                         summary,
                         paid: s.paid,
                         cancelled: s.cancelled,
+                        checked_in_at: None,
                     },
                 )
             })
@@ -214,17 +218,36 @@ impl MockState {
     }
 
     pub fn desk_scan(&mut self, req: DeskScanReq) -> Result<DeskScanResp, ApiFailure> {
+        // A repeated operation id returns the answer it already gave, so a
+        // queued first check-in still reads `checked_in` after later rescans.
         if let Some(r) = self.desk_ops.get(&req.operation_id) {
             return Ok(r.clone());
         }
         self.check_ticket(req.public_id)?;
-        let t = self.tickets.get_mut(&req.public_id).expect("checked above");
-        t.summary.checked_in = true;
-        let ticket = t.summary.clone();
+        let (ticket, check_in) = {
+            let t = self.tickets.get_mut(&req.public_id).expect("checked above");
+            let first = t.checked_in_at.is_none();
+            // Only the first valid scan sets the time, from the capture the
+            // station recorded, so neither a rescan nor an offline drain moves it.
+            let checked_in_at = *t.checked_in_at.get_or_insert(req.captured_at);
+            t.summary.checked_in = true;
+            (
+                t.summary.clone(),
+                CheckIn {
+                    result: if first {
+                        CheckInResult::CheckedIn
+                    } else {
+                        CheckInResult::AlreadyCheckedIn
+                    },
+                    checked_in_at,
+                },
+            )
+        };
         self.scan_log_count += 1;
         let resp = DeskScanResp {
             ticket,
             binding: self.active_for_ticket(req.public_id).cloned(),
+            check_in,
         };
         self.desk_ops.insert(req.operation_id, resp.clone());
         Ok(resp)
@@ -483,6 +506,37 @@ mod tests {
         assert_eq!(s.scan_log_count, 1);
         s.desk_scan(scan(1, 2)).unwrap();
         assert_eq!(s.scan_log_count, 2);
+    }
+
+    #[test]
+    fn first_scan_checks_in_and_every_later_scan_reports_that_time() {
+        let mut s = state();
+        let at: chrono::DateTime<Utc> = "2026-09-26T09:14:03Z".parse().unwrap();
+        let request = DeskScanReq {
+            public_id: id(1),
+            operation_id: id(900),
+            captured_at: at,
+        };
+        let first = s.desk_scan(request.clone()).unwrap();
+        assert_eq!(first.check_in.result, CheckInResult::CheckedIn);
+        assert_eq!(first.check_in.checked_in_at, at);
+
+        let next = s
+            .desk_scan(DeskScanReq {
+                operation_id: id(901),
+                captured_at: at + chrono::Duration::minutes(5),
+                ..request.clone()
+            })
+            .unwrap();
+        assert_eq!(next.check_in.result, CheckInResult::AlreadyCheckedIn);
+        assert_eq!(next.check_in.checked_in_at, first.check_in.checked_in_at);
+
+        assert_eq!(
+            s.desk_scan(request).unwrap(),
+            first,
+            "replaying the first operation returns its original answer"
+        );
+        assert_eq!(s.scan_operation_count(), 2);
     }
 
     #[test]

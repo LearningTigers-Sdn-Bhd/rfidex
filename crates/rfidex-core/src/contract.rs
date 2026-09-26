@@ -126,6 +126,49 @@ pub struct CacheResp {
     pub server_time: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CheckInResult {
+    /// This call made the first check-in.
+    CheckedIn,
+    /// The guest was already checked in, by this desk or anywhere else.
+    AlreadyCheckedIn,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CheckIn {
+    pub result: CheckInResult,
+    /// The first check-in time, whichever call made it.
+    pub checked_in_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SearchBy {
+    Name,
+    Email,
+    Phone,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TicketSearchItem {
+    pub public_id: Uuid,
+    pub name: String,
+    pub ticket_type: String,
+    /// Paid and not cancelled, the same rule the check-in page uses.
+    pub valid: bool,
+    pub checked_in: bool,
+    pub checked_in_at: Option<DateTime<Utc>>,
+    /// Masked by the server; the full address never leaves it.
+    pub email_hint: Option<String>,
+    pub phone_hint: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TicketSearchResp {
+    pub tickets: Vec<TicketSearchItem>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DeskScanReq {
     pub public_id: Uuid,
@@ -137,6 +180,7 @@ pub struct DeskScanReq {
 pub struct DeskScanResp {
     pub ticket: TicketSummary,
     pub binding: Option<BindingInfo>,
+    pub check_in: CheckIn,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

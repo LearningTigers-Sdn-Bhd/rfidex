@@ -62,6 +62,9 @@ pub struct Scanned {
     pub ticket: TicketSummary,
     pub current_tag_key: Option<String>,
     pub offline: bool,
+    /// The server's check-in outcome. `None` only for a scan this station
+    /// queued itself: offline it cannot know whether the guest was already in.
+    pub check_in: Option<CheckIn>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -129,6 +132,7 @@ impl<R: TagReaderWriter> DeskStation<R> {
                     current_tag_key: resp.binding.map(|b| b.tag_key),
                     ticket: resp.ticket,
                     offline: false,
+                    check_in: Some(resp.check_in),
                 })
             }
             Err(ApiError::Rejected { body, .. }) => Err(match body.error {
@@ -159,6 +163,7 @@ impl<R: TagReaderWriter> DeskStation<R> {
             ticket,
             current_tag_key,
             offline: true,
+            check_in: None,
         })
     }
 

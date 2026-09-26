@@ -1,0 +1,24 @@
+{
+  "tickets": [
+    {
+      "public_id": "00000000-0000-0000-0000-000000000001",
+      "name": "Ahmad Bin Ali",
+      "ticket_type": "Delegate",
+      "valid": true,
+      "checked_in": false,
+      "checked_in_at": null,
+      "email_hint": "ah***@example.com",
+      "phone_hint": "•••• 4521"
+    },
+    {
+      "public_id": "00000000-0000-0000-0000-000000000002",
+      "name": "Aina",
+      "ticket_type": "VIP",
+      "valid": true,
+      "checked_in": true,
+      "checked_in_at": "2026-09-26T09:14:03Z",
+      "email_hint": null,
+      "phone_hint": "•••• 6789"
+    }
+  ]
+}

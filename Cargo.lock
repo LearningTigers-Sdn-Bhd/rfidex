@@ -3003,7 +3003,7 @@ dependencies = [
 
 [[package]]
 name = "rfidex-app"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "rfidex-core",
  "rfidex-runtime",
@@ -3018,7 +3018,7 @@ dependencies = [
 
 [[package]]
 name = "rfidex-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "chrono",
  "reqwest",
@@ -3033,7 +3033,7 @@ dependencies = [
 
 [[package]]
 name = "rfidex-mock"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "axum",
  "chrono",
@@ -3048,7 +3048,7 @@ dependencies = [
 
 [[package]]
 name = "rfidex-runtime"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "chrono",
  "fs2",

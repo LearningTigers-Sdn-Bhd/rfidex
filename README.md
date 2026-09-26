@@ -8,7 +8,7 @@
 Scan a ticket, tag a sticker, walk through a gate — online or off.
 
 [![CI](https://github.com/LearningTigers-Sdn-Bhd/rfidex/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/LearningTigers-Sdn-Bhd/rfidex/actions/workflows/ci.yml)
-![Tests](https://img.shields.io/badge/tests-113_passing-2ea44f?style=for-the-badge&logo=checkmarx&logoColor=white)
+![Tests](https://img.shields.io/badge/tests-163_passing-2ea44f?style=for-the-badge&logo=checkmarx&logoColor=white)
 ![Platform](https://img.shields.io/badge/platform-Windows_x64-0078D4?style=for-the-badge&logo=windows&logoColor=white)
 ![Status](https://img.shields.io/badge/status-simulator_ready-f5a623?style=for-the-badge)
 
@@ -282,7 +282,7 @@ gh run download <run-id> --repo LearningTigers-Sdn-Bhd/rfidex --name rfidex-wind
 (cd app && npm ci && npm run build)
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace          # 113 tests
+cargo test --workspace          # 163 tests
 cargo build -p rfidex-app
 ```
 

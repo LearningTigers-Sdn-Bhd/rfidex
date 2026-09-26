@@ -212,6 +212,20 @@ Then in **Setup**: server `http://127.0.0.1:4010`, the key above, then add one d
 > [!IMPORTANT]
 > The app crate embeds `app/dist`. **Run `npm run build` before any cargo command that builds `rfidex-app`** — CI does the same.
 
+---
+
+## 🧪 Rehearsal and Windows packaging
+
+The P3 acceptance run is a deterministic simulated event driven by the real runtime against the real mock over loopback HTTP — **500 tickets total, in two isolated event runs**: one **Bind** desk and one **Write** desk, each with an entry and an exit gate, run sequentially with separate mock state and separate data roots. Every run covers an entry burst, a logical lunch outage, a station restart, and a direction reported by the reader that contradicts the configured role.
+
+- `rehearsal_smoke` — the same routine with 12 tickets (6 per event). The fast local check while developing the harness.
+- `rehearsal_500` — the acceptance run: 250 tickets per event, 500 scan logs, 500 bindings and 2,000 observations, proven from the mock's own counters and delivery-ID sets.
+
+Both are `#[ignore]`d on purpose: the outage and restart stages wait on real retry backoff (1 s doubling to a 60 s cap), so they are far too slow for an ordinary push. They run **only locally and in the windows-package workflow** — ordinary CI stays as it is. Normal `cargo test --workspace` skips both and still runs the fast, explicit-clock fault and wrong-role probes.
+
+> [!NOTE]
+> **Status: pending implementation.** The rehearsal harness, the NSIS installer configuration, the `windows-package` workflow and the clean-Windows manual acceptance are all part of Plan 3 and are **not implemented yet**. Nothing on this page is a claim that they ran. The installer will be **unsigned** until a signing decision is made, and the embedded WebView2 bootstrapper **downloads the runtime when it is missing**, so a first install on a machine without WebView2 needs internet.
+
 ### ✅ Checks
 
 ```bash

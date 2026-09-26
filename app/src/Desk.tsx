@@ -65,7 +65,7 @@ export function Desk({ station }: Props) {
         void run(() =>
           linked ? deskReset(station.id) : deskLink(station.id, null),
         ).then((next) => {
-          if (next && linked && generation.current === mine) qrRef.current?.focus();
+          if (next && linked && generation.current === mine && !document.querySelector("dialog[open]")) qrRef.current?.focus();
         });
       },
       linked ? 3000 : 500,
@@ -86,12 +86,32 @@ export function Desk({ station }: Props) {
     }
   }, [confirming]);
 
-  // The scanner types into the code field, so it keeps focus unless the
-  // operator is answering a confirmation.
+  // Keep the keyboard-wedge target focused outside native modal dialogs.
+  // Defer until after clicks so navigation and action buttons still activate.
   useEffect(() => {
-    if (confirming) return;
-    qrRef.current?.focus();
-  }, [confirming, view?.step, station.id]);
+    let timer: number | undefined;
+    const restore = () => {
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        if (!document.querySelector("dialog[open]")) qrRef.current?.focus();
+      }, 0);
+    };
+    const observer = new MutationObserver(restore);
+    document.querySelectorAll("dialog").forEach((dialog) =>
+      observer.observe(dialog, { attributes: true, attributeFilter: ["open"] }),
+    );
+    document.addEventListener("focusin", restore);
+    document.addEventListener("pointerup", restore);
+    window.addEventListener("focus", restore);
+    restore();
+    return () => {
+      window.clearTimeout(timer);
+      observer.disconnect();
+      document.removeEventListener("focusin", restore);
+      document.removeEventListener("pointerup", restore);
+      window.removeEventListener("focus", restore);
+    };
+  }, []);
 
   const confirm = (event: FormEvent) => {
     // Keep the dialog open when the reason is blank: a replacement always has
@@ -104,20 +124,22 @@ export function Desk({ station }: Props) {
   const step = view?.step ?? "ready";
 
   return (
-    <div className="station-layout">
+    <div className="station-layout desk-layout">
       <div className="station-main">
         <form className="scan" onSubmit={submitScan}>
           <label htmlFor="ticket-code">Ticket code</label>
+          <span className="scan-hint" id="scan-help">Scan a QR code or type a ticket code, then press Enter.</span>
           <input
             id="ticket-code"
             ref={qrRef}
             value={code}
             onChange={(event) => setCode(event.target.value)}
             autoComplete="off"
+            aria-describedby="scan-help"
+            spellCheck={false}
             placeholder="Scan the ticket QR code"
-            disabled={busy}
           />
-          <button type="submit" disabled={busy || code.trim() === ""}>
+          <button className="primary" type="submit" disabled={busy || code.trim() === ""}>
             {busy ? "Working…" : "Scan ticket"}
           </button>
         </form>
@@ -126,6 +148,7 @@ export function Desk({ station }: Props) {
           className={`result desk-${step}${view?.offline ? " is-offline" : ""}`}
           aria-live="polite"
         >
+          <svg className="result-symbol" viewBox="0 0 48 48" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M16 7H7v9M32 7h9v9M7 32v9h9M41 32v9h-9"/><path d={step === "linked" ? "m14 24 7 7 14-14" : step === "error" || step === "needs_confirm" ? "M24 14v13m0 5v2" : "M16 19v10m6-13v16m5-16v16m5-13v10"}/></svg>
           <p className="eyebrow">
             {view ? `Mode: ${view.mode === "write" ? "Write" : "Bind"}` : "Mode: —"}
           </p>
@@ -170,12 +193,13 @@ export function Desk({ station }: Props) {
       <dialog
         ref={dialogRef}
         className="confirm"
+        aria-labelledby="replace-title"
         onCancel={() => {
           setReason("");
           void run(() => deskReset(station.id));
         }}
       >
-        <h2>Replace this sticker?</h2>
+        <h2 id="replace-title">Replace this sticker?</h2>
         <p className="message">{view?.message}</p>
         {view?.ticket && (
           <p className="ticket">
@@ -201,7 +225,7 @@ export function Desk({ station }: Props) {
             >
               Cancel — do not replace
             </button>
-            <button type="submit" disabled={busy || reason.trim() === ""}>
+            <button className="primary" type="submit" disabled={busy || reason.trim() === ""}>
               Replace sticker
             </button>
           </div>

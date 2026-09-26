@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { FormEvent } from "react";
 
 import { errorText, simClear, simPass, simPlace, simSetConnected } from "./api";
@@ -20,6 +20,7 @@ export function Simulator({ station }: Props) {
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  const dialogRef = useRef<HTMLDialogElement>(null);
 
   if (!station.simulated) return null;
 
@@ -46,7 +47,10 @@ export function Simulator({ station }: Props) {
 
   return (
     <aside className="simulator" aria-label="Simulator">
-      <h2>Simulator</h2>
+      <div><strong>Hardware simulator</strong><span className="hint">Test stickers and reader connection</span></div>
+      <button type="button" onClick={() => dialogRef.current?.showModal()}>Open simulator</button>
+      <dialog ref={dialogRef} className="confirm simulator-dialog" aria-labelledby="simulator-title">
+      <div className="panel-head"><h2 id="simulator-title">Simulator</h2><button type="button" onClick={() => dialogRef.current?.close()}>Close simulator</button></div>
       <p className="hint">
         This station is simulated. Nothing here is real hardware.
       </p>
@@ -103,6 +107,7 @@ export function Simulator({ station }: Props) {
           {failure}
         </p>
       )}
+      </dialog>
     </aside>
   );
 }

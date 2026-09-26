@@ -142,17 +142,40 @@ export const simSetConnected = (station: string, connected: boolean) =>
  * A failed command carries the Rust message. Anything else is a transport
  * problem, not a second place that decides what an RFID error means.
  */
-export function errorText(failure: unknown): string {
+/** A failure the Rust side wrote for the operator: `RuntimeError` serialized. */
+export interface AppFailure {
+  code: string;
+  message: string;
+}
+
+const UNKNOWN_FAILURE: AppFailure = {
+  code: "app_error",
+  message: "The app could not finish this action.",
+};
+
+/** True only inside the Tauri window; a plain browser has no bridge to Rust. */
+export const inDesktopApp = () => "__TAURI_INTERNALS__" in window;
+
+/**
+ * Only messages from Rust reach the operator. A JavaScript error (an `Error`
+ * instance) is logged for developers and shown as the neutral fallback, so a
+ * raw "Cannot read properties of undefined" never appears on screen.
+ */
+export function failureOf(failure: unknown): AppFailure {
   if (
     typeof failure === "object" &&
     failure !== null &&
-    "message" in failure &&
-    typeof (failure as { message: unknown }).message === "string"
+    !(failure instanceof Error) &&
+    typeof (failure as AppFailure).code === "string" &&
+    typeof (failure as AppFailure).message === "string"
   ) {
-    return (failure as { message: string }).message;
+    return failure as AppFailure;
   }
-  return "The app could not finish this action.";
+  console.error(failure);
+  return UNKNOWN_FAILURE;
 }
+
+export const errorText = (failure: unknown): string => failureOf(failure).message;
 
 export function formatTime(value: string | null): string {
   if (!value) return "—";

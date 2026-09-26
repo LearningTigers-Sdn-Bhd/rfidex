@@ -41,7 +41,7 @@ export function Gate({ station }: Props) {
   const earlier = rows.slice(1);
 
   return (
-    <div className="station-layout">
+    <div className="station-layout gate-layout">
       <div className="station-main">
         <section
           className={`result gate-${latest?.status ?? "empty"}`}

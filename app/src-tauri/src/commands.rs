@@ -32,7 +32,7 @@ fn config_error(e: ConfigError) -> RuntimeError {
         // API key and the station list.
         _ => RuntimeError::new(
             "config_unreadable",
-            "The saved setup on this computer cannot be read. Open Setup and save it again.",
+            "The saved setup on this computer cannot be read, so the stations cannot start. Ask for help: config.json in the RfiDex data folder must be repaired or replaced. Station data is kept.",
         ),
     }
 }

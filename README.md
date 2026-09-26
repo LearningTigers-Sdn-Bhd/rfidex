@@ -300,6 +300,14 @@ cargo build -p rfidex-app
 
 ## 🧭 Operations
 
+The operator screens use system fonts and bundled SVG artwork; no external fonts or CDNs are required. Station tabs separate registration from entry/exit gates, and status remains visible below the workspace.
+
+Startup and browser-only screens pair a bundled window illustration with the original error details and recovery instructions. Desktop startup failures retain their error code and **Try again** action; the browser-only screen explains how to launch the desktop app instead of showing a misleading 404.
+
+On Desk, the ticket-code field keeps scanner focus whenever no dialog is open. **Open simulator** opens hardware test controls in a dialog; closing it returns focus to the scanner. Replacement confirmation still requires a reason, and all runtime messages and decisions remain unchanged.
+
+For a frontend focus smoke check, open a configured simulated Desk in the dev WebView and run `await (await import('/dev/desk-focus-check.js')).checkDeskFocus()` in its developer console. This checks focus recovery and modal isolation without scanning or linking a ticket.
+
 ### Setup — simple on purpose
 
 There is **no PIN, no staff login and no per-device credential.** Instead:

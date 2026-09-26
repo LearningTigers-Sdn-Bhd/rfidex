@@ -949,7 +949,7 @@ impl StationRuntime {
             Some(text) => Some(serde_json::from_str(&text).map_err(|_| {
                 RuntimeError::new(
                     "settings_damaged",
-                    "The saved server settings on this computer cannot be read. Open Setup and save them again.",
+                    "A station's saved server settings cannot be read, so the stations cannot start. Ask for help, and do not delete the station data: it may hold work that has not been sent.",
                 )
             })?),
             None => None,

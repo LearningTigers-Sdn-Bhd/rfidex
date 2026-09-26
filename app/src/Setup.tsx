@@ -163,7 +163,7 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
   return (
     <div className="panel setup">
       <div className="panel-head">
-        <h1>Setup</h1>
+        <div><p className="eyebrow">RfiDex / Configuration</p><h1>Setup</h1></div>
         {hasSavedConfig && (
           <button type="button" onClick={onCancel} disabled={busy}>
             Close without saving
@@ -327,7 +327,7 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
             <button type="button" onClick={addStation}>
               Add station
             </button>
-            <button type="submit" disabled={busy}>
+            <button className="primary" type="submit" disabled={busy}>
               {busy ? "Saving…" : "Save setup"}
             </button>
           </div>
@@ -340,8 +340,8 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
         )}
       </form>
 
-      <dialog ref={dialogRef} className="confirm" onCancel={() => setRoleChange(null)}>
-        <h2>Change a gate direction?</h2>
+      <dialog ref={dialogRef} className="confirm" aria-labelledby="direction-title" onCancel={() => setRoleChange(null)}>
+        <h2 id="direction-title">Change a gate direction?</h2>
         <p>
           The direction decides which way passages are recorded for that gate.
           Everybody using this computer will see the new direction.

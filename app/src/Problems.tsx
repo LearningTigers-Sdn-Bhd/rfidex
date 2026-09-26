@@ -51,7 +51,7 @@ export function Problems({ problemCount }: Props) {
   return (
     <div className="panel">
       <div className="panel-head">
-        <h1>Problems</h1>
+        <div><p className="eyebrow">Review queue</p><h1>Problems</h1></div>
         <button type="button" onClick={() => void refresh()} disabled={busy}>
           Refresh
         </button>
@@ -83,8 +83,8 @@ export function Problems({ problemCount }: Props) {
         </ul>
       )}
 
-      <dialog ref={dialogRef} className="confirm" onCancel={() => setChoosing(null)}>
-        <h2>Dismiss this from the list?</h2>
+      <dialog ref={dialogRef} className="confirm" aria-labelledby="dismiss-title" onCancel={() => setChoosing(null)}>
+        <h2 id="dismiss-title">Dismiss this from the list?</h2>
         <p>
           This hides it here. It does <strong>not</strong> fix the server&rsquo;s
           answer, delete the saved action, or change who holds the sticker.

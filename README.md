@@ -221,10 +221,21 @@ The P3 acceptance run is a deterministic simulated event driven by the real runt
 - `rehearsal_smoke` — the same routine with 12 tickets (6 per event). The fast local check while developing the harness.
 - `rehearsal_500` — the acceptance run: 250 tickets per event, 500 scan logs, 500 bindings and 2,000 observations, proven from the mock's own counters and delivery-ID sets.
 
+```bash
+cargo test --locked -p rfidex-runtime --test rehearsal rehearsal_smoke -- --ignored --exact --nocapture
+cargo test --locked -p rfidex-runtime --test rehearsal rehearsal_500 -- --ignored --exact --nocapture
+```
+
 Both are `#[ignore]`d on purpose: the outage and restart stages wait on real retry backoff (1 s doubling to a 60 s cap), so they are far too slow for an ordinary push. They run **only locally and in the windows-package workflow** — ordinary CI stays as it is. Normal `cargo test --workspace` skips both and still runs the fast, explicit-clock fault and wrong-role probes.
 
+Measured locally (macOS, debug build): smoke ≈ 0.9 s, full ≈ 2.4 s. The number is a duration, not a throughput claim.
+
+**What the rehearsal proves:** every simulated registration and passage reaches the mock exactly once — its own counters and the exact delivery-ID set are the oracle, every result is accepted with no anomaly, each sticker has two entries and two exits, Write-mode stickers carry their own ticket and Bind-mode stickers carry nothing, and an outage, a restart and a recovery leave every queued row with the id and idempotency key it started with.
+
+**What it does not prove:** RF range, UID byte order on real devices, device retention, vendor DLL behaviour, hardware timing, badge-printer delivery, or backend visit/headcount/duration rules. The lunch outage is a fault switch, not thirty minutes of wall clock, and the simulated sticker memory is volatile — a runtime restart loses it, so every passage is captured before the restart. Real hardware is P4.
+
 > [!NOTE]
-> **Status: pending implementation.** The rehearsal harness, the NSIS installer configuration, the `windows-package` workflow and the clean-Windows manual acceptance are all part of Plan 3 and are **not implemented yet**. Nothing on this page is a claim that they ran. The installer will be **unsigned** until a signing decision is made, and the embedded WebView2 bootstrapper **downloads the runtime when it is missing**, so a first install on a machine without WebView2 needs internet.
+> **Status: the Windows installer is not built yet.** The NSIS packaging workflow and the clean-Windows manual acceptance are the rest of Plan 3. Nothing on this page is a claim that a Windows install was tested. The installer will be **unsigned** until a signing decision is made, and the embedded WebView2 bootstrapper **downloads the runtime when it is missing**, so a first install on a machine without WebView2 needs internet.
 
 ### ✅ Checks
 

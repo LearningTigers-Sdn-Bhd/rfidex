@@ -332,6 +332,11 @@ impl Harness {
         self.server.faults.lock().unwrap().down = down;
     }
 
+    /// Disarm every fault, exactly as a fresh server would start.
+    pub fn clear_faults(&self) {
+        *self.server.faults.lock().unwrap() = rfidex_mock::http::Faults::default();
+    }
+
     pub fn observations(&self) -> usize {
         self.server.mock.lock().unwrap().observation_count()
     }

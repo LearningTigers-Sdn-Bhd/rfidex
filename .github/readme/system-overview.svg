@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="510" viewBox="0 0 1440 510" role="img" aria-labelledby="title desc">
+<title id="title">RfiDex — one runtime, independent stations</title>
+<desc id="desc">Desk, entry and exit stations each keep their own identity, API client and SQLite store. A shared runtime coordinates them. Rust calls a separate loopback printer app without an API key. The EventzFlow mock implements the device API during development.</desc>
+<defs><pattern id="grid" width="30" height="30" patternUnits="userSpaceOnUse"><path d="M30 0H0V30" fill="none" stroke="#183042" stroke-width="1"/></pattern></defs>
+<rect width="1440" height="510" rx="18" fill="#091724"/><rect width="1440" height="510" rx="18" fill="url(#grid)"/>
+<g font-family="Arial, Helvetica, sans-serif">
+<text x="52" y="62" fill="#54dec5" font-size="18" font-weight="700" letter-spacing="3">STATION TOPOLOGY</text>
+<text x="52" y="109" fill="#eff6ff" font-size="34" font-weight="700">One runtime. Independent stations.</text>
+<text x="1387" y="62" fill="#b5c6d8" text-anchor="end" font-size="17">DESKTOP / WINDOWS x64</text>
+<g fill="#10273a" stroke="#35516b" stroke-width="2"><rect x="52" y="151" width="378" height="146" rx="10"/><rect x="531" y="151" width="378" height="146" rx="10"/><rect x="1010" y="151" width="378" height="146" rx="10"/></g>
+<g font-size="18" fill="#54dec5" font-weight="700"><text x="78" y="185">01 / REGISTRATION</text><text x="557" y="185">02 / ENTRY</text><text x="1036" y="185">03 / EXIT</text></g>
+<g font-size="30" fill="#eff6ff" font-weight="700"><text x="78" y="230">Check in + link</text><text x="557" y="230">Record arrivals</text><text x="1036" y="230">Record departures</text></g>
+<g font-size="18" fill="#b5c6d8"><text x="78" y="270">Own UUID / API client / SQLite</text><text x="557" y="270">Own UUID / API client / SQLite</text><text x="1036" y="270">Own UUID / API client / SQLite</text></g>
+<path d="M241 297v40h958v-40M720 297v72" fill="none" stroke="#54dec5" stroke-width="2"/>
+<rect x="531" y="369" width="857" height="89" rx="10" fill="#173549" stroke="#54dec5" stroke-width="2"/>
+<text x="557" y="404" font-size="24" fill="#eff6ff" font-weight="700">EventzFlow device API</text><text x="557" y="434" font-size="18" fill="#b5c6d8">rfidex-mock in development / event-scoped authentication</text>
+<path d="M80 297v72" stroke="#90acff" stroke-width="2" stroke-dasharray="5 5"/>
+<rect x="52" y="369" width="378" height="89" rx="10" fill="#202c49" stroke="#90acff" stroke-width="2"/>
+<text x="78" y="404" font-size="24" fill="#eff6ff" font-weight="700">Local badge printer</text><text x="78" y="434" font-size="18" fill="#c8d5f5">Rust HTTP / loopback / no API key</text>
+</g></svg>

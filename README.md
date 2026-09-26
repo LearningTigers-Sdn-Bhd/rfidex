@@ -1,410 +1,496 @@
 <div align="center">
 
-<img src="app/app-icon.svg" alt="RfiDex" width="112" height="112" />
+<img src="app/app-icon.svg" alt="RfiDex app icon" width="104" height="104" />
 
 # RfiDex
 
-**RFID registration desk and entry/exit gates for EventzFlow events.**<br/>
-Scan a ticket, tag a sticker, walk through a gate — online or off.
+**Scan a ticket, tag a sticker, walk through a gate — online or off.**
+
+RFID desk and gate software for EventzFlow: ticket check-in, badge printing,<br/>
+sticker registration and entry/exit capture, with a local cache and durable queue when the connection drops.
 
 [![CI](https://github.com/LearningTigers-Sdn-Bhd/rfidex/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/LearningTigers-Sdn-Bhd/rfidex/actions/workflows/ci.yml)
-![Tests](https://img.shields.io/badge/tests-163_passing-2ea44f?style=for-the-badge&logo=checkmarx&logoColor=white)
-![Platform](https://img.shields.io/badge/platform-Windows_x64-0078D4?style=for-the-badge&logo=windows&logoColor=white)
-![Status](https://img.shields.io/badge/status-simulator_ready-f5a623?style=for-the-badge)
+[![Release](https://img.shields.io/github/v/release/LearningTigers-Sdn-Bhd/rfidex?style=flat-square&label=release&color=38CBB0)](https://github.com/LearningTigers-Sdn-Bhd/rfidex/releases/latest)
+![Windows x64](https://img.shields.io/badge/Windows-x64-1479D0?style=flat-square)
+![Hardware](https://img.shields.io/badge/Hardware-simulators_now-D5A34A?style=flat-square)
 
-![Rust](https://img.shields.io/badge/Rust-stable-000000?style=flat-square&logo=rust&logoColor=white)
-![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB?style=flat-square&logo=tauri&logoColor=white)
-![React](https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react&logoColor=black)
-![TypeScript](https://img.shields.io/badge/TypeScript-7-3178C6?style=flat-square&logo=typescript&logoColor=white)
-![Vite](https://img.shields.io/badge/Vite-8-646CFF?style=flat-square&logo=vite&logoColor=white)
-![SQLite](https://img.shields.io/badge/SQLite-WAL-003B57?style=flat-square&logo=sqlite&logoColor=white)
-![Tokio](https://img.shields.io/badge/Tokio-async-6E4A7E?style=flat-square)
-![Axum](https://img.shields.io/badge/Axum-0.8_mock_server-7B3F00?style=flat-square)
-
-[Features](#-features) ·
-[Roadmap](#%EF%B8%8F-roadmap) ·
-[Architecture](#%EF%B8%8F-architecture) ·
-[Development](#-development) ·
-[Operations](#-operations) ·
-[Privacy](#-privacy)
+[**Download**](https://github.com/LearningTigers-Sdn-Bhd/rfidex/releases/latest) · [**Try it**](#try-it) · [**Quick start**](#quick-start) · [**Architecture**](#architecture) · [**Operations**](#operations) · [**Status**](#development-status)
 
 </div>
 
 ---
 
-## ✨ Features
+## Technology
 
-<table>
-<tr>
-<td width="50%" valign="top">
+![Rust](https://img.shields.io/badge/Rust-stable-161B22?style=for-the-badge&logo=rust&logoColor=F1A880)
+![Tauri](https://img.shields.io/badge/Tauri-2-161B22?style=for-the-badge&logo=tauri&logoColor=24C8DB)
+![React](https://img.shields.io/badge/React-19-161B22?style=for-the-badge&logo=react&logoColor=61DAFB)
+![TypeScript](https://img.shields.io/badge/TypeScript-7-161B22?style=for-the-badge&logo=typescript&logoColor=3178C6)
+![Vite](https://img.shields.io/badge/Vite-8-161B22?style=for-the-badge&logo=vite&logoColor=A78BFA)
+![SQLite](https://img.shields.io/badge/SQLite-WAL-161B22?style=for-the-badge&logo=sqlite&logoColor=72C7EA)
+![Tokio](https://img.shields.io/badge/Tokio-async-161B22?style=for-the-badge&logo=rust&logoColor=FFFFFF)
+![axum](https://img.shields.io/badge/axum-mock_API-161B22?style=for-the-badge)
+![npm](https://img.shields.io/badge/npm-package_manager-161B22?style=for-the-badge&logo=npm&logoColor=CB3837)
 
-### 🎫 Registration desk
-- Keyboard-wedge QR scan — the scanner types, Enter submits
-- **Search** by name, email or phone when the QR will not scan
-- **Bind mode:** links the sticker's UID to the ticket
-- **Write mode:** writes the ticket onto the sticker, reads it back, *and* binds the UID
-- Sticker already in use? Shows whose it is and asks for a reason before replacing
-- Two stickers on the reader are refused, never guessed
-- Badge prints on a first check-in; **Reprint badge** whenever staff decide
+Rust owns runtime outcomes, validation and operator error messages. React renders the station screens; Tauri provides the native command boundary. SQLite stores each station's cache and queued work. The mock API uses axum; production HTTP calls use reqwest.
 
-</td>
-<td width="50%" valign="top">
+## Capabilities
 
-### 🚪 Entry & exit gates
-- Large result panel: name, direction, **Welcome** / **Goodbye**
-- The station's configured role is authoritative, whatever the reader reports
-- Repeat entry, entry without check-in and payload mismatches shown as plain-language warnings
-- Unknown sticker is denied — never a made-up name
-- Records or live-inventory gates, with per-station debounce
+| Area | Functionality |
+| :-- | :-- |
+| **Registration desk** | Keyboard-wedge QR scan; name, email and phone search; ticket check-in; existing-check-in detection |
+| **Sticker registration** | Bind factory UID, or write ticket ID and verify readback; explicit confirmation and reason for replacement |
+| **Badge printing** | Per-desk local printer address; health check; automatic first-check-in attempt; manual Reprint; independent sticker processing |
+| **Entry and exit gates** | Configured station direction; guest/result display; record-based and live-inventory simulators; repeat-read debounce |
+| **Offline operation** | Local ticket/binding cache; name-only search; durable outbox; retry backoff and idempotent delivery |
+| **Multi-station deployment** | Any mix of desk, entry and exit stations on one PC, each with its own UUID, database and API client |
+| **Operator support** | Connection/device status, queued-work counts, Problems list, simulator controls and redacted diagnostics export |
+| **Windows distribution** | Per-user NSIS installer, WebView2 bootstrapper, separate packaging workflow and signed updater artifacts |
 
-</td>
-</tr>
-<tr>
-<td valign="top">
+![RfiDex station topology: independently stored desk, entry and exit stations connect to the EventzFlow device API; desk printing uses a separate loopback connection.](.github/readme/system-overview.svg)
 
-### 📡 Offline-first
-- Every action committed to SQLite **before** it's acknowledged
-- Offline passages say **Recorded**, never *Accepted*
-- Durable outbox with backoff; the same row flips to accepted on reconnect
-- An offline desk never prints on its own — no false promises
+> [!IMPORTANT]
+> **Current integration boundary:** development and tests use `rfidex-mock`. Real ECRFID hardware integration is pending; the production EventzFlow RFID backend is on hold. Installer availability and simulated tests do not certify real readers, physical printing or production backend behavior.
 
-</td>
-<td valign="top">
+<details>
+<summary><strong>Documentation index</strong></summary>
 
-### 🛡️ Safe by construction
-- One PC runs any mix of desk + gates, each with its **own** store, client and UUID
-- **Event guard:** queued work never reaches a different event
-- Problems list: dismissing hides, never deletes evidence
-- Diagnostics CSV is allowlisted — no names, no full UIDs, no key
+- [Try it without building](#try-it)
+- [Quick start](#quick-start)
+- [Registration workflow](#registration-workflow)
+- [Ticket search](#ticket-search)
+- [Badge printing](#badge-printing)
+- [Architecture and API boundaries](#architecture)
+- [Offline guarantees and limits](#offline-operation)
+- [Station setup and troubleshooting](#operations)
+- [Build, tests and rehearsal](#verification)
+- [Windows packaging and updates](#windows)
+- [Development status](#development-status)
+- [Storage, credentials and diagnostics](#privacy)
 
-</td>
-</tr>
-</table>
+</details>
 
----
+<a id="try-it"></a>
 
-## 🗺️ Roadmap
-
-```text
-Overall  ███████░░░░░░░░░░░░░░  2 / 6 plans complete
-```
-
-| # | Phase | Scope | Status |
-|:-:|:--|:--|:--|
-| 1 | **P0 + P1** | Core logic, sticker codec, durable outbox, mock EventzFlow server | ![done](https://img.shields.io/badge/-done-2ea44f?style=flat-square) |
-| 2 | **P2** | Tauri desktop app — setup, desk, gates, problems, simulator | ![done](https://img.shields.io/badge/-done-2ea44f?style=flat-square) |
-| 3 | **P3** | 500-ticket simulated event rehearsal + Windows installer | ![next](https://img.shields.io/badge/-next-f5a623?style=flat-square) |
-| 4 | **P4** | Real ECRFID desk and gate hardware | ![waiting](https://img.shields.io/badge/-on_hardware_arrival-lightgrey?style=flat-square) |
-| 5 | **P5** | EventzFlow backend: RFID endpoints, visits, reports | ![approval](https://img.shields.io/badge/-needs_approval-lightgrey?style=flat-square) |
-| 6 | **P6** | EventzFlow panel RFID tab | ![approval](https://img.shields.io/badge/-needs_approval-lightgrey?style=flat-square) |
-
-```mermaid
-flowchart LR
-    P1["✅ P0+P1<br/>Core + mock"] --> P2["✅ P2<br/>Desktop app"]
-    P2 --> P3["⏳ P3<br/>Rehearsal + installer"]
-    P2 --> P4["⏳ P4<br/>Hardware"]
-    P3 --> P5["🔒 P5<br/>Backend"]
-    P4 --> P5
-    P5 --> P6["🔒 P6<br/>Panel"]
-    classDef done fill:#2ea44f,stroke:#1a7f37,color:#fff
-    classDef next fill:#f5a623,stroke:#c78100,color:#000
-    classDef locked fill:#d0d7de,stroke:#8c959f,color:#24292f
-    class P1,P2 done
-    class P3,P4 next
-    class P5,P6 locked
-```
-
----
-
-## 🏗️ Architecture
-
-```mermaid
-flowchart TB
-    subgraph APP["🖥️ app/ — Tauri 2 shell"]
-        UI["React screens<br/>Setup · Desk · Gate · Problems · Simulator"]
-        CMD["Thin command layer<br/>RwLock around the runtime"]
-        UI -- "invoke()" --> CMD
-    end
-
-    subgraph RT["⚙️ rfidex-runtime"]
-        RUN["Runtime<br/>per-station tasks · status · sync · shutdown"]
-        VIEWS["Desk session · Gate views<br/>Problems · Diagnostics"]
-    end
-
-    subgraph CORE["🧩 rfidex-core"]
-        ST["DeskStation / GateStation"]
-        SYNC["SyncWorker + backoff"]
-        STORE[("SQLite per station<br/>WAL · synchronous=FULL")]
-        DEV["Device traits<br/>SimDesk · SimGate · ECRFID in P4"]
-    end
-
-    SERVER["☁️ EventzFlow API<br/>rfidex-mock in development"]
-
-    CMD --> RUN --> VIEWS
-    RUN --> ST
-    RUN --> SYNC
-    ST --> DEV
-    ST --> STORE
-    SYNC --> STORE
-    SYNC -- "HTTPS · API key · X-RfiDex-Station" --> SERVER
-```
-
-| Crate | Role |
-|:--|:--|
-| [`rfidex-core`](crates/rfidex-core) | Device-neutral logic: tag keys, 20-byte sticker codec with CRC-8, outbox, sync, desk & gate stations, health |
-| [`rfidex-mock`](crates/rfidex-mock) | In-memory EventzFlow device API with fault switches: down, delay, 5xx, hang-after-commit, bad body |
-| [`rfidex-runtime`](crates/rfidex-runtime) | All application behaviour and every operator sentence — no Tauri types |
-| [`app/`](app) | React + Vite + TypeScript screens and a thin Tauri command layer |
+## Try it without building
 
 > [!TIP]
-> Every decision and every message the operator reads is written in Rust. React only renders.
+> **For testers on Windows — no Rust or Node needed.**
+> 1. From the [latest release](https://github.com/LearningTigers-Sdn-Bhd/rfidex/releases/latest), download `RfiDex_<version>_x64-setup.exe`, `rfidex-mock.exe` and `tickets.json` into one folder, and run the setup (SmartScreen: **More info → Run anyway**).
+> 2. In that folder run `rfidex-mock.exe --port 4010 --api-key rfidex_demo_key_0123456789abcdefghij --tickets tickets.json`.
+> 3. In RfiDex **Setup**, use server `http://127.0.0.1:4010` and that key, add a desk and a gate, then follow step 3 of the quick start below.
+>
+> Installed copies update themselves: **Check for updates** / **Update now** in the bottom bar.
 
-### 🔄 Desk flow
+<a id="quick-start"></a>
 
-```mermaid
-sequenceDiagram
-    autonumber
-    actor Staff
-    participant Desk as RfiDex desk
-    participant DB as Station SQLite
-    participant API as EventzFlow
+## Quick start
 
-    Staff->>Desk: Scan ticket QR, or search name / email / phone
-    Desk->>API: Desk scan (check-in)
-    alt first check-in
-        API-->>Desk: Checked in
-        Desk->>Printer: Reprint badge (on this PC, no key)
-    else already checked in
-        API-->>Desk: Already checked in at 09:14 — Reprint offered
-    else offline
-        Desk->>DB: Queue scan, use cached ticket
-        Desk-->>Staff: Offline — press Reprint when back online
-    end
-    Staff->>Desk: Place one sticker
-    opt sticker already in use
-        Desk-->>Staff: Belongs to someone else. Replace? (reason required)
-    end
-    Desk->>DB: Commit binding (write mode writes + reads back first)
-    Desk->>API: Send binding now or on reconnect
-    Desk-->>Staff: ✅ Sticker linked
-```
+Run a complete simulated desk/entry/exit setup without RFID hardware.
 
----
+### Prerequisites
 
-## 🚀 Development
+- Rust stable with `rustfmt` and `clippy`.
+- Current Node.js LTS and **npm**. Committed lockfiles are `Cargo.lock` and `app/package-lock.json`.
+- [Tauri 2 host prerequisites](https://v2.tauri.app/start/prerequisites/). Windows x64 is the distribution target; macOS is also used for development.
 
-**Prerequisites:** Rust stable with `rustfmt` + `clippy` · Node 20.19+ with npm · [Tauri 2 prerequisites](https://v2.tauri.app/start/prerequisites/) (Xcode command line tools on macOS, WebView2 on Windows).
+### 1. Start the mock event server
+
+From the repository root:
 
 ```bash
-# 1 — the mock EventzFlow server (development only)
-cargo run -p rfidex-mock -- \
+cargo run -p rfidex-mock --locked -- \
   --port 4010 \
   --api-key rfidex_demo_key_0123456789abcdefghij \
   --tickets app/dev/tickets.json \
   --event-name "RfiDex Demo" \
-  --mode bind            # or: write
+  --mode bind
 ```
 
+Use `--mode write` to test written sticker payloads. The server binds loopback. The example key and [demo attendees](app/dev/tickets.json) are fictional development data.
+
+### 2. Start the desktop app
+
+In another terminal:
+
 ```bash
-# 2 — the desktop app
 cd app
 npm ci
-npm run tauri dev        # native window, Vite on 127.0.0.1:1420
+npm run tauri dev
 ```
 
-Then in **Setup**: server `http://127.0.0.1:4010`, the key above, then add one desk plus an entry and an exit gate. Demo tickets are fictional: Aina and Ben (valid), Chong (unpaid), Devi (cancelled). Each demo ticket carries a fictional email and phone so search can be tried.
+Tauri opens a native window; Vite runs on `127.0.0.1:1420`. An ordinary browser at that URL has no Tauri bridge and displays launch instructions instead of acting as a station.
 
-```bash
-# 3 — the badge printer app, on the same PC as the desk (optional)
-#     event-printing, in direct mode: point it at a backend and an event slug.
-#     RfiDex only asks it to reprint one ticket id; no key is sent to it.
-python run_server.py            # listens on 127.0.0.1:8000 by default
+### 3. Configure stations
+
+1. Open **Setup** and enter `http://127.0.0.1:4010` as the server address.
+2. Paste the demo key above and select **Test connection**.
+3. Add one desk, one entry gate and one exit gate using simulated devices.
+4. Save, open the desk and use **Open simulator** to place a sticker.
+5. Scan/type a demo ticket's public ID, link the sticker, then present it at each gate.
+
+Aina and Ben are valid demo guests; Chong is unpaid and Devi is cancelled. Use all four to check success and rejection paths. Demo contacts also support search.
+
+**Printing is optional for this setup.** The RFID mock is not the public ticket API that the separate event-printing app uses. Printer tests use a fake HTTP printer. Real badge output requires event-printing configured against a compatible backend and event slug.
+
+<a id="registration-workflow"></a>
+
+## Registration workflow
+
+```mermaid
+flowchart TB
+    QR[QR scan] --> SCAN[Desk check-in]
+    SEARCH[Select search result] --> SCAN
+    SCAN --> STICKER[Read sticker]
+    STICKER --> MODE{Event mode}
+    MODE -->|Bind| BIND[Link factory UID]
+    MODE -->|Write| WRITE[Write ticket ID]
+    WRITE --> VERIFY[Verify readback]
+    VERIFY --> BIND
+    SCAN -. New online check-in only .-> PRINT[Local badge request]
+    BIND --> GATE[Entry and exit capture]
+    classDef primary fill:#12384a,stroke:#38cbb0,color:#fff
+    classDef print fill:#253253,stroke:#90acff,color:#fff
+    class SCAN,BIND,GATE primary
+    class PRINT print
 ```
 
-> [!IMPORTANT]
-> The app crate embeds `app/dist`. **Run `npm run build` before any cargo command that builds `rfidex-app`** — CI does the same.
+### Scan and check in
 
----
+A keyboard-wedge scanner types into the ticket field and submits with Enter. The desk resolves the ticket and starts normal registration. Search selection uses the same desk-scan path; it does not bypass validity checks.
 
-## 🧪 Rehearsal and Windows packaging
+A newly checked-in guest is eligible for automatic printing. An already-checked-in guest is **not an error**: the desk shows the original check-in time, offers Reprint and continues to sticker registration.
 
-The P3 acceptance run is a deterministic simulated event driven by the real runtime against the real mock over loopback HTTP — **500 tickets total, in two isolated event runs**: one **Bind** desk and one **Write** desk, each with an entry and an exit gate, run sequentially with separate mock state and separate data roots. Every run covers an entry burst, a logical lunch outage, a station restart, and a direction reported by the reader that contradicts the configured role.
+Scanner focus is restored outside deliberate search interaction and native dialogs. Replacement confirmation retains its own input focus and required reason.
 
-- `rehearsal_smoke` — the same routine with 12 tickets (6 per event). The fast local check while developing the harness.
-- `rehearsal_500` — the acceptance run: 250 tickets per event, 500 scan logs, 500 bindings and 2,000 observations, proven from the mock's own counters and delivery-ID sets.
+### Bind or write
 
-```bash
-cargo test --locked -p rfidex-runtime --test rehearsal rehearsal_smoke -- --ignored --exact --nocapture
-cargo test --locked -p rfidex-runtime --test rehearsal rehearsal_500 -- --ignored --exact --nocapture
+| Mode | Sticker operation | Result |
+| :-- | :-- | :-- |
+| **Bind** | Read the factory UID | Server/cache links UID to ticket; no ticket payload is written |
+| **Write** | Write ticket public ID, then read back and compare | Verified payload plus UID binding as a fallback |
+
+The event determines the mode. The written payload is **20 bytes**, includes a CRC-8 integrity check and contains no attendee profile. A ticket identifier is not a secret; server validation still matters.
+
+Only one sticker may be near the reader. Existing ownership or data triggers a warning and explicit replacement confirmation. A failed write must not become a successful binding.
+
+### Capture entry and exit
+
+Gate direction comes from station configuration. A contradictory device direction is retained for comparison rather than silently changing the station's role. The screen shows the guest, direction and result; unknown stickers are not assigned invented identities.
+
+Record-based and live-inventory sources have different capture behavior. Live-inventory repeats use configured debounce. Offline captures remain **Recorded** until the server supplies an authoritative result.
+
+<a id="ticket-search"></a>
+
+## Ticket search
+
+QR remains the default path. Search handles missing or unreadable tickets using one input and a Name / Email / Phone selector. Requests follow a **300 ms debounce**; late answers must not replace newer input. Click or press Enter on a result to check in that guest.
+
+| Field | Matching | Minimum input |
+| :-- | :-- | :-- |
+| **Name** | Case-insensitive substring after trimming and collapsing spaces; `%` and `_` are literal characters | 2 characters |
+| **Email** | Exact match after trim/lowercase | Contains `@` |
+| **Phone** | Digits-only substring after removing a leading `60` or `0` | 4 normalized digits |
+
+`012-345 6789`, `0123456789` and `+60 12 345 6789` can resolve to the same guest.
+
+**Online results:** paid tickets, newest first, maximum ten. Contacts are masked by the server—for example `ah***@example.com` and `•••• 4521`. Selecting a paid but invalid ticket still encounters normal desk validation.
+
+**Offline results:** local name search only, ordered by name. The cache holds no email, phone or first-check-in timestamp. Already-in rows show **Checked in** without inventing a time. Email/phone search displays `Needs internet — search by name or scan QR`.
+
+Online check-in times are the original server timestamps formatted in the PC's local timezone, using a 24-hour clock. Configure the desk PC's timezone correctly.
+
+<a id="badge-printing"></a>
+
+## Badge printing
+
+RfiDex delegates layout and physical printing to **event-printing**, running on the same PC. Rust sends one ticket public ID; the printer app fetches the guest and applies its configured badge layout. RfiDex does not duplicate badge-field mapping.
+
+### Configuration
+
+1. Install and start event-printing on the desk PC.
+2. Configure **direct mode**, backend URL and event slug in that app.
+3. Set each RfiDex desk's **Printer address** in Setup. Default: `http://127.0.0.1:8000`.
+4. Select **Test printer** to request health and show its configured printer name.
+
+Only loopback addresses are accepted. A printer app on another PC is not supported. Health verifies that the app responds, not that a physical printer has produced a badge.
+
+| Scan/print outcome | Desk behavior |
+| :-- | :-- |
+| **New online check-in** | One automatic print attempt; sticker work proceeds independently |
+| **Already checked in** | No automatic print; `Already checked in at HH:MM` and **Reprint badge** |
+| **Offline scan queued** | No print; `Offline — press Reprint when back online` |
+| **Submission failure or timeout** | `Badge not printed — press Reprint`; no automatic retry |
+| **Manual Reprint** | Explicit print request without another check-in |
+
+The timeout is **10 seconds**. A timeout may mean the job printed but the response was lost, so retry is an operator decision. Successful HTTP submission does not prove physical delivery. Printing never blocks sticker processing, but sticker validation/write failures remain independent errors.
+
+```http
+GET /health
+POST /scan/{public_id}/reprint
 ```
 
-Both are `#[ignore]`d on purpose: the outage and restart stages wait on real retry backoff (1 s doubling to a 60 s cap), so they are far too slow for an ordinary push. They run **only locally and in the windows-package workflow** — ordinary CI stays as it is. Normal `cargo test --workspace` skips both and still runs the fast, explicit-clock fault and wrong-role probes.
+These requests originate in Rust, not the webview. No EventzFlow API key or station-auth header is sent. The printer client disables redirects and environment proxies. It never calls the printer's check-in endpoint.
 
-Measured locally (macOS, debug build): smoke ≈ 0.9 s, full ≈ 2.4 s. The number is a duration, not a throughput claim.
+Queue drain, cache refresh, heartbeat and restart do **not** trigger printing. Offline work does not produce a badge automatically after reconnecting.
 
-**What the rehearsal proves:** every simulated registration and passage reaches the mock exactly once — its own counters and the exact delivery-ID set are the oracle, every result is accepted with no anomaly, each sticker has two entries and two exits, Write-mode stickers carry their own ticket and Bind-mode stickers carry nothing, and an outage, a restart and a recovery leave every queued row with the id and idempotency key it started with.
+> [!WARNING]
+> **Keep the SalesCatalyst print workflow OFF for RfiDex events.** EventzFlow's `ticket.scanned` webhook also fires on RfiDex check-ins and does not identify the initiating app. Both print paths can produce duplicate badges. Keep the workflow as backup only; enable it when staff stop using RfiDex printing.
 
-**What it does not prove:** RF range, UID byte order on real devices, device retention, vendor DLL behaviour, hardware timing, badge-printer delivery, or backend visit/headcount/duration rules. The lunch outage is a fault switch, not thirty minutes of wall clock, and the simulated sticker memory is volatile — a runtime restart loses it, so every passage is captured before the restart. Real hardware is P4.
+<a id="architecture"></a>
 
-> [!NOTE]
-> **Status: the Windows installer is not built yet.** The NSIS packaging workflow and the clean-Windows manual acceptance are the rest of Plan 3. Nothing on this page is a claim that a Windows install was tested. The installer will be **unsigned** until a signing decision is made, and the embedded WebView2 bootstrapper **downloads the runtime when it is missing**, so a first install on a machine without WebView2 needs internet.
+## Architecture
 
-### 📦 Windows installer (unsigned)
+The workspace separates device-neutral logic, application behavior, simulation and the native interface. Each station retains independent persistent state and authenticated API identity.
 
-The installer is built by a workflow of its own, never by ordinary CI:
-
-```bash
-gh workflow run windows-package.yml --repo LearningTigers-Sdn-Bhd/rfidex --ref main
-gh run list --repo LearningTigers-Sdn-Bhd/rfidex --workflow windows-package.yml --limit 5
+```mermaid
+flowchart TB
+    UI[React station screens] -->|Tauri commands| RT[rfidex-runtime]
+    RT --> DESK[Desk sessions]
+    RT --> GATES[Gate tasks]
+    RT --> SYNC[Sync worker]
+    DESK --> CORE[rfidex-core]
+    GATES --> CORE
+    CORE --> DB[(Per-station SQLite)]
+    CORE --> DEV[Device adapters / simulators]
+    SYNC --> DB
+    SYNC --> API[EventzFlow device API]
+    CORE --> API
+    DESK -. Credential-free HTTP .-> PRINT[Loopback event-printing]
+    MOCK[rfidex-mock] -. Implements during development .-> API
+    classDef runtime fill:#12384a,stroke:#38cbb0,color:#fff
+    classDef storage fill:#253253,stroke:#90acff,color:#fff
+    class RT,CORE runtime
+    class DB,PRINT storage
 ```
 
-Against one checkout that run: fires the full rehearsal (smoke **and** 500); builds `rfidex.exe` and exactly one NSIS `*-setup.exe` for `x86_64-pc-windows-msvc` with `STATIC_VCRUNTIME=true`; builds `rfidex-mock.exe` with a static CRT as a **test tool** that is never part of the installer; audits every shipped binary's imports with `dumpbin /DEPENDENTS` and fails if a VC++ redistributable import appears; writes a SHA-256 manifest and the signing status. Nothing is uploaded until the rehearsal, the build and the import gate have all passed. A tag run also fails if the tag after `rfidex-v` disagrees with the declared version.
+| Path | Responsibility |
+| :-- | :-- |
+| [`crates/rfidex-core`](crates/rfidex-core) | Wire contracts, tag identity, payload codec, device traits, SQLite, API client, sync and station logic |
+| [`crates/rfidex-runtime`](crates/rfidex-runtime) | Station ownership/lifecycle, desk sessions, search, print requests, operator outcomes, problems and diagnostics |
+| [`crates/rfidex-mock`](crates/rfidex-mock) | In-memory device API, fictional seeds, fault injection and fake printer support for tests |
+| [`app/src-tauri`](app/src-tauri) | Native lifecycle, command forwarding, packaging and updater integration |
+| [`app/src`](app/src) | Setup, Desk, Gate, Problems and Simulator presentation |
 
-| Artifact | Contents |
-|:--|:--|
-| `rfidex-windows-x64-unsigned-<sha>-<run-id>` | the NSIS setup, `SHA256SUMS.txt`, rehearsal and import evidence |
-| `rfidex-test-tools-<sha>-<run-id>` | `rfidex-mock.exe` and `tickets.json`, labelled test-only |
+### Contract boundaries
 
-```bash
-gh run download <run-id> --repo LearningTigers-Sdn-Bhd/rfidex --name rfidex-windows-x64-unsigned-<sha>-<run-id>
-```
+- **Event server:** raw `Authorization: <key>` plus `X-RfiDex-Station: <uuid>` on device requests. One station's client is not reused as another station's identity.
+- **Desk check-in:** response distinguishes `checked_in` / `already_checked_in` and includes the first check-in timestamp. Idempotent operation replay returns its original response.
+- **Bindings:** explicit replacement confirmation and reason; written payload readback must succeed before binding.
+- **Printer:** loopback-only, separate client, no event credential and no badge-layout logic.
+- **Cache:** normalized names for offline search, no full email/phone records; existing databases migrate in place.
 
-**Install prerequisites and behaviour**
+Wire definitions live in [`contract.rs`](crates/rfidex-core/src/contract.rs), with [JSON fixtures](crates/rfidex-core/tests/fixtures) and [mock integration tests](crates/rfidex-mock/tests). Installed dependency versions are recorded in [Cargo.toml](Cargo.toml), [app/package.json](app/package.json) and their lockfiles.
 
-- Windows 10 or 11, x64. The install is **per user**, so it does not need administrator rights.
-- WebView2 is reused when it is already present. On a machine without it, the embedded bootstrapper **downloads** the runtime, so a first install needs internet — this is not an offline installer.
-- No Visual C++ redistributable step: the release app links the static VC runtime, and the workflow fails the build if a shipped binary ever imports one again.
-- The installer is **unsigned** until a signing decision is made, so Windows can show an Unknown publisher or SmartScreen warning. Never disable those protections to make an install pass.
+<a id="offline-operation"></a>
 
-### ✅ Checks
+## Offline operation
+
+Offline fallback preserves captured work; it does not replace server authority.
+
+| Invariant | Implementation/limit |
+| :-- | :-- |
+| **Persist before release** | Gate observations commit to SQLite before supported device release |
+| **Durable local writes** | WAL with `synchronous=FULL`; station databases survive process restart |
+| **Stable delivery identity** | Queue retries retain operation/delivery IDs and idempotency keys |
+| **Controlled recovery** | Backoff rather than continuous retries; server outcomes update stored work |
+| **Event isolation** | Queued work is held when the server identifies another event |
+| **Visible conflicts** | Rejected/conflicting work enters Problems instead of being silently merged |
+| **Honest offline UI** | Gate captures say Recorded, not Accepted; offline desks do not promise printed badges |
+
+A station needs event settings and a populated cache before useful offline desk operation. Search is name-only offline. Physical badge printing requires the printer app to reach its ticket backend.
+
+**Sync now** requests a normal pass and respects retry deadlines. **Dismiss from this list** hides a problem; it does not delete evidence, retry the operation or resolve the conflict.
+
+<a id="operations"></a>
+
+## Operations
+
+### Setup and station identity
+
+There is **no PIN, staff login or per-device credential**. Anyone at the PC can open Setup.
+
+- The saved API key is never returned to the form. Leave the field blank to retain it.
+- Server connections require HTTPS except on loopback. Plain HTTP is not supported as a venue-LAN shortcut.
+- Changing a gate's entry/exit role requires confirmation.
+- The event guard protects pending work from being sent to a different event. With no pending work, a new event can be adopted.
+- Removing a station retains its database; preserve its identity and saved work during investigation.
+
+### Updates
+
+The bottom bar shows the installed version. RfiDex checks for a newer release when it opens (silently when there is no internet); **Check for updates** asks again, and **Update now** downloads, stops the stations cleanly and reopens on the new version. Setup and waiting scans are kept.
+
+### Status and troubleshooting
+
+| Display | Meaning | Operator action |
+| :-- | :-- | :-- |
+| **Accepted · Welcome / Goodbye** | Server confirmed the passage | Continue |
+| **Recorded — waiting for the server** | Saved locally; not yet approved | Restore connectivity; monitor sync |
+| **Denied** | Unknown, replaced, wrong-event or invalid sticker | Read the reason and resolve at the desk |
+| **Problem** | Conflict or unsendable work | Open Problems and investigate |
+| **Unauthorized** | Event key rejected, not ordinary offline mode | Verify server/key in Setup |
+| **Different event** | Pending work belongs to another event | Restore the correct key; retain station data |
+| **Badge not printed** | Failed or uncertain submission | Check printer state before explicit Reprint |
+
+Startup failures retain their code, recovery instructions and **Try again** action. The app uses system fonts and bundled artwork; station operation does not require an external font CDN.
+
+<a id="verification"></a>
+
+## Build and verification
+
+### Local gate
+
+Build frontend assets before commands that build `rfidex-app`: Tauri embeds `app/dist`.
 
 ```bash
 (cd app && npm ci && npm run build)
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace          # 163 tests
-cargo build -p rfidex-app
+cargo fmt --all --check
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo test --workspace --locked
+cargo build -p rfidex-app --locked
 ```
 
-<details>
-<summary><b>📋 Runtime acceptance suite</b> — the real runtime against the real mock over HTTP</summary>
-<br/>
+[Normal CI](.github/workflows/ci.yml) stays separate from heavyweight packaging and rehearsal. The badge at the top links to current run results; no fixed passing-test count is maintained in this document.
 
-| Scenario | Test |
-|:--|:--|
-| Three stations register under their own UUIDs | `heartbeat_registers_three_stations` |
-| Desk follows the event's bind/write mode | `desk_follows_the_event_mode` |
-| Link waits for a scan and exactly one sticker | `bind_flow_waits_for_scan_and_one_sticker` |
-| A failed scan can't link the previous attendee | `a_failed_scan_cannot_link_the_previous_attendee` |
-| Replacement needs a reason and binds only the warned sticker | `confirm_is_required_and_binds_only_the_sticker_that_was_warned_about` |
-| Written sticker → Welcome at entry, Goodbye at exit | `written_sticker_yields_welcome_and_goodbye` |
-| Offline passage recorded, then accepted on the same row | `an_offline_passage_is_recorded_then_accepted_on_the_same_row` |
-| Offline conflict names the holder and can be dismissed | `an_offline_conflict_names_the_holder_and_can_be_dismissed` |
-| Event guard parks rows for another event | `event_guard_parks_rows_for_another_event` |
-| Rejected key is *unauthorized*, not *offline* | `a_rejected_key_is_unauthorized_rather_than_offline` |
-| Connection test changes nothing on the server | `connection_test_reports_and_changes_nothing` |
-| Diagnostics keep names and raw UIDs out | `diagnostics_export_keeps_people_and_raw_uid_out` |
-| Shutdown finishes even when the server stalls | `shutdown_finishes_even_when_the_server_stalls` |
+### Simulated event rehearsal
+
+[`rehearsal.rs`](crates/rfidex-runtime/tests/rehearsal.rs) drives the real runtime and mock over loopback HTTP, not a copied implementation of the workflow.
+
+| Scenario | Scope |
+| :-- | :-- |
+| **`rehearsal_smoke`** | 12 tickets across two isolated events |
+| **`rehearsal_500`** | 500 tickets total: 250 Bind + 250 Write |
+| **Full-event assertions** | 500 scan logs, 500 bindings and 2,000 observations, checked using counters and delivery-ID sets |
+| **Recovery stages** | Arrival burst, logical lunch outage, restart, queue recovery and independent direction reporting |
+
+```bash
+cargo test -p rfidex-runtime --test rehearsal --locked \
+  rehearsal_smoke -- --ignored --exact --nocapture
+
+cargo test -p rfidex-runtime --test rehearsal --locked \
+  rehearsal_500 -- --ignored --exact --nocapture
+```
+
+Both scenarios are ignored during ordinary `cargo test` and run locally or in packaging. Fast fault/wrong-role probes remain in normal tests. Elapsed time depends on host and disk; it is not an RF throughput benchmark.
+
+<details>
+<summary><strong>Behavioral coverage and limits</strong></summary>
+
+The [runtime tests](crates/rfidex-runtime/tests) cover station identity, event-selected modes, scan-before-link, single-tag handling, replacement confirmation, offline recovery/conflicts, event guard, rejected keys, diagnostics privacy and stalled-server shutdown.
+
+[Search tests](crates/rfidex-runtime/tests/desk_search.rs) exercise server matching and cache fallback. [Print-flow tests](crates/rfidex-runtime/tests/desk_print.rs) and [printer-client tests](crates/rfidex-runtime/tests/printer.rs) exercise fake HTTP success/failure/timeout without real printer software.
+
+**Not certified by simulation:** RF range, physical UID byte order, device buffer retention, vendor DLL behavior, printer paper delivery or production backend visit/headcount/duration rules. Simulated sticker memory is volatile. A runtime restart does not prove hardware memory persistence; a logical lunch outage is not thirty minutes of wall-clock testing.
 
 </details>
 
----
+<details>
+<summary><strong>Scanner-focus smoke check</strong></summary>
 
-## 🧭 Operations
+Open a configured simulated Desk in the dev WebView, close dialogs and run:
 
-The operator screens use system fonts and bundled SVG artwork; no external fonts or CDNs are required. Station tabs separate registration from entry/exit gates, and status remains visible below the workspace.
-
-Startup and browser-only screens pair a bundled window illustration with the original error details and recovery instructions. Desktop startup failures retain their error code and **Try again** action; the browser-only screen explains how to launch the desktop app instead of showing a misleading 404.
-
-On Desk, the ticket-code field keeps scanner focus whenever no dialog is open. **Open simulator** opens hardware test controls in a dialog; closing it returns focus to the scanner. Replacement confirmation still requires a reason, and all runtime messages and decisions remain unchanged.
-
-For a frontend focus smoke check, open a configured simulated Desk in the dev WebView and run `await (await import('/dev/desk-focus-check.js')).checkDeskFocus()` in its developer console. This checks focus recovery and modal isolation without scanning or linking a ticket.
-
-### Finding a ticket
-
-The QR scan is the main path; **Search by name, email or phone** is the fallback for a lost or unreadable code. One search box with a Name / Email / Phone switch:
-
-| `by` | Rule | Minimum input |
-|:--|:--|:--|
-| name | anywhere in the name; case and spacing are ignored, and `%` / `_` are ordinary characters | 2 characters |
-| email | the whole address, case-insensitive | contains `@` |
-| phone | the digits only; a leading `60` or `0` is dropped, so `012-345 6789`, `0123456789` and `+60 12 345 6789` find the same guest | 4 digits |
-
-Paid tickets only, newest first, **at most 10 rows**, and email and phone are **masked by the server** — only a hint such as `ah***@example.com` or `•••• 4521` reaches this computer. A row says `Checked in 09:14` when the guest is already in; that time is this PC's own clock, 24-hour, so **set the desk PC's timezone correctly**. Selecting a row runs the ordinary desk scan with that ticket, so the sticker step is exactly the same.
-
-Offline, RfiDex searches **its own saved ticket list by name only** — the local cache holds no email or phone, by design, so an email or phone search offline says `Needs internet — search by name or scan QR` instead of pretending to have searched. An offline result list is ordered by name, not newest first, and a checked-in guest shows `Checked in` with no time, because the cache has none.
-
-### Badge printing
-
-RfiDex prints through **event-printing**, the badge printer app on the desk's own PC. Each desk has its own **Printer address** in Setup, default `http://127.0.0.1:8000`, with a **Test printer** button that reports the printer app's name. Only a loopback address is accepted: a printer on another PC is not supported yet. RfiDex asks event-printing to reprint **one ticket id** and event-printing applies its own badge layout, so the badge mapping lives in one place and **no API key is sent to the printer app**.
-
-event-printing must be set up in **direct mode on that PC**: the EventzFlow backend URL and the event slug, so it can look the ticket up itself.
-
-| When | What happens |
-|:--|:--|
-| The scan made the **first** check-in | One badge is printed once. The guest stays on screen until the answer arrives. |
-| The guest was **already** checked in | No automatic print. The screen says `Already checked in at HH:MM` and offers **Reprint badge**. |
-| The scan was **offline** (queued) | No print at all. The screen says `Offline — press Reprint when back online`. |
-| Reprint, or after a failure | **Reprint badge**, as many times as staff decide. |
-
-Printing is fire-and-report: it never blocks the sticker step, and a bad sticker, a failed print or a slow printer never stops a guest being linked. The timeout is 10 seconds, and a timeout is reported as a failure because the job may already have printed — RfiDex never retries by itself. Nothing prints from a queue drain, a cache refresh, a heartbeat or a restart: only staff asking.
-
-> [!WARNING]
-> **The SalesCatalyst print workflow must stay OFF for RfiDex events — keep it built as a backup only.** The `ticket.scanned` webhook fires for RfiDex check-ins too, and its payload does not say which app checked the guest in, so a workflow that prints on that webhook produces **two badges per guest**. Switch it on only if RfiDex printing fails at the event and staff stop using it. On each desk PC event-printing runs in direct mode instead.
-
-### Setup — simple on purpose
-
-There is **no PIN, no staff login and no per-device credential.** Instead:
-
-- the saved API key is **never sent back** to the screen — editing shows a blank field, and leaving it blank keeps the saved key;
-- changing a gate between **entry and exit** asks for confirmation, because it changes what every later passage means;
-- the server address and key can change at any time, even with work queued — the **event guard** holds that work back from a different event. With an empty queue, a new event is simply adopted.
-
-### Status at a glance
-
-| You see | It means |
-|:--|:--|
-| 🟢 **Accepted** — Welcome / Goodbye | The server confirmed the passage |
-| 🟡 **Recorded — waiting for the server** | Saved locally; sends on reconnect |
-| 🔴 **Denied** + reason | Unknown, replaced, wrong-event or invalid sticker |
-| 🟠 **Problem** | Conflict or unsendable row — see Problems |
-| **Unauthorized** | The server rejected the API key (not the same as offline) |
-| **Different event** | The key belongs to another event while work is queued — rows held |
-
-> [!NOTE]
-> **Sync now** means "try a normal pass now" — it respects retry backoff.
-> **Dismiss from this list** hides a problem; it does not delete, retry or fix it.
-
-### Where data lives
-
-| OS | Path |
-|:--|:--|
-| 🪟 Windows | `%LOCALAPPDATA%\com.eventzflow.rfidex\` (per user) |
-| 🍎 macOS | `~/Library/Application Support/com.eventzflow.rfidex/` |
-
-```text
-config.json          server address, API key, station list
-stations/<uuid>.db   one SQLite database per station (kept even if the station is removed)
-exports/             diagnostics CSV files
+```js
+await (await import('/dev/desk-focus-check.js')).checkDeskFocus()
 ```
 
----
+The [helper](app/dev/desk-focus-check.js) checks scanner-focus recovery and simulator-dialog isolation without creating a scan or binding. Still test the actual keyboard-wedge scanner on the event PC.
 
-## 🔒 Privacy
+</details>
+
+<a id="windows"></a>
+
+## Windows packaging and updates
+
+**Target:** Windows 10/11 x64 · per-user NSIS installation · WebView2.
+
+Use [GitHub Releases](https://github.com/LearningTigers-Sdn-Bhd/rfidex/releases) for published test builds. Read the release's version and notes: the current source checkout may contain work not released yet.
+
+| Component | Behavior |
+| :-- | :-- |
+| **Installer** | Per-user install; mock test server is not bundled into RfiDex |
+| **WebView2** | Reuses installed runtime; embedded bootstrapper downloads it if missing, so first installation may require internet |
+| **VC runtime** | Current release build links static runtime; packaging fails on unexpected redistributable imports |
+| **Updater** | App checks release `latest.json`; update artifacts have verification signatures |
+| **Windows code signing** | Installer remains Authenticode-unsigned; updater signing does not remove SmartScreen warnings |
 
 > [!WARNING]
-> The API key is stored in plain text in `config.json`, and station databases hold attendee names from the ticket cache. They are protected **only by the OS user account's file permissions** — there is no encryption at rest. Use a dedicated Windows account on shared PCs.
+> Verify the release source and published checksums before installing an unsigned test build. Do not disable Windows protections to make an installation pass. Packaging success is not proof of clean-machine installation or updater behavior on every Windows version.
 
-The **diagnostics export** is built from an allowlist, so personal data can't leak by accident:
+<details>
+<summary><strong>Maintainer build and artifact reference</strong></summary>
+
+The [windows-package workflow](.github/workflows/windows-package.yml) runs on manual dispatch or `rfidex-v*` tags. It runs rehearsal, builds NSIS and a separate mock executable, audits native imports, and emits hashes and evidence. Ordinary CI does not build installers.
+
+```bash
+gh workflow run windows-package.yml \
+  --repo LearningTigers-Sdn-Bhd/rfidex --ref main
+
+gh run list --repo LearningTigers-Sdn-Bhd/rfidex \
+  --workflow windows-package.yml --limit 5
+```
+
+| Artifact | Contents |
+| :-- | :-- |
+| `rfidex-windows-x64-unsigned-<sha>-<run-id>` | Installer, updater signature, `SHA256SUMS.txt`, build/rehearsal/import evidence |
+| `rfidex-test-tools-<sha>-<run-id>` | `rfidex-mock.exe`, fictional `tickets.json` and test instructions |
+
+```bash
+gh run download <run-id> \
+  --repo LearningTigers-Sdn-Bhd/rfidex \
+  --name rfidex-windows-x64-unsigned-<sha>-<run-id>
+```
+
+A matching version-tag run publishes a release and `latest.json`; manual dispatch does not publish that release. Tags must match declared versions. Re-audit native dependencies when vendor DLLs are added. Dispatch, tags and releases are maintainer actions, not normal development steps.
+
+</details>
+
+<a id="development-status"></a>
+
+## Development status
+
+| Phase | Deliverable | Current boundary |
+| :-- | :-- | :-- |
+| **P0 / P1** | Core, device contracts, codec, SQLite and mock API | Implemented in repository |
+| **P2** | Native app, operator flows, simulation and diagnostics | Implemented in repository |
+| **P3** | Simulated event rehearsal and Windows packaging | Test harness and packaging workflow available; hardware certification is separate |
+| **P7** | Desk search, check-in result and local print integration | Implemented against mock; production backend integration pending |
+| **P4** | Real ECRFID readers and captured hardware fixtures | Waiting for hardware |
+| **P5** | Production EventzFlow RFID endpoints, visits and reports | On hold; separate approval |
+| **P6** | EventzFlow panel RFID views/reports | After P5; outside this desktop repository |
+
+Source availability, published release status and event-readiness are separate milestones. Use the release notes and actual verification evidence for deployment decisions.
+
+<a id="privacy"></a>
+
+## Storage and privacy
+
+> [!WARNING]
+> The API key is stored in plain text in `config.json`. Station databases contain attendee names and ticket/binding data. Protection is limited to OS-user file permissions; there is **no encryption at rest**. Use a dedicated Windows account on shared PCs and treat copied configuration/databases as sensitive.
+
+| Host | Data root |
+| :-- | :-- |
+| **Windows** | `%LOCALAPPDATA%\com.eventzflow.rfidex\` |
+| **macOS development** | `~/Library/Application Support/com.eventzflow.rfidex/` |
+
+```text
+config.json           Server URL, event key and station configuration
+stations/<uuid>.db    One SQLite store per station; retained on removal
+exports/              Diagnostics CSV files
+```
+
+The saved key never returns to Setup or goes to event-printing. Offline search stores names, not full email/phone contacts. This does not make station data anonymous.
+
+### Diagnostics export
+
+Exports use an explicit allowlist:
 
 ```csv
 station_id,row_id,kind,state,captured_at,attempts,uid_last4,outcome,problem_code
 ```
 
-No names, ticket IDs, full UIDs, API key, server replies or sticker memory. Every cell is quoted and leading formula characters (`= + - @`) are defused.
+No names, ticket IDs, full UIDs, event key, raw server replies or sticker memory. Cells are quoted and leading spreadsheet formula characters (`= + - @`) are defused. Share the diagnostics export for support, not the entire data directory.
 
 ---
 
-<div align="center">
-<sub>Built for EventzFlow · Windows x64 · Simulator-verified, hardware pending (P4)</sub>
-</div>
+**RfiDex** · EventzFlow station software · Windows x64  
+[Releases](https://github.com/LearningTigers-Sdn-Bhd/rfidex/releases) · [CI](https://github.com/LearningTigers-Sdn-Bhd/rfidex/actions/workflows/ci.yml) · [Back to top](#rfidex)

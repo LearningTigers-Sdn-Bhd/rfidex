@@ -22,7 +22,8 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use crate::config::HardwareConfig;
-use crate::host::CHILD_SWITCH;
+use crate::host::{CHILD_SWITCH, ENUMERATE};
+use crate::sdk::EnumerationKind;
 use crate::wire::{
     match_reply, read_frame, read_reply, write_frame, Deadline, Operation, Request, Response,
     WireError,
@@ -30,6 +31,14 @@ use crate::wire::{
 
 /// How long a helper is given to start, connect and prove it is ours.
 const HANDSHAKE_WINDOW_MS: u32 = 5_000;
+/// The request id a helper's enumeration answer carries. Enumeration is a
+/// startup mode of its own, not an operation on an open reader, so it never
+/// shares the numbering of a session's requests.
+const ENUMERATE_REPLY_ID: u64 = 0;
+/// The child-mode words for the three vendor enumeration functions.
+const HID: &str = "hid";
+const COM: &str = "com";
+const NET: &str = "net";
 /// How often the accept loop looks at the deadline and at the child.
 const ACCEPT_POLL: Duration = Duration::from_millis(5);
 
@@ -86,6 +95,66 @@ impl HostLauncher {
         std::env::current_exe()
             .map(HostLauncher::new)
             .map_err(|_| WireError::Disconnected)
+    }
+}
+
+/// Ask the vendor library what devices it can see.
+///
+/// This starts a bounded helper of its own rather than reusing a session: the
+/// enumeration happens before any device is opened, and nothing about a device
+/// is guessed from a list of names.
+pub fn enumerate_devices(
+    launcher: &HostLauncher,
+    dll_path: &std::path::Path,
+    kind: EnumerationKind,
+) -> Result<Vec<String>, WireError> {
+    let listener = TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))
+        .map_err(|_| WireError::Disconnected)?;
+    let port = listener
+        .local_addr()
+        .map_err(|_| WireError::Disconnected)?
+        .port();
+    let token = uuid::Uuid::new_v4().to_string();
+    let child = Command::new(&launcher.executable)
+        .arg(CHILD_SWITCH)
+        .arg(port.to_string())
+        .arg(&token)
+        .arg(ENUMERATE)
+        .arg(kind_word(kind))
+        .arg(dll_path)
+        .stdin(Stdio::null())
+        .spawn()
+        .map_err(|_| WireError::Disconnected)?;
+    let child = Arc::new(Mutex::new(Some(child)));
+
+    let outcome = (|| {
+        let mut socket = accept_child(&listener, &token, &child)?;
+        let reply = read_reply(&mut socket, &Deadline::started(HANDSHAKE_WINDOW_MS))?;
+        match match_reply(reply, ENUMERATE_REPLY_ID)? {
+            Response::Strings { values } => Ok(values),
+            _ => Err(WireError::BadResponse),
+        }
+    })();
+    reap(&child);
+    outcome
+}
+
+/// The word the child's argument parser expects.
+pub fn kind_word(kind: EnumerationKind) -> &'static str {
+    match kind {
+        EnumerationKind::Hid => HID,
+        EnumerationKind::Com => COM,
+        EnumerationKind::Net => NET,
+    }
+}
+
+/// The other direction, so the parent and the child cannot drift apart.
+pub fn kind_from_word(word: &str) -> Option<EnumerationKind> {
+    match word {
+        HID => Some(EnumerationKind::Hid),
+        COM => Some(EnumerationKind::Com),
+        NET => Some(EnumerationKind::Net),
+        _ => None,
     }
 }
 

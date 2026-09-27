@@ -28,6 +28,7 @@ use crate::config::{AppConfig, AppPaths, DeviceChoice, StationConfig};
 use crate::desk::{DeskSession, DeskView};
 use crate::devices::{DeskDevice, GateDevice, SimLibrary};
 use crate::gate::GateView;
+use crate::hardware::{self, HardwareTestAction, HardwareTestView};
 use crate::problems::ProblemView;
 use crate::RuntimeError;
 
@@ -105,6 +106,29 @@ impl HardwareJobs {
             let _ = job.await;
         }
     }
+}
+
+/// One station's own probe, with the session lock held only for that.
+async fn probe_station(runtime: &StationRuntime, action: HardwareTestAction) -> HardwareTestView {
+    if runtime
+        .hardware_stop
+        .as_ref()
+        .is_some_and(|c| c.is_stopped())
+    {
+        return hardware::stopped();
+    }
+    Runtime::probe_locked(&runtime.device, action).await
+}
+
+/// A core tag read back as the vendor-shaped value the operator's view uses.
+fn wire_tags(tags: Vec<rfidex_core::tag::TagRead>) -> Vec<rfidex_hardware::wire::WireTag> {
+    tags.into_iter()
+        .map(|tag| rfidex_hardware::wire::WireTag {
+            uid: <[u8; 8]>::try_from(tag.uid_raw.as_slice()).unwrap_or([0; 8]),
+            dsfid: tag.dsfid.unwrap_or(0),
+            antenna: tag.antenna,
+        })
+        .collect()
 }
 
 fn reader_stopped() -> RuntimeError {
@@ -775,6 +799,80 @@ impl Runtime {
             return Err(e);
         }
         Ok(())
+    }
+
+    /// Run one of the operator's reader tests on a saved station.
+    ///
+    /// It goes through the station's own adapter, so it cannot open a second
+    /// handle to a reader that is already in use. The work is synchronous and
+    /// can wait on a reader, so it runs on a blocking worker like every other
+    /// hardware call.
+    pub async fn hardware_test(
+        &self,
+        station: Uuid,
+        action: HardwareTestAction,
+    ) -> Result<HardwareTestView, RuntimeError> {
+        let runtime = self.station(station)?.clone();
+        let handle = tokio::runtime::Handle::current();
+        self.hardware_jobs
+            .run(move || handle.block_on(async move { probe_station(&runtime, action).await }))
+            .await
+            .map_err(|_| hardware::no_helper())
+    }
+
+    /// What a probe may touch: one station's own session, and nothing else.
+    async fn probe_locked(device: &StationDevice, action: HardwareTestAction) -> HardwareTestView {
+        match action {
+            HardwareTestAction::Connect => match device {
+                StationDevice::Desk(d) => {
+                    let mut session = d.lock().await;
+                    match session.station.reader.probe() {
+                        Ok(info) => {
+                            let simulator = session.station.reader.is_simulated();
+                            hardware::connected(&info, simulator)
+                        }
+                        Err(e) => hardware::from_error(&e),
+                    }
+                }
+                StationDevice::Gate(g) => {
+                    let mut gate = g.lock().await;
+                    match gate.gate.probe() {
+                        Ok(info) => {
+                            let simulator = gate.gate.is_simulated();
+                            hardware::connected(&info, simulator)
+                        }
+                        Err(e) => hardware::from_error(&e),
+                    }
+                }
+            },
+            HardwareTestAction::ReadTags => match device {
+                StationDevice::Desk(d) => {
+                    let mut session = d.lock().await;
+                    match session.station.reader.inventory() {
+                        Ok(tags) => hardware::tags(&wire_tags(tags)),
+                        Err(e) => hardware::from_error(&e),
+                    }
+                }
+                StationDevice::Gate(g) => {
+                    let mut gate = g.lock().await;
+                    match gate.gate.poll() {
+                        Ok(found) => {
+                            let tags: Vec<rfidex_hardware::wire::WireTag> = found
+                                .into_iter()
+                                .map(|(read, _handle)| rfidex_hardware::wire::WireTag {
+                                    uid: <[u8; 8]>::try_from(read.tag.uid_raw.as_slice())
+                                        .unwrap_or_default(),
+                                    dsfid: read.tag.dsfid.unwrap_or(0),
+                                    antenna: read.tag.antenna,
+                                })
+                                .collect();
+                            hardware::tags(&tags)
+                        }
+                        Err(e) => hardware::from_error(&e),
+                    }
+                }
+            },
+        }
     }
 
     /// End every real reader this runtime owns.

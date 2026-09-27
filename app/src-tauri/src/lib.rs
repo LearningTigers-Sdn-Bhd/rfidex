@@ -67,6 +67,8 @@ pub fn run() {
             commands::sim_clear,
             commands::sim_pass,
             commands::sim_set_connected,
+            commands::hardware_enumerate,
+            commands::hardware_test,
             commands::update_check,
             commands::update_install,
         ])

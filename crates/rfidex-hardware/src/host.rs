@@ -39,7 +39,7 @@ const HANDSHAKE_WINDOW_MS: u32 = 5_000;
 const WAIT_FOR_PARENT_MS: u32 = u32::MAX;
 
 pub const COMMISSIONING: &str = "commissioning";
-const ENUMERATE: &str = "enumerate";
+pub const ENUMERATE: &str = "enumerate";
 
 /// Parse the child's arguments and run the session they describe.
 ///
@@ -93,25 +93,16 @@ impl ChildMode {
                 match ChildMode::base(port, token) {
                     Err(bad) => Err(bad),
                     Ok((port, token)) => match kind.to_str() {
-                        Some("hid") => Ok(ChildMode::Enumerate {
-                            port,
-                            token,
-                            kind: EnumerationKind::Hid,
-                            dll_path: PathBuf::from(dll_path),
-                        }),
-                        Some("com") => Ok(ChildMode::Enumerate {
-                            port,
-                            token,
-                            kind: EnumerationKind::Com,
-                            dll_path: PathBuf::from(dll_path),
-                        }),
-                        Some("net") => Ok(ChildMode::Enumerate {
-                            port,
-                            token,
-                            kind: EnumerationKind::Net,
-                            dll_path: PathBuf::from(dll_path),
-                        }),
-                        _ => Err(BadArguments),
+                        Some(word) => match crate::process::kind_from_word(word) {
+                            Some(kind) => Ok(ChildMode::Enumerate {
+                                port,
+                                token,
+                                kind,
+                                dll_path: PathBuf::from(dll_path),
+                            }),
+                            None => Err(BadArguments),
+                        },
+                        None => Err(BadArguments),
                     },
                 }
             }

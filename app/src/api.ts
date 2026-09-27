@@ -9,9 +9,62 @@ export type Role = "entry" | "exit";
 export type GateKind = "records" | "live_inventory";
 export type SearchBy = "name" | "email" | "phone";
 
+export type EnumerationKind = "hid" | "com" | "net";
+
+/** How a real reader is reached. Tags match the Rust `HardwareConfig`. */
+export type HardwareConfig =
+  | {
+      transport: "ec_v19_plain_tcp";
+      address: string;
+      bus_address: number;
+      antenna_byte: boolean;
+      timeout_ms: number;
+    }
+  | {
+      transport: "ecrfid_sdk";
+      dll_path: string;
+      connection: SdkConnection;
+      inventory_mode: number;
+      timeout_ms: number;
+      write_verified?: boolean;
+    };
+
+export type SdkConnection =
+  | {
+      kind: "hid";
+      model: string;
+      path: string;
+      address_mode: number;
+      exclusive: number;
+    }
+  | {
+      kind: "com";
+      model: string;
+      port: string;
+      baud: number;
+      frame: string;
+      bus_address: number;
+    }
+  | {
+      kind: "net";
+      model: string;
+      interface: string;
+      address: string;
+    };
+
 export type DeviceChoice =
   | { type: "sim_desk" }
-  | { type: "sim_gate"; gate_kind: GateKind; release_verified: boolean };
+  | { type: "sim_gate"; gate_kind: GateKind; release_verified: boolean }
+  | { type: "ecrfid_desk"; hardware: HardwareConfig }
+  | { type: "ecrfid_gate"; hardware: HardwareConfig };
+
+/** A real reader station, whichever way it is reached. */
+export type RealDevice =
+  | { type: "ecrfid_desk"; hardware: HardwareConfig }
+  | { type: "ecrfid_gate"; hardware: HardwareConfig };
+
+export const isRealStation = (device: DeviceChoice): device is RealDevice =>
+  device.type === "ecrfid_desk" || device.type === "ecrfid_gate";
 
 export interface StationConfig {
   id: string;
@@ -154,6 +207,17 @@ export interface UpdateView {
   notes: string | null;
 }
 
+/** The two reader tests an operator may run. Neither writes to a sticker. */
+export type HardwareTestAction = "connect" | "read_tags";
+
+export interface HardwareTestView {
+  ok: boolean;
+  message: string;
+  uid_raw_hex: string[];
+  /** Always false in this build: only physical acceptance can change it. */
+  hardware_verified: boolean;
+}
+
 export const appState = () => invoke<AppView>("app_state");
 export const setupGet = () => invoke<SetupView | null>("setup_get");
 export const setupSave = (input: SetupInput) => invoke<AppView>("setup_save", { input });
@@ -185,6 +249,10 @@ export const simPass = (station: string, uidHex: string) =>
   invoke<void>("sim_pass", { station, uidHex });
 export const simSetConnected = (station: string, connected: boolean) =>
   invoke<void>("sim_set_connected", { station, connected });
+export const hardwareEnumerate = (dllPath: string, kind: EnumerationKind) =>
+  invoke<string[]>("hardware_enumerate", { dllPath, kind });
+export const hardwareTest = (station: string, action: HardwareTestAction) =>
+  invoke<HardwareTestView>("hardware_test", { station, action });
 export const updateCheck = () => invoke<UpdateView>("update_check");
 export const updateInstall = () => invoke<void>("update_install");
 

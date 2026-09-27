@@ -81,6 +81,15 @@ impl DeskDevice {
         }
     }
 
+    /// An explicit connection and identity check, for the operator's own test.
+    /// Never called from a heartbeat.
+    pub fn probe(&mut self) -> DeviceResult<DeviceInfo> {
+        match self {
+            DeskDevice::Sim(d) => d.info(),
+            DeskDevice::Ecrfid(d) => d.probe(),
+        }
+    }
+
     pub fn is_simulated(&self) -> bool {
         matches!(self, DeskDevice::Sim(_))
     }
@@ -168,6 +177,13 @@ impl GateDevice {
         match self {
             GateDevice::Sim(_) => None,
             GateDevice::Ecrfid(g) => Some(g.stop_control()),
+        }
+    }
+
+    pub fn probe(&mut self) -> DeviceResult<DeviceInfo> {
+        match self {
+            GateDevice::Sim(g) => g.info(),
+            GateDevice::Ecrfid(g) => g.probe(),
         }
     }
 

@@ -213,3 +213,33 @@ dialog .checkbox input { width: 20px; }
   .startup-copy { padding: 0; }
   .startup-problem h1 { font-size: 32px; }
 }
+
+/* Real reader fields. Grouped like the printer field: the inputs stay in the
+   station editor's grid and only the result blocks break out. */
+.hardware-field {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line, #2a2f3a);
+}
+
+.found-readers {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.found-readers li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.found-readers code {
+  font-size: 0.85em;
+  word-break: break-all;
+}

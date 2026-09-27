@@ -6,11 +6,15 @@ import type {
   AppStatus,
   AppView,
   ConnectionView,
+  DeviceChoice,
   GateKind,
+  HardwareConfig,
+  RealDevice,
   Role,
   StationConfig,
   StationKind,
 } from "./api";
+import HardwareFields, { defaultHardware } from "./HardwareFields";
 
 const DEFAULT_PRINTER_URL = "http://127.0.0.1:8000";
 
@@ -94,12 +98,7 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
               kind,
               // A desk has no direction, and a gate must have one.
               role: kind === "gate" ? s.role ?? "entry" : null,
-              device:
-                kind === "gate"
-                  ? asSimGate(s)
-                  : s.device.type === "sim_desk"
-                    ? s.device
-                    : { type: "sim_desk" as const },
+              device: asKindDevice(s, kind),
               // A gate may have no printer address; a desk needs one.
               printer_url:
                 kind === "desk" && s.printer_url.trim() === ""
@@ -108,6 +107,39 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
             }
           : s,
       ),
+    );
+
+  /** Keep a real reader when the kind still fits it, and drop it when it does
+   * not: a real desk reader is not a gate reader. */
+  const setRealReader = (id: string, hardware: HardwareConfig) =>
+    setStations((list) =>
+      list.map((s) => {
+        if (s.id !== id) return s;
+        const type = s.kind === "desk" ? "ecrfid_desk" : "ecrfid_gate";
+        return { ...s, device: { type, hardware } as RealDevice };
+      }),
+    );
+
+  /** Pick a simulated or a real reader for this station. */
+  const setReaderType = (id: string, choice: "sim" | "real") =>
+    setStations((list) =>
+      list.map((s) => {
+        if (s.id !== id) return s;
+        if (choice === "real") {
+          const hardware =
+            s.device.type === "ecrfid_desk" || s.device.type === "ecrfid_gate"
+              ? s.device.hardware
+              : defaultHardware();
+          return {
+            ...s,
+            device: {
+              type: s.kind === "desk" ? "ecrfid_desk" : "ecrfid_gate",
+              hardware,
+            } as RealDevice,
+          };
+        }
+        return { ...s, device: asKindDevice(s, s.kind, true) };
+      }),
     );
 
   const addStation = () =>
@@ -186,6 +218,9 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
   };
 
   const mode = status?.stations.find((station) => station.mode)?.mode ?? null;
+  // A reader test targets the station the app has running, so an unsaved edit
+  // means the thing on screen is not the thing that would be tested.
+  const isDirty = JSON.stringify(stations) !== JSON.stringify(original);
 
   return (
     <div className="panel setup">
@@ -292,6 +327,27 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
                       sticker. Gate: a reader records guests walking past.
                     </small>
                   </label>
+                  <label>
+                    Reader
+                    <select
+                      value={
+                        station.device.type === "ecrfid_desk" ||
+                        station.device.type === "ecrfid_gate"
+                          ? "real"
+                          : "sim"
+                      }
+                      onChange={(event) =>
+                        setReaderType(station.id, event.target.value as "sim" | "real")
+                      }
+                    >
+                      <option value="sim">Simulator</option>
+                      <option value="real">Real reader</option>
+                    </select>
+                    <small className="field-help">
+                      A simulator runs entirely on this computer. A real reader
+                      needs the hardware in front of you.
+                    </small>
+                  </label>
                   {station.kind === "gate" && (
                     <label>
                       Direction
@@ -387,7 +443,16 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
                   )}
                 </div>
 
-                {station.device.type === "sim_gate" && (
+                {(station.device.type === "ecrfid_desk" ||
+                station.device.type === "ecrfid_gate") && (
+                <HardwareFields
+                  station={station}
+                  dirty={isDirty}
+                  onChange={(hardware) => setRealReader(station.id, hardware)}
+                />
+              )}
+
+              {station.device.type === "sim_gate" && (
                   <div className="row">
                     <label>
                       Simulated gate output
@@ -478,6 +543,33 @@ function asSimGate(station: StationConfig) {
   return station.device.type === "sim_gate"
     ? station.device
     : { type: "sim_gate" as const, gate_kind: "records" as const, release_verified: false };
+}
+
+/**
+ * The device a station should hold after its kind changes. A real reader only
+ * survives a kind change that keeps its role: a desk reader is not a gate
+ * reader, so switching kinds falls back to the simulator rather than sending
+ * the wrong traffic at the wrong hardware.
+ */
+function asKindDevice(
+  station: StationConfig,
+  kind: StationKind,
+  forceSimulator = false,
+): DeviceChoice {
+  if (!forceSimulator) {
+    const hardware =
+      station.device.type === "ecrfid_desk" || station.device.type === "ecrfid_gate"
+        ? station.device.hardware
+        : null;
+    if (hardware) {
+      return {
+        type: kind === "desk" ? "ecrfid_desk" : "ecrfid_gate",
+        hardware,
+      };
+    }
+    if (kind === "desk" && station.device.type === "sim_desk") return station.device;
+  }
+  return kind === "gate" ? asSimGate(station) : { type: "sim_desk" };
 }
 
 /** Directions that changed on a gate that already existed. */

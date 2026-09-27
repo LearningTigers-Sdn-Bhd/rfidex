@@ -3006,6 +3006,7 @@ name = "rfidex-app"
 version = "0.3.0"
 dependencies = [
  "rfidex-core",
+ "rfidex-hardware",
  "rfidex-runtime",
  "serde",
  "serde_json",

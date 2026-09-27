@@ -7,7 +7,8 @@ use rfidex_core::store::{OutboxState, Store};
 use rfidex_runtime::config::{AppConfig, AppPaths, ConfigError, SetupInput, SetupView};
 use rfidex_runtime::{
     test_connection, test_printer, AppStatus, BadgeView, ConnectionView, DeskView, GateView,
-    ProblemView, Runtime, RuntimeError, RuntimeOptions, SearchView,
+    HardwareTestAction, HardwareTestView, ProblemView, Runtime, RuntimeError, RuntimeOptions,
+    SearchView,
 };
 use serde::Serialize;
 use tokio::sync::{RwLock, RwLockReadGuard};
@@ -366,6 +367,32 @@ pub async fn sim_set_connected(
 ) -> Result<(), RuntimeError> {
     let slot = current(&state).await?;
     runtime(&slot)?.sim_set_connected(station, connected).await
+}
+
+/// The reader list the vendor library can see.
+///
+/// A bounded helper of its own, started and reaped inside the runtime's
+/// hardware module: no station is disturbed, and no device is opened.
+#[tauri::command]
+pub async fn hardware_enumerate(
+    dll_path: String,
+    kind: rfidex_hardware::sdk::EnumerationKind,
+) -> Result<Vec<String>, RuntimeError> {
+    let launcher = rfidex_hardware::process::HostLauncher::current_exe()
+        .map_err(|_| rfidex_runtime::hardware::no_helper())?;
+    rfidex_runtime::hardware::enumerate(&launcher, std::path::Path::new(&dll_path), kind)
+}
+
+/// Test a saved station's own reader. Connect and ReadTags only: there is no
+/// destructive test in the ordinary interface.
+#[tauri::command]
+pub async fn hardware_test(
+    state: tauri::State<'_, AppState>,
+    station: Uuid,
+    action: HardwareTestAction,
+) -> Result<HardwareTestView, RuntimeError> {
+    let slot = current(&state).await?;
+    runtime(&slot)?.hardware_test(station, action).await
 }
 
 fn runtime(slot: &Option<Runtime>) -> Result<&Runtime, RuntimeError> {

@@ -17,6 +17,7 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 rfidex-core = { path = "../../crates/rfidex-core" }
+rfidex-hardware = { path = "../../crates/rfidex-hardware" }
 rfidex-runtime = { path = "../../crates/rfidex-runtime" }
 tauri = { version = "2", features = [] }
 serde.workspace = true

@@ -10,6 +10,7 @@ pub mod desk;
 pub mod devices;
 pub mod diagnostics;
 pub mod gate;
+pub mod hardware;
 pub mod printer;
 pub mod problems;
 pub mod runtime;
@@ -22,6 +23,7 @@ pub use config::{
 pub use desk::{BadgeView, DeskStep, DeskView};
 pub use diagnostics::{test_connection, ConnectionView};
 pub use gate::{GateStatus, GateView};
+pub use hardware::{HardwareTestAction, HardwareTestView};
 pub use printer::{test_printer, PrinterClient};
 pub use problems::ProblemView;
 pub use runtime::{AppStatus, Runtime, RuntimeOptions, StationStatus};

@@ -14,6 +14,15 @@ thiserror.workspace = true
 [dev-dependencies]
 tempfile.workspace = true
 
+[features]
+default = []
+test-host = []
+
 [[bin]]
 name = "rfidex-device-host"
 path = "src/bin/rfidex-device-host.rs"
+
+[[bin]]
+name = "rfidex-fake-host"
+path = "src/bin/rfidex-fake-host.rs"
+required-features = ["test-host"]

@@ -3032,6 +3032,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "rfidex-hardware"
+version = "0.3.0"
+dependencies = [
+ "rfidex-core",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "uuid",
+]
+
+[[package]]
 name = "rfidex-mock"
 version = "0.3.0"
 dependencies = [

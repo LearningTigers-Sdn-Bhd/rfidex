@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/rfidex-core",
+    "crates/rfidex-hardware",
     "crates/rfidex-mock",
     "crates/rfidex-runtime",
     "app/src-tauri",

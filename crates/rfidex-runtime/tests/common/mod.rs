@@ -9,11 +9,13 @@ use std::time::Duration;
 use rfidex_core::contract::{EventSettings, HeartbeatResp, RfidMode, Role, StationKind};
 use rfidex_core::device::GateKind;
 use rfidex_core::store::Store;
+use rfidex_hardware::process::HostLauncher;
 use rfidex_mock::http::{serve, AppState};
 use rfidex_mock::printer::Printer;
 use rfidex_mock::state::{MockState, SeedTicket};
 use rfidex_runtime::config::{AppConfig, AppPaths, DeviceChoice, StationConfig};
 use rfidex_runtime::{Runtime, RuntimeOptions};
+use std::path::PathBuf;
 use uuid::Uuid;
 
 pub const KEY: &str = "rfidex_test_key_0123456789abcdefghij";
@@ -178,7 +180,7 @@ impl Harness {
         stations: Vec<StationConfig>,
     ) -> Harness {
         let first_ticket = tickets.first().map(|t| t.public_id);
-        let harness = Harness::build_seeded(event, tickets, opts, stations, KEY, false).await;
+        let harness = Harness::build_seeded(event, tickets, opts, stations, KEY, false, None).await;
         harness.await_seeded_ready(first_ticket).await;
         harness
     }
@@ -192,6 +194,32 @@ impl Harness {
         Harness::build_keyed(mode, opts, stations, down, KEY).await
     }
 
+    /// A runtime over caller-supplied stations, with the helper program the
+    /// caller names. Real readers start disconnected on purpose, so readiness
+    /// here is the server side, not an attached reader.
+    pub async fn start_hardware(
+        mode: RfidMode,
+        opts: RuntimeOptions,
+        stations: Vec<StationConfig>,
+        launcher: PathBuf,
+    ) -> Harness {
+        let harness = Harness::build_seeded(
+            fixture_event(mode),
+            seeds(),
+            opts,
+            stations,
+            KEY,
+            false,
+            Some(launcher),
+        )
+        .await;
+        eventually("every station to hear from the server", || async {
+            harness.runtime.stations().iter().all(|s| s.online())
+        })
+        .await;
+        harness
+    }
+
     async fn build_keyed(
         mode: RfidMode,
         opts: RuntimeOptions,
@@ -199,7 +227,16 @@ impl Harness {
         down: bool,
         key: &str,
     ) -> Harness {
-        Harness::build_seeded(fixture_event(mode), seeds(), opts, stations, key, down).await
+        Harness::build_seeded(
+            fixture_event(mode),
+            seeds(),
+            opts,
+            stations,
+            key,
+            down,
+            None,
+        )
+        .await
     }
 
     /// The one place the server, the data root, the config and the runtime are
@@ -212,6 +249,7 @@ impl Harness {
         stations: Vec<StationConfig>,
         key: &str,
         down: bool,
+        launcher: Option<PathBuf>,
     ) -> Harness {
         let state = Arc::new(AppState::new(MockState::new(KEY.into(), event, tickets)));
         if down {
@@ -240,9 +278,19 @@ impl Harness {
             stations,
         };
         paths.save(&config).unwrap();
-        let runtime = Runtime::start(paths.clone(), config, opts.clone())
+        let runtime = match &launcher {
+            Some(executable) => Runtime::start_with_launcher(
+                paths.clone(),
+                config,
+                opts.clone(),
+                HostLauncher::new(executable.clone()),
+            )
             .await
-            .unwrap();
+            .unwrap(),
+            None => Runtime::start(paths.clone(), config, opts.clone())
+                .await
+                .unwrap(),
+        };
         Harness {
             runtime,
             server: state,

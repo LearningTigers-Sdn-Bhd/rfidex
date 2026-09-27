@@ -3068,6 +3068,7 @@ dependencies = [
  "fs2",
  "reqwest",
  "rfidex-core",
+ "rfidex-hardware",
  "rfidex-mock",
  "serde",
  "serde_json",

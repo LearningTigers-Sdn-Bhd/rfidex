@@ -101,14 +101,28 @@ pub fn default_printer_url() -> String {
     "http://127.0.0.1:8000".into()
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum DeviceChoice {
     SimDesk,
     SimGate {
         gate_kind: rfidex_core::device::GateKind,
         release_verified: bool,
     },
+    EcrfidDesk {
+        hardware: rfidex_hardware::HardwareConfig,
+    },
+    /// A real gate reads live inventory. Stored records stay raw evidence, so
+    /// there is deliberately no `gate_kind` or `release_verified` here to set.
+    EcrfidGate {
+        hardware: rfidex_hardware::HardwareConfig,
+    },
+}
+
+impl DeviceChoice {
+    pub fn is_simulated(&self) -> bool {
+        matches!(self, DeviceChoice::SimDesk | DeviceChoice::SimGate { .. })
+    }
 }
 
 #[derive(Clone, Deserialize)]
@@ -250,6 +264,9 @@ pub fn validate_printer_url(value: &str) -> Result<reqwest::Url, ConfigError> {
 fn validate_stations(stations: &[StationConfig]) -> Result<(), ConfigError> {
     let mut ids = std::collections::HashSet::new();
     let mut names = std::collections::HashSet::new();
+    // One physical reader, one station. Two stations cannot claim the same
+    // endpoint, whatever transport each of them uses to reach it.
+    let mut endpoints: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     for station in stations {
         // Only a desk prints. A gate keeps the field but is never blocked by
         // it, so switching a station between kinds cannot strand a save.
@@ -277,7 +294,13 @@ fn validate_stations(stations: &[StationConfig]) -> Result<(), ConfigError> {
         }
         match (station.kind, station.role, &station.device) {
             (StationKind::Desk, None, DeviceChoice::SimDesk) => {}
+            (StationKind::Desk, None, DeviceChoice::EcrfidDesk { hardware }) => {
+                validate_reader(hardware, name, &mut endpoints)?;
+            }
             (StationKind::Gate, Some(_), DeviceChoice::SimGate { .. }) => {}
+            (StationKind::Gate, Some(_), DeviceChoice::EcrfidGate { hardware }) => {
+                validate_reader(hardware, name, &mut endpoints)?;
+            }
             (StationKind::Desk, Some(_), _) => {
                 return Err(ConfigError::Invalid(
                     "A desk does not have an entry or exit direction.".into(),
@@ -296,6 +319,24 @@ fn validate_stations(stations: &[StationConfig]) -> Result<(), ConfigError> {
         }
     }
     Ok(())
+}
+
+/// A reader is validated as configuration, never as hardware that has to be
+/// present: a device that is switched off, unplugged or not yet installed must
+/// not stop an operator from saving the setup. The reader reports itself
+/// disconnected instead.
+fn validate_reader(
+    hardware: &rfidex_hardware::HardwareConfig,
+    station: &str,
+    endpoints: &mut std::collections::HashMap<String, String>,
+) -> Result<(), ConfigError> {
+    hardware.validate().map_err(ConfigError::Invalid)?;
+    match endpoints.insert(hardware.endpoint_key(), station.to_string()) {
+        Some(other) if other != station => Err(ConfigError::Invalid(format!(
+            "{other} and {station} are set to the same reader. Give each station its own reader."
+        ))),
+        _ => Ok(()),
+    }
 }
 
 #[cfg(test)]

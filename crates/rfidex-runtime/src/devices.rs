@@ -2,10 +2,15 @@
 //!
 //! `DeskDevice` and `GateDevice` are enums over real device objects rather than
 //! boxed trait-object factories, so the runtime owns exactly one adapter per
-//! station. Real hardware variants go here in P4; those will need a dedicated
-//! OS thread each, not a Tokio task.
+//! station. The real variants own a reader that connects lazily and whose
+//! native work happens outside this process or outside the Tokio worker threads.
+//!
+//! The simulator accessors are fallible on purpose: a command that only makes
+//! sense on a fake reader must be refused on a real one, not panic and not
+//! quietly change what the real reader does.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use rfidex_core::codec;
 use rfidex_core::contract::Role;
@@ -16,35 +21,68 @@ use rfidex_core::device::{
     TagMemory, TagReaderWriter,
 };
 use rfidex_core::tag::{hex_upper, parse_hex};
+use rfidex_hardware::adapters::{EcrfidDesk, EcrfidGate};
+use rfidex_hardware::process::StopControl;
 use uuid::Uuid;
 
 use crate::RuntimeError;
+
+/// What every simulator-only command says when it is asked of real hardware.
+pub(crate) fn not_simulated() -> RuntimeError {
+    RuntimeError::new("not_simulated", "This station uses a real reader.")
+}
 
 /// The simulated reader/writer a desk station drives. `SimDesk::info()` succeeds
 /// even when the reader is unplugged, so never treat it as a connection check.
 pub enum DeskDevice {
     Sim(SimDesk),
+    /// Boxed: a real reader carries its transport, its cached info and its
+    /// stop handle, and the enum is stored inside a station that already owns a
+    /// boxed session. One allocation per station at startup.
+    Ecrfid(Box<EcrfidDesk>),
 }
 
 impl DeskDevice {
-    /// The simulator's own connection flag, not an inventory probe.
+    /// The last known connection state, never a fresh probe: the heartbeat must
+    /// not open a reader.
     pub fn connected(&self) -> bool {
         match self {
             DeskDevice::Sim(d) => d.connected,
+            DeskDevice::Ecrfid(d) => d.connected(),
         }
     }
 
-    pub fn set_connected(&mut self, connected: bool) {
+    /// Simulator-only. A real reader's connection state is what its own calls
+    /// report, and no operator command may declare it connected.
+    pub fn set_connected(&mut self, connected: bool) -> Result<(), RuntimeError> {
         match self {
-            DeskDevice::Sim(d) => d.connected = connected,
+            DeskDevice::Sim(d) => {
+                d.connected = connected;
+                Ok(())
+            }
+            DeskDevice::Ecrfid(_) => Err(not_simulated()),
         }
     }
 
     /// The simulator handle, for the `sim_*` commands only.
-    pub fn sim_mut(&mut self) -> &mut SimDesk {
+    pub fn sim_mut(&mut self) -> Result<&mut SimDesk, RuntimeError> {
         match self {
-            DeskDevice::Sim(d) => d,
+            DeskDevice::Sim(d) => Ok(d),
+            DeskDevice::Ecrfid(_) => Err(not_simulated()),
         }
+    }
+
+    /// Present only for real hardware. Shutdown uses it to end a reader that is
+    /// stuck without waiting for the call that is stuck.
+    pub fn stop_control(&self) -> Option<Arc<StopControl>> {
+        match self {
+            DeskDevice::Sim(_) => None,
+            DeskDevice::Ecrfid(d) => Some(d.stop_control()),
+        }
+    }
+
+    pub fn is_simulated(&self) -> bool {
+        matches!(self, DeskDevice::Sim(_))
     }
 }
 
@@ -52,36 +90,42 @@ impl TagReaderWriter for DeskDevice {
     fn info(&mut self) -> DeviceResult<DeviceInfo> {
         match self {
             DeskDevice::Sim(d) => d.info(),
+            DeskDevice::Ecrfid(d) => d.info(),
         }
     }
 
     fn inventory(&mut self) -> DeviceResult<Vec<rfidex_core::tag::TagRead>> {
         match self {
             DeskDevice::Sim(d) => d.inventory(),
+            DeskDevice::Ecrfid(d) => d.inventory(),
         }
     }
 
     fn tag_memory(&mut self, uid_raw: &[u8]) -> DeviceResult<TagMemory> {
         match self {
             DeskDevice::Sim(d) => d.tag_memory(uid_raw),
+            DeskDevice::Ecrfid(d) => d.tag_memory(uid_raw),
         }
     }
 
     fn read_blocks(&mut self, uid_raw: &[u8], start: u8, count: u8) -> DeviceResult<Vec<u8>> {
         match self {
             DeskDevice::Sim(d) => d.read_blocks(uid_raw, start, count),
+            DeskDevice::Ecrfid(d) => d.read_blocks(uid_raw, start, count),
         }
     }
 
     fn write_blocks(&mut self, uid_raw: &[u8], start: u8, data: &[u8]) -> DeviceResult<()> {
         match self {
             DeskDevice::Sim(d) => d.write_blocks(uid_raw, start, data),
+            DeskDevice::Ecrfid(d) => d.write_blocks(uid_raw, start, data),
         }
     }
 
     fn capabilities(&self) -> DeskCaps {
         match self {
             DeskDevice::Sim(d) => d.capabilities(),
+            DeskDevice::Ecrfid(d) => d.capabilities(),
         }
     }
 }
@@ -90,26 +134,45 @@ impl TagReaderWriter for DeskDevice {
 /// when disconnected; only a poll result tells the truth.
 pub enum GateDevice {
     Sim(SimGate),
+    /// Boxed for the same reason as [`DeskDevice::Ecrfid`].
+    Ecrfid(Box<EcrfidGate>),
 }
 
 impl GateDevice {
     pub fn kind(&self) -> GateKind {
         match self {
             GateDevice::Sim(g) => g.capabilities().kind,
+            GateDevice::Ecrfid(g) => g.capabilities().kind,
         }
     }
 
-    pub fn set_connected(&mut self, connected: bool) {
+    pub fn set_connected(&mut self, connected: bool) -> Result<(), RuntimeError> {
         match self {
-            GateDevice::Sim(g) => g.connected = connected,
+            GateDevice::Sim(g) => {
+                g.connected = connected;
+                Ok(())
+            }
+            GateDevice::Ecrfid(_) => Err(not_simulated()),
         }
     }
 
     /// The simulator handle, for the `sim_*` commands only.
-    pub fn sim(&mut self) -> &mut SimGate {
+    pub fn sim(&mut self) -> Result<&mut SimGate, RuntimeError> {
         match self {
-            GateDevice::Sim(g) => g,
+            GateDevice::Sim(g) => Ok(g),
+            GateDevice::Ecrfid(_) => Err(not_simulated()),
         }
+    }
+
+    pub fn stop_control(&self) -> Option<Arc<StopControl>> {
+        match self {
+            GateDevice::Sim(_) => None,
+            GateDevice::Ecrfid(g) => Some(g.stop_control()),
+        }
+    }
+
+    pub fn is_simulated(&self) -> bool {
+        matches!(self, GateDevice::Sim(_))
     }
 }
 
@@ -117,24 +180,28 @@ impl GateSource for GateDevice {
     fn info(&mut self) -> DeviceResult<DeviceInfo> {
         match self {
             GateDevice::Sim(g) => g.info(),
+            GateDevice::Ecrfid(g) => g.info(),
         }
     }
 
     fn poll(&mut self) -> DeviceResult<Vec<(GateRead, ReleaseHandle)>> {
         match self {
             GateDevice::Sim(g) => g.poll(),
+            GateDevice::Ecrfid(g) => g.poll(),
         }
     }
 
     fn release(&mut self, handle: ReleaseHandle) -> DeviceResult<()> {
         match self {
             GateDevice::Sim(g) => g.release(handle),
+            GateDevice::Ecrfid(g) => g.release(handle),
         }
     }
 
     fn capabilities(&self) -> GateCaps {
         match self {
             GateDevice::Sim(g) => g.capabilities(),
+            GateDevice::Ecrfid(g) => g.capabilities(),
         }
     }
 }

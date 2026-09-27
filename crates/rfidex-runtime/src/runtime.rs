@@ -18,6 +18,8 @@ use rfidex_core::store::{OutboxKind, OutboxState, Store};
 use rfidex_core::sync::{SyncReport, SyncWorker, SENT_RETENTION_DAYS};
 use rfidex_core::tag::UidRule;
 use rfidex_core::APP_VERSION;
+use rfidex_hardware::adapters::{EcrfidDesk, EcrfidGate};
+use rfidex_hardware::process::HostLauncher;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 use uuid::Uuid;
@@ -91,6 +93,8 @@ pub struct StationRuntime {
     /// and queue drain happen at once instead of after a poll interval.
     notify: tokio::sync::Notify,
     device: StationDevice,
+    /// Present only for a real reader. Shutdown uses it to end hardware that is
+    /// stuck without waiting for the call that is stuck.
     inner: Mutex<StationInner>,
     next_sequence: AtomicU64,
     stop: watch::Receiver<bool>,
@@ -190,6 +194,9 @@ impl StationRuntime {
             .rows(states, kind, limit)
     }
 
+    /// The reader's own last report. A real adapter answers this from what it
+    /// already knows, so the heartbeat never opens a reader or waits on a native
+    /// call.
     async fn device_info(&self) -> Option<rfidex_core::device::DeviceInfo> {
         match &self.device {
             StationDevice::Desk(d) => {
@@ -558,10 +565,29 @@ pub struct Runtime {
 }
 
 impl Runtime {
+    /// Start over this executable: a real reader station starts the desktop
+    /// binary again in its helper mode.
     pub async fn start(
         paths: AppPaths,
         config: AppConfig,
         opts: RuntimeOptions,
+    ) -> Result<Self, RuntimeError> {
+        let launcher = HostLauncher::current_exe().map_err(|_| {
+            RuntimeError::new(
+                "no_helper",
+                "This app cannot find its own program file, so a real reader cannot be started.",
+            )
+        })?;
+        Self::start_with_launcher(paths, config, opts, launcher).await
+    }
+
+    /// The same, with the helper program chosen by the caller. Tests point this
+    /// at the developer host.
+    pub async fn start_with_launcher(
+        paths: AppPaths,
+        config: AppConfig,
+        opts: RuntimeOptions,
+        launcher: HostLauncher,
     ) -> Result<Self, RuntimeError> {
         tokio::runtime::Handle::try_current().map_err(|_| {
             RuntimeError::new(
@@ -593,7 +619,8 @@ impl Runtime {
         let mut stations = Vec::with_capacity(config.stations.len());
         for station_config in &config.stations {
             stations.push(Arc::new(
-                StationRuntime::build(&paths, &config, station_config, &opts, &stop).await?,
+                StationRuntime::build(&paths, &config, station_config, &opts, &stop, &launcher)
+                    .await?,
             ));
         }
 
@@ -949,7 +976,7 @@ impl Runtime {
         };
         let mut session = device.lock().await;
         let mut library = self.library.lock().unwrap_or_else(|e| e.into_inner());
-        library.place(station, session.station.reader.sim_mut(), uid_hex)?;
+        library.place(station, session.station.reader.sim_mut()?, uid_hex)?;
         drop(library);
         let connected = session.station.reader.connected();
         drop(session);
@@ -964,7 +991,7 @@ impl Runtime {
         };
         let mut session = device.lock().await;
         let mut library = self.library.lock().unwrap_or_else(|e| e.into_inner());
-        library.clear(station, session.station.reader.sim_mut());
+        library.clear(station, session.station.reader.sim_mut()?);
         Ok(())
     }
 
@@ -973,17 +1000,14 @@ impl Runtime {
         let StationDevice::Gate(device) = &runtime.device else {
             return Err(wrong_station("walk a sticker past a gate"));
         };
-        let seq = runtime.allocate_sequence()?;
         let role = runtime.config.role.unwrap_or(Role::Entry);
         let mut gate = device.lock().await;
         let mut library = self.library.lock().unwrap_or_else(|e| e.into_inner());
-        library.pass(
-            gate.gate.sim(),
-            uid_hex,
-            role,
-            seq,
-            runtime.config.write_start_block,
-        )
+        // Refused before a sequence is allocated: a rejected simulator command
+        // must not advance a real station's record counter.
+        let sim = gate.gate.sim()?;
+        let seq = runtime.allocate_sequence()?;
+        library.pass(sim, uid_hex, role, seq, runtime.config.write_start_block)
     }
 
     pub async fn sim_set_connected(
@@ -992,14 +1016,16 @@ impl Runtime {
         connected: bool,
     ) -> Result<(), RuntimeError> {
         let runtime = self.station(station)?;
+        // The refusal comes first: a real reader's connection state is reported
+        // by the reader, never declared by an operator command.
         match &runtime.device {
             StationDevice::Desk(device) => {
                 let mut session = device.lock().await;
-                session.station.reader.set_connected(connected);
+                session.station.reader.set_connected(connected)?;
             }
             StationDevice::Gate(device) => {
                 let mut gate = device.lock().await;
-                gate.gate.set_connected(connected);
+                gate.gate.set_connected(connected)?;
             }
         }
         runtime.lock().connected = connected;
@@ -1037,6 +1063,7 @@ impl StationRuntime {
         station: &StationConfig,
         opts: &RuntimeOptions,
         stop: &watch::Sender<bool>,
+        launcher: &HostLauncher,
     ) -> Result<StationRuntime, RuntimeError> {
         let store = Arc::new(Mutex::new(
             Store::open(&paths.station_db(station.id)).map_err(|_| {
@@ -1102,6 +1129,21 @@ impl StationRuntime {
                     desk, mode, uid_rule,
                 ))))
             }
+            (StationKind::Desk, DeviceChoice::EcrfidDesk { hardware }) => {
+                let reader = EcrfidDesk::new(hardware.clone(), launcher.clone())
+                    .map_err(|_| reader_failed())?;
+                let desk = DeskStation::new(
+                    DeskDevice::Ecrfid(Box::new(reader)),
+                    store.clone(),
+                    client.clone(),
+                    mode,
+                    uid_rule,
+                    station.write_start_block,
+                );
+                StationDevice::Desk(Box::new(tokio::sync::Mutex::new(DeskSession::new(
+                    desk, mode, uid_rule,
+                ))))
+            }
             (
                 StationKind::Gate,
                 DeviceChoice::SimGate {
@@ -1115,6 +1157,20 @@ impl StationRuntime {
                         *gate_kind,
                         *release_verified,
                     )),
+                    store.clone(),
+                    &station.id.to_string(),
+                    role,
+                    uid_rule,
+                    Duration::from_secs(station.debounce_secs),
+                );
+                StationDevice::Gate(Box::new(tokio::sync::Mutex::new(gate)))
+            }
+            (StationKind::Gate, DeviceChoice::EcrfidGate { hardware }) => {
+                let role = station.role.unwrap_or(Role::Entry);
+                let reader = EcrfidGate::new(hardware.clone(), launcher.clone())
+                    .map_err(|_| reader_failed())?;
+                let gate = GateStation::new(
+                    GateDevice::Ecrfid(Box::new(reader)),
                     store.clone(),
                     &station.id.to_string(),
                     role,
@@ -1157,6 +1213,13 @@ impl StationRuntime {
             stop: stop.subscribe(),
         })
     }
+}
+
+fn reader_failed() -> RuntimeError {
+    RuntimeError::new(
+        "reader_config",
+        "This station's reader settings cannot be used. Open Setup and check the reader.",
+    )
 }
 
 impl Drop for Runtime {

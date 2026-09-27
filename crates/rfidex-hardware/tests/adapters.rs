@@ -433,6 +433,66 @@ mod with_helper {
     }
 
     #[test]
+    fn failed_memory_invalidates_session_before_explicit_read_reconnects() {
+        let helper = Helper::start("memory_error");
+        let mut desk = EcrfidDesk::new(sdk_config(true), launcher()).unwrap();
+        assert!(desk.tag_memory(&UID_A).is_err());
+        assert!(!desk.connected());
+        assert_eq!(helper.count_of("open"), 1);
+        assert_eq!(desk.inventory().unwrap().len(), 1);
+        assert_eq!(
+            helper.count_of("open"),
+            2,
+            "old child was reaped before second handle"
+        );
+    }
+
+    #[test]
+    fn failed_write_never_reconnects_until_explicit_read() {
+        let helper = Helper::start("write_error");
+        let mut desk = EcrfidDesk::new(sdk_config(true), launcher()).unwrap();
+        assert!(desk.write_blocks(&UID_A, 2, &[1, 2, 3, 4]).is_err());
+        assert!(!desk.connected());
+        assert_eq!(helper.count_of("open"), 1);
+        assert_eq!(helper.count_of("write"), 1);
+        assert!(desk.write_blocks(&UID_A, 2, &[5, 6, 7, 8]).is_err());
+        assert_eq!(
+            helper.count_of("open"),
+            1,
+            "another write cannot open a new SDK session"
+        );
+        assert_eq!(helper.count_of("write"), 1);
+        assert_eq!(desk.inventory().unwrap().len(), 1);
+        assert_eq!(helper.count_of("open"), 2);
+        assert_eq!(
+            helper.count_of("write"),
+            1,
+            "uncertain write was never replayed"
+        );
+    }
+
+    #[test]
+    fn stop_while_open_is_stalled_interrupts_start_and_reaps_child() {
+        let helper = Helper::start("stall_open_reply");
+        let desk = EcrfidDesk::new(sdk_config(true), launcher()).unwrap();
+        let stop = desk.stop_control();
+        let runner = std::thread::spawn(move || {
+            let mut desk = desk;
+            desk.inventory()
+        });
+        let until = std::time::Instant::now() + Duration::from_secs(5);
+        while helper.count_of("open") == 0 && std::time::Instant::now() < until {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(helper.count_of("open"), 1);
+        let started = std::time::Instant::now();
+        stop.stop();
+        assert!(runner.join().unwrap().is_err());
+        assert!(started.elapsed() < Duration::from_secs(2));
+        assert_eq!(helper.count_of("open"), 1);
+    }
+
+    #[test]
     fn the_write_guard_holds_even_with_a_working_helper() {
         let helper = Helper::start("echo");
         let mut desk = EcrfidDesk::new(sdk_config(false), launcher()).unwrap();

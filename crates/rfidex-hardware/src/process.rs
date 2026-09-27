@@ -22,11 +22,11 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use crate::config::HardwareConfig;
-use crate::host::{CHILD_SWITCH, ENUMERATE};
+use crate::host::{CHILD_SWITCH, COMMISSIONING, ENUMERATE};
 use crate::sdk::EnumerationKind;
 use crate::wire::{
-    match_reply, read_frame, read_reply, write_frame, Deadline, Operation, Request, Response,
-    WireError,
+    match_reply, read_frame, read_reply, write_frame, Deadline, DeadlineSocket, Operation, Request,
+    Response, WireError,
 };
 
 /// How long a helper is given to start, connect and prove it is ours.
@@ -126,10 +126,10 @@ pub fn enumerate_devices(
         .spawn()
         .map_err(|_| WireError::Disconnected)?;
     let child = Arc::new(Mutex::new(Some(child)));
-
     let outcome = (|| {
-        let mut socket = accept_child(&listener, &token, &child)?;
-        let reply = read_reply(&mut socket, &Deadline::started(HANDSHAKE_WINDOW_MS))?;
+        let deadline = Deadline::started(HANDSHAKE_WINDOW_MS);
+        let mut socket = accept_child(&listener, &token, &child, &deadline, None, None)?;
+        let reply = read_reply(&mut DeadlineSocket::new(&mut socket, &deadline), &deadline)?;
         match match_reply(reply, ENUMERATE_REPLY_ID)? {
             Response::Strings { values } => Ok(values),
             _ => Err(WireError::BadResponse),
@@ -180,66 +180,104 @@ impl HardwareClient {
         launcher: &HostLauncher,
         config: &HardwareConfig,
     ) -> Result<HardwareClient, WireError> {
-        config.validate().map_err(|_| WireError::BadResponse)?;
+        Self::start_with_stop(launcher, config, |_| Ok(()))
+    }
 
+    /// Publish process control immediately after spawn, before waiting for a
+    /// handshake or Open. The caller may stop it without its request lock.
+    pub fn start_with_stop(
+        launcher: &HostLauncher,
+        config: &HardwareConfig,
+        publish: impl FnOnce(Arc<StopControl>) -> Result<(), WireError>,
+    ) -> Result<HardwareClient, WireError> {
+        Self::start_mode(launcher, config, false, publish)
+    }
+
+    /// Explicit developer-only host mode; ordinary app sessions use `start`.
+    pub fn start_commissioning(
+        launcher: &HostLauncher,
+        config: &HardwareConfig,
+    ) -> Result<HardwareClient, WireError> {
+        Self::start_mode(launcher, config, true, |_| Ok(()))
+    }
+
+    fn start_mode(
+        launcher: &HostLauncher,
+        config: &HardwareConfig,
+        commissioning: bool,
+        publish: impl FnOnce(Arc<StopControl>) -> Result<(), WireError>,
+    ) -> Result<HardwareClient, WireError> {
+        config.validate().map_err(|_| WireError::BadResponse)?;
         let listener = TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))
             .map_err(|_| WireError::Disconnected)?;
         let port = listener
             .local_addr()
             .map_err(|_| WireError::Disconnected)?
             .port();
-        // A fresh, transient token per launch. It is process coordination, not
-        // an event credential and not an operator login.
         let token = uuid::Uuid::new_v4().to_string();
-
-        let child = Command::new(&launcher.executable)
-            .arg(CHILD_SWITCH)
-            .arg(port.to_string())
-            .arg(&token)
+        let mut command = Command::new(&launcher.executable);
+        command.arg(CHILD_SWITCH).arg(port.to_string()).arg(&token);
+        if commissioning {
+            command.arg(COMMISSIONING);
+        }
+        let child = command
             .stdin(Stdio::null())
             .spawn()
             .map_err(|_| WireError::Disconnected)?;
         let child = Arc::new(Mutex::new(Some(child)));
-
-        let socket = match accept_child(&listener, &token, &child) {
-            Ok(socket) => socket,
-            Err(e) => {
-                reap(&child);
-                return Err(e);
-            }
-        };
-
-        let mut client = HardwareClient::connect(socket, child, config.timeout_ms());
-        match client.call(Operation::Open {
-            config: config.clone(),
-        }) {
-            Ok(Response::Unit) => Ok(client),
-            Ok(_) => {
-                client.stop();
-                Err(WireError::BadResponse)
-            }
-            Err(e) => {
-                client.stop();
-                Err(e)
-            }
-        }
-    }
-
-    fn connect(
-        socket: TcpStream,
-        child: Arc<Mutex<Option<Child>>>,
-        timeout_ms: u32,
-    ) -> HardwareClient {
-        let shutdown = socket.try_clone().ok();
+        let shutdown: Arc<Mutex<Option<TcpStream>>> = Arc::new(Mutex::new(None));
         let child_for_stop = child.clone();
+        let shutdown_for_stop = shutdown.clone();
         let control = StopControl::new(move || {
-            // The socket first: the child may be blocked on it, and a kill is
-            // only authoritative once the read it was in has failed.
-            if let Some(handle) = &shutdown {
+            if let Some(handle) = shutdown_for_stop
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .take()
+            {
                 let _ = handle.shutdown(Shutdown::Both);
             }
             reap(&child_for_stop);
         });
+        let outcome = (|| {
+            publish(control.clone())?;
+            if control.is_stopped() {
+                return Err(WireError::Disconnected);
+            }
+            let deadline = Deadline::started(HANDSHAKE_WINDOW_MS);
+            let socket = accept_child(
+                &listener,
+                &token,
+                &child,
+                &deadline,
+                Some(&control),
+                Some(&shutdown),
+            )?;
+            {
+                let mut slot = shutdown.lock().unwrap_or_else(|e| e.into_inner());
+                if control.is_stopped() {
+                    return Err(WireError::Disconnected);
+                }
+                *slot = Some(socket.try_clone().map_err(|_| WireError::Disconnected)?);
+            }
+            if control.is_stopped() {
+                return Err(WireError::Disconnected);
+            }
+            let mut client = HardwareClient::connect(socket, control.clone(), config.timeout_ms());
+            match client.call(Operation::Open {
+                config: config.clone(),
+            }) {
+                Ok(Response::Unit) if !control.is_stopped() => Ok(client),
+                Ok(_) => Err(WireError::Disconnected),
+                Err(e) => Err(e),
+            }
+        })();
+        if outcome.is_err() {
+            control.stop();
+        }
+        outcome
+    }
+
+    fn connect(socket: TcpStream, control: Arc<StopControl>, timeout_ms: u32) -> HardwareClient {
         HardwareClient {
             stream: Some(socket),
             control,
@@ -278,19 +316,36 @@ impl HardwareClient {
         let Some(stream) = self.stream.as_mut() else {
             return Err(WireError::Disconnected);
         };
-        arm(stream, &deadline)?;
-        let outcome = write_frame(stream, &request, &deadline)
-            .and_then(|()| read_reply(stream, &deadline))
-            .and_then(|reply| match_reply(reply, id));
-        match outcome {
+        let mut socket = DeadlineSocket::new(stream, &deadline);
+        // A transport or protocol break ends the session. A well-formed error
+        // reply does not: the channel is intact, the child answered "no"
+        // deliberately (unsupported mode, no tag, out of range), and the next
+        // request can still be made. `DeadlineSocket` is dropped with the
+        // borrow, so the error mapping happens on owned values only.
+        let outcome = write_frame(&mut socket, &request, &deadline)
+            .and_then(|()| read_reply(&mut socket, &deadline));
+        let reply = match outcome {
+            Ok(reply) => reply,
+            Err(e) => {
+                self.stop();
+                return Err(e);
+            }
+        };
+        match match_reply(reply, id) {
             // The id matching is not enough: the answer has to be the kind of
             // answer this operation has. A helper that replies to something else
             // is a broken channel, not a result.
-            Ok(response) if answers(&request.operation, &response) => Ok(response),
+            Ok(response)
+                if answers(&request.operation, &response) && !self.control.is_stopped() =>
+            {
+                Ok(response)
+            }
             Ok(_) => {
                 self.stop();
                 Err(WireError::BadResponse)
             }
+            Err(WireError::Unsupported) => Err(WireError::Unsupported),
+            Err(WireError::WriteUnsupported) => Err(WireError::WriteUnsupported),
             Err(e) => {
                 self.stop();
                 Err(e)
@@ -321,44 +376,52 @@ fn accept_child(
     listener: &TcpListener,
     token: &str,
     child: &Arc<Mutex<Option<Child>>>,
+    deadline: &Deadline,
+    control: Option<&StopControl>,
+    shutdown: Option<&Arc<Mutex<Option<TcpStream>>>>,
 ) -> Result<TcpStream, WireError> {
     listener
         .set_nonblocking(true)
         .map_err(|_| WireError::Disconnected)?;
-    let deadline = Deadline::started(HANDSHAKE_WINDOW_MS);
     loop {
+        if control.is_some_and(StopControl::is_stopped) {
+            return Err(WireError::Disconnected);
+        }
+        deadline.check()?;
         match listener.accept() {
             Ok((mut candidate, _)) => {
-                if authenticate(&mut candidate, token, &deadline) {
+                if let Some(shutdown) = shutdown {
+                    let mut slot = shutdown.lock().unwrap_or_else(|e| e.into_inner());
+                    if control.is_some_and(StopControl::is_stopped) {
+                        return Err(WireError::Disconnected);
+                    }
+                    *slot = Some(candidate.try_clone().map_err(|_| WireError::Disconnected)?);
+                }
+                if authenticate(&mut candidate, token, deadline) {
+                    if control.is_some_and(StopControl::is_stopped) {
+                        return Err(WireError::Disconnected);
+                    }
                     candidate
                         .set_nonblocking(false)
                         .map_err(|_| WireError::Disconnected)?;
                     return Ok(candidate);
                 }
+                if let Some(shutdown) = shutdown {
+                    shutdown.lock().unwrap_or_else(|e| e.into_inner()).take();
+                }
             }
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                // A helper that has already gone is not going to connect, so it
-                // fails now instead of at the end of the window.
                 if exited(child) {
                     return Err(WireError::Disconnected);
                 }
-                if deadline.check().is_err() {
-                    return Err(WireError::Timeout);
-                }
                 std::thread::sleep(ACCEPT_POLL);
             }
-            // A pending connection can be withdrawn before it is accepted, and
-            // a signal can interrupt the call. Neither says anything about the
-            // child, and the window still bounds the loop.
             Err(e)
                 if matches!(
                     e.kind(),
                     std::io::ErrorKind::Interrupted | std::io::ErrorKind::ConnectionAborted
                 ) =>
             {
-                if deadline.check().is_err() {
-                    return Err(WireError::Timeout);
-                }
                 std::thread::sleep(ACCEPT_POLL);
             }
             Err(_) => return Err(WireError::Disconnected),
@@ -367,25 +430,7 @@ fn accept_child(
 }
 
 fn authenticate(candidate: &mut TcpStream, token: &str, deadline: &Deadline) -> bool {
-    if arm(candidate, deadline).is_err() {
-        return false;
-    }
-    // The first thing the helper says is the token and nothing else.
-    matches!(read_frame::<_, String>(candidate, deadline), Ok(value) if value == token)
-}
-
-fn arm(stream: &TcpStream, deadline: &Deadline) -> Result<(), WireError> {
-    let left = deadline.remaining()?;
-    if left < Duration::from_millis(1) {
-        return Err(WireError::Timeout);
-    }
-    stream
-        .set_read_timeout(Some(left))
-        .map_err(|_| WireError::Disconnected)?;
-    stream
-        .set_write_timeout(Some(left))
-        .map_err(|_| WireError::Disconnected)?;
-    Ok(())
+    matches!(read_frame::<_, String>(&mut DeadlineSocket::new(candidate, deadline), deadline), Ok(value) if value == token)
 }
 
 fn exited(child: &Arc<Mutex<Option<Child>>>) -> bool {

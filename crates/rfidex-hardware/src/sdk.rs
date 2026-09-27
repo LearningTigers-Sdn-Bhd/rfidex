@@ -90,14 +90,14 @@ pub fn decode_inventory_buffer(buffer: &[u8]) -> Result<Option<WireTag>, WireErr
     if length == 0 || usize::from(length) != buffer.len() {
         return Err(WireError::BadResponse);
     }
-    if length == TERMINAL_LENGTH {
-        return Ok(None);
-    }
-    if length < TAG_MIN_LENGTH {
+    if length != TERMINAL_LENGTH && length < TAG_MIN_LENGTH {
         return Err(WireError::BadResponse);
     }
     if buffer[4] != 0x00 {
         return Err(WireError::BadResponse);
+    }
+    if length == TERMINAL_LENGTH {
+        return Ok(None);
     }
     let mut uid = [0u8; 8];
     uid.copy_from_slice(&buffer[6..14]);
@@ -141,7 +141,7 @@ pub fn decode_read(buffer: &[u8], uid: &[u8; 8], blocks: u8) -> Result<Vec<u8>, 
         return Err(WireError::BadResponse);
     }
     let mut data = Vec::with_capacity(groups * BLOCK_SIZE);
-    for group in region.chunks_exact(5) {
+    for group in region.as_chunks::<5>().0 {
         data.extend_from_slice(&group[1..5]);
     }
     Ok(data)
@@ -217,6 +217,17 @@ mod tests {
         let mut marker = vec![0u8; 7];
         marker[0] = 7;
         assert_eq!(decode_inventory_buffer(&marker).unwrap(), None);
+    }
+
+    #[test]
+    fn terminal_marker_with_failed_status_is_not_empty_inventory() {
+        let mut marker = [0u8; 7];
+        marker[0] = 7;
+        marker[4] = 0x0f;
+        assert_eq!(
+            decode_inventory_buffer(&marker),
+            Err(WireError::BadResponse)
+        );
     }
 
     #[test]

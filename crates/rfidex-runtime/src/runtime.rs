@@ -73,33 +73,30 @@ struct HardwareJobs {
 }
 
 impl HardwareJobs {
-    /// Run one piece of blocking hardware work and wait for it.
+    /// Register under the same lock that closes registration during shutdown.
     async fn run<T: Send + 'static>(
         &self,
         work: impl FnOnce() -> T + Send + 'static,
     ) -> Result<T, RuntimeError> {
-        if self.stopped.load(Ordering::SeqCst) {
-            return Err(reader_stopped());
-        }
         let (sender, receiver) = tokio::sync::oneshot::channel();
-        let handle = tokio::task::spawn_blocking(move || {
-            let _ = sender.send(work());
-        });
-        self.track(handle);
+        {
+            let mut jobs = self.jobs.lock().unwrap_or_else(|e| e.into_inner());
+            if self.stopped.load(Ordering::SeqCst) {
+                return Err(reader_stopped());
+            }
+            jobs.retain(|job| !job.is_finished());
+            jobs.push(tokio::task::spawn_blocking(move || {
+                let _ = sender.send(work());
+            }));
+        }
         receiver.await.map_err(|_| reader_stopped())
-    }
-
-    fn track(&self, handle: JoinHandle<()>) {
-        let mut jobs = self.jobs.lock().unwrap_or_else(|e| e.into_inner());
-        jobs.retain(|job| !job.is_finished());
-        jobs.push(handle);
     }
 
     /// Refuse new work and wait for the work already started.
     async fn join_all(&self) {
-        self.stopped.store(true, Ordering::SeqCst);
         let running = {
             let mut jobs = self.jobs.lock().unwrap_or_else(|e| e.into_inner());
+            self.stopped.store(true, Ordering::SeqCst);
             std::mem::take(&mut *jobs)
         };
         for job in running {
@@ -117,7 +114,18 @@ async fn probe_station(runtime: &StationRuntime, action: HardwareTestAction) -> 
     {
         return hardware::stopped();
     }
-    Runtime::probe_locked(&runtime.device, action).await
+    let view = Runtime::probe_locked(&runtime.device, action).await;
+    if runtime
+        .hardware_stop
+        .as_ref()
+        .is_some_and(|c| c.is_stopped())
+    {
+        return hardware::stopped();
+    }
+    if runtime.hardware_stop.is_some() {
+        runtime.lock().connected = view.ok;
+    }
+    view
 }
 
 /// A core tag read back as the vendor-shaped value the operator's view uses.
@@ -670,9 +678,8 @@ pub struct Runtime {
     library: Arc<Mutex<SimLibrary>>,
     stations: Vec<Arc<StationRuntime>>,
     stop: watch::Sender<bool>,
-    tasks: Vec<JoinHandle<()>>,
+    tasks: Mutex<Vec<JoinHandle<()>>>,
     hardware_jobs: Arc<HardwareJobs>,
-    shutdown_error: Option<RuntimeError>,
 }
 
 impl Runtime {
@@ -759,9 +766,8 @@ impl Runtime {
             library,
             stations,
             stop,
-            tasks,
+            tasks: Mutex::new(tasks),
             hardware_jobs,
-            shutdown_error: None,
         })
     }
 
@@ -771,14 +777,14 @@ impl Runtime {
     /// call or a socket read that is stuck is exactly what would otherwise hold
     /// the join open. Cancelling never takes the lock the stuck call holds, so
     /// this works even while a station's session is busy.
-    pub async fn shutdown(&mut self) -> Result<(), RuntimeError> {
+    pub async fn shutdown(&self) -> Result<(), RuntimeError> {
         let _ = self.stop.send(true);
         self.cancel_hardware();
         // The work already started comes back as soon as its reader is
         // cancelled, so waiting for it is bounded by the cancellation rather
         // than by the reader's own deadline.
         self.hardware_jobs.join_all().await;
-        let tasks = std::mem::take(&mut self.tasks);
+        let tasks = std::mem::take(&mut *self.tasks.lock().unwrap_or_else(|e| e.into_inner()));
         let mut failure = None;
         for task in tasks {
             match task.await {
@@ -795,7 +801,6 @@ impl Runtime {
             }
         }
         if let Some(e) = failure {
-            self.shutdown_error = Some(e.clone());
             return Err(e);
         }
         Ok(())
@@ -1442,7 +1447,10 @@ impl StationRuntime {
                 .try_lock()
                 .map(|s| s.station.reader.connected())
                 .unwrap_or(false),
-            StationDevice::Gate(_) => true,
+            StationDevice::Gate(g) => g
+                .try_lock()
+                .map(|gate| matches!(&gate.gate, GateDevice::Sim(sim) if sim.connected))
+                .unwrap_or(false),
         };
 
         Ok(StationRuntime {
@@ -1481,7 +1489,7 @@ impl Drop for Runtime {
         // A blocking worker cannot be aborted, so the only thing that can end
         // one is its own reader being cancelled above.
         self.hardware_jobs.stopped.store(true, Ordering::SeqCst);
-        for task in &self.tasks {
+        for task in self.tasks.lock().unwrap_or_else(|e| e.into_inner()).iter() {
             task.abort();
         }
     }

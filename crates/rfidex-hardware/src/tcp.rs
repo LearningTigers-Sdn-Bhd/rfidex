@@ -8,6 +8,7 @@
 
 use std::io::{ErrorKind, Read, Write};
 use std::net::{Shutdown, SocketAddr, SocketAddrV4, TcpStream};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -21,6 +22,11 @@ use crate::wire::{Deadline, WireTag};
 /// Read buffer size. Frames are at most 256 bytes, so this holds several.
 const CHUNK: usize = 512;
 
+/// The longest one socket read may wait before the stop flag is checked again.
+/// This bounds cancellation latency on platforms where `shutdown` does not
+/// interrupt a blocking read.
+const READ_POLL: Duration = Duration::from_millis(100);
+
 const NOT_TCP: &str = "this profile is not the plain TCP reader";
 const TIMED_OUT: &str = "the reader did not answer in time";
 
@@ -30,6 +36,7 @@ pub struct TcpReader {
     /// A second handle to the live socket, kept apart from the transaction so
     /// shutdown can interrupt a read without taking the adapter lock.
     shutdown: Arc<Mutex<Option<TcpStream>>>,
+    stopped: Arc<AtomicBool>,
 }
 
 struct Connection {
@@ -49,6 +56,7 @@ impl TcpReader {
             config,
             connection: None,
             shutdown: Arc::new(Mutex::new(None)),
+            stopped: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -71,8 +79,13 @@ impl TcpReader {
     /// socket exists when it is called.
     pub fn stop_control(&self) -> Arc<StopControl> {
         let handle = self.shutdown.clone();
+        let stopped = self.stopped.clone();
         StopControl::new(move || {
-            let stream = handle.lock().unwrap_or_else(|e| e.into_inner()).take();
+            let stream = {
+                let mut socket = handle.lock().unwrap_or_else(|e| e.into_inner());
+                stopped.store(true, Ordering::SeqCst);
+                socket.take()
+            };
             if let Some(stream) = stream {
                 let _ = stream.shutdown(Shutdown::Both);
             }
@@ -102,13 +115,19 @@ impl TcpReader {
         let request = ec::inventory_request(bus_address, antenna_byte).map_err(protocol)?;
         let mut inventory = Inventory::new(bus_address, antenna_byte);
         let outcome = self.exchange(address, &request, &mut inventory, &deadline);
-        if outcome.is_err() {
+        if outcome.is_err() || self.stopped.load(Ordering::SeqCst) {
             self.disconnect();
+        }
+        if self.stopped.load(Ordering::SeqCst) {
+            return Err(DeviceError::Disconnected);
         }
         outcome.map(|()| inventory.tags().to_vec())
     }
 
     fn connect(&mut self, address: SocketAddrV4, deadline: &Deadline) -> DeviceResult<()> {
+        if self.stopped.load(Ordering::SeqCst) {
+            return Err(DeviceError::Disconnected);
+        }
         if self.connection.is_some() {
             return Ok(());
         }
@@ -116,11 +135,17 @@ impl TcpReader {
             .map_err(|_| DeviceError::Disconnected)?;
         let _ = stream.set_nodelay(true);
         let handle = stream.try_clone().map_err(|_| DeviceError::Disconnected)?;
-        *self.shutdown.lock().unwrap_or_else(|e| e.into_inner()) = Some(handle);
+        let mut slot = self.shutdown.lock().unwrap_or_else(|e| e.into_inner());
+        if self.stopped.load(Ordering::SeqCst) {
+            let _ = stream.shutdown(Shutdown::Both);
+            return Err(DeviceError::Disconnected);
+        }
+        *slot = Some(handle);
         self.connection = Some(Connection {
             stream,
             decoder: FrameDecoder::new(),
         });
+        drop(slot);
         Ok(())
     }
 
@@ -139,22 +164,39 @@ impl TcpReader {
             .stream
             .write_all(request)
             .map_err(|_| DeviceError::Disconnected)?;
+        deadline.check().map_err(|_| timed_out())?;
         connection
             .stream
             .flush()
             .map_err(|_| DeviceError::Disconnected)?;
 
+        deadline.check().map_err(|_| timed_out())?;
         let mut buffer = [0u8; CHUNK];
         loop {
+            // Shutting down a cloned socket does not interrupt a blocking read
+            // on Windows, so cancellation cannot rely on the stop handle: the
+            // read waits in short slices and the stop flag is checked on every
+            // wake, on every platform.
+            if self.stopped.load(Ordering::SeqCst) {
+                return Err(DeviceError::Disconnected);
+            }
             while let Some(frame) = connection.decoder.next_frame() {
+                deadline.check().map_err(|_| timed_out())?;
                 if inventory.feed(frame.map_err(protocol)?).map_err(protocol)? {
+                    deadline.check().map_err(|_| timed_out())?;
                     return Ok(());
                 }
             }
-            arm(connection, deadline)?;
+            connection
+                .stream
+                .set_read_timeout(Some(slice(deadline)?.min(READ_POLL)))
+                .map_err(|_| DeviceError::Disconnected)?;
             match connection.stream.read(&mut buffer) {
                 Ok(0) => return Err(DeviceError::Disconnected),
-                Ok(n) => connection.decoder.push(&buffer[..n]),
+                Ok(n) => {
+                    deadline.check().map_err(|_| timed_out())?;
+                    connection.decoder.push(&buffer[..n]);
+                }
                 // A socket timeout is only a slice of the deadline, so waking
                 // up with nothing to read is not the end of the exchange.
                 Err(e) if expired(&e) => deadline.check().map_err(|_| timed_out())?,

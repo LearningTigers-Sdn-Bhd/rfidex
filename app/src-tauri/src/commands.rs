@@ -1,6 +1,7 @@
 //! The thin command layer. Every decision — what a failure means, what the
 //! operator should read, whether a save is safe — belongs to `rfidex-runtime`.
-//! These functions hold the app state lock and forward arguments.
+//! Commands clone the running runtime before waiting on a reader; setup and
+//! shutdown can then cancel stalled work without waiting for the state lock.
 
 use rfidex_core::contract::SearchBy;
 use rfidex_core::store::{OutboxState, Store};
@@ -11,14 +12,15 @@ use rfidex_runtime::{
     SearchView,
 };
 use serde::Serialize;
-use tokio::sync::{RwLock, RwLockReadGuard};
+use std::sync::Arc;
+use tokio::sync::RwLock;
 use uuid::Uuid;
 
 pub struct AppState {
     pub paths: AppPaths,
     /// `None` until the first `app_state` call starts the stations, and `None`
     /// again after a save that could not start them.
-    pub runtime: RwLock<Option<Runtime>>,
+    pub runtime: RwLock<Option<Arc<Runtime>>>,
 }
 
 #[derive(Serialize)]
@@ -52,19 +54,20 @@ fn store_failed() -> RuntimeError {
 
 /// The running runtime, or the one fixed refusal every operational command
 /// gives before Setup has been completed.
-async fn current(state: &AppState) -> Result<RwLockReadGuard<'_, Option<Runtime>>, RuntimeError> {
-    let guard = state.runtime.read().await;
-    if guard.is_none() {
-        return Err(not_configured());
-    }
-    Ok(guard)
+async fn current(state: &AppState) -> Result<Arc<Runtime>, RuntimeError> {
+    state
+        .runtime
+        .read()
+        .await
+        .clone()
+        .ok_or_else(not_configured)
 }
 
-async fn try_restore(state: &AppState, slot: &mut Option<Runtime>) {
+async fn try_restore(state: &AppState, slot: &mut Option<Arc<Runtime>>) {
     match state.paths.load() {
         Ok(Some(config)) => {
             match Runtime::start(state.paths.clone(), config, RuntimeOptions::default()).await {
-                Ok(runtime) => *slot = Some(runtime),
+                Ok(runtime) => *slot = Some(Arc::new(runtime)),
                 Err(_) => *slot = None,
             }
         }
@@ -122,7 +125,7 @@ pub async fn app_state(state: tauri::State<'_, AppState>) -> Result<AppView, Run
     };
     let runtime = Runtime::start(state.paths.clone(), config, RuntimeOptions::default()).await?;
     let status = runtime.status().await?;
-    *slot = Some(runtime);
+    *slot = Some(Arc::new(runtime));
     Ok(AppView {
         configured: true,
         status: Some(status),
@@ -201,8 +204,11 @@ pub async fn setup_save(
         }
     }
 
-    if let Some(mut running) = slot.take() {
-        let _ = running.shutdown().await;
+    if let Some(running) = slot.take() {
+        if let Err(error) = running.shutdown().await {
+            try_restore(&state, &mut slot).await;
+            return Err(error);
+        }
     }
     match Runtime::start(
         state.paths.clone(),
@@ -214,7 +220,7 @@ pub async fn setup_save(
         Ok(runtime) => match state.paths.save(&candidate) {
             Ok(()) => {
                 let status = runtime.status().await?;
-                *slot = Some(runtime);
+                *slot = Some(Arc::new(runtime));
                 Ok(AppView {
                     configured: true,
                     status: Some(status),
@@ -238,7 +244,7 @@ pub async fn setup_save(
 #[tauri::command]
 pub async fn status(state: tauri::State<'_, AppState>) -> Result<AppStatus, RuntimeError> {
     let slot = current(&state).await?;
-    runtime(&slot)?.status().await
+    runtime(&slot).status().await
 }
 
 #[tauri::command]
@@ -248,7 +254,7 @@ pub async fn desk_scan(
     code: String,
 ) -> Result<DeskView, RuntimeError> {
     let slot = current(&state).await?;
-    runtime(&slot)?.desk_scan(station, &code).await
+    runtime(&slot).desk_scan(station, &code).await
 }
 
 #[tauri::command]
@@ -258,7 +264,7 @@ pub async fn desk_link(
     reason: Option<String>,
 ) -> Result<DeskView, RuntimeError> {
     let slot = current(&state).await?;
-    runtime(&slot)?.desk_link(station, reason).await
+    runtime(&slot).desk_link(station, reason).await
 }
 
 #[tauri::command]
@@ -267,7 +273,7 @@ pub async fn desk_reset(
     station: Uuid,
 ) -> Result<DeskView, RuntimeError> {
     let slot = current(&state).await?;
-    runtime(&slot)?.desk_reset(station).await
+    runtime(&slot).desk_reset(station).await
 }
 
 #[tauri::command]
@@ -278,7 +284,7 @@ pub async fn desk_search(
     query: String,
 ) -> Result<SearchView, RuntimeError> {
     let slot = current(&state).await?;
-    runtime(&slot)?.desk_search(station, by, &query).await
+    runtime(&slot).desk_search(station, by, &query).await
 }
 
 #[tauri::command]
@@ -288,7 +294,7 @@ pub async fn desk_print(
     session_id: Uuid,
 ) -> Result<BadgeView, RuntimeError> {
     let slot = current(&state).await?;
-    runtime(&slot)?.desk_print(station, session_id).await
+    runtime(&slot).desk_print(station, session_id).await
 }
 
 #[tauri::command]
@@ -298,13 +304,13 @@ pub async fn gate_recent(
     limit: usize,
 ) -> Result<Vec<GateView>, RuntimeError> {
     let slot = current(&state).await?;
-    runtime(&slot)?.gate_recent(station, limit).await
+    runtime(&slot).gate_recent(station, limit).await
 }
 
 #[tauri::command]
 pub async fn problems(state: tauri::State<'_, AppState>) -> Result<Vec<ProblemView>, RuntimeError> {
     let slot = current(&state).await?;
-    runtime(&slot)?.problems().await
+    runtime(&slot).problems().await
 }
 
 #[tauri::command]
@@ -314,19 +320,19 @@ pub async fn dismiss_problem(
     id: i64,
 ) -> Result<bool, RuntimeError> {
     let slot = current(&state).await?;
-    runtime(&slot)?.dismiss(station, id).await
+    runtime(&slot).dismiss(station, id).await
 }
 
 #[tauri::command]
 pub async fn sync_now(state: tauri::State<'_, AppState>) -> Result<(), RuntimeError> {
     let slot = current(&state).await?;
-    runtime(&slot)?.sync_now().await
+    runtime(&slot).sync_now().await
 }
 
 #[tauri::command]
 pub async fn export_diagnostics(state: tauri::State<'_, AppState>) -> Result<String, RuntimeError> {
     let slot = current(&state).await?;
-    let path = runtime(&slot)?.export_diagnostics().await?;
+    let path = runtime(&slot).export_diagnostics().await?;
     Ok(path.display().to_string())
 }
 
@@ -337,7 +343,7 @@ pub async fn sim_place(
     uid_hex: String,
 ) -> Result<(), RuntimeError> {
     let slot = current(&state).await?;
-    runtime(&slot)?.sim_place(station, &uid_hex).await
+    runtime(&slot).sim_place(station, &uid_hex).await
 }
 
 #[tauri::command]
@@ -346,7 +352,7 @@ pub async fn sim_clear(
     station: Uuid,
 ) -> Result<(), RuntimeError> {
     let slot = current(&state).await?;
-    runtime(&slot)?.sim_clear(station).await
+    runtime(&slot).sim_clear(station).await
 }
 
 #[tauri::command]
@@ -356,7 +362,7 @@ pub async fn sim_pass(
     uid_hex: String,
 ) -> Result<(), RuntimeError> {
     let slot = current(&state).await?;
-    runtime(&slot)?.sim_pass(station, &uid_hex).await
+    runtime(&slot).sim_pass(station, &uid_hex).await
 }
 
 #[tauri::command]
@@ -366,7 +372,7 @@ pub async fn sim_set_connected(
     connected: bool,
 ) -> Result<(), RuntimeError> {
     let slot = current(&state).await?;
-    runtime(&slot)?.sim_set_connected(station, connected).await
+    runtime(&slot).sim_set_connected(station, connected).await
 }
 
 /// The reader list the vendor library can see.
@@ -392,18 +398,17 @@ pub async fn hardware_test(
     action: HardwareTestAction,
 ) -> Result<HardwareTestView, RuntimeError> {
     let slot = current(&state).await?;
-    runtime(&slot)?.hardware_test(station, action).await
+    runtime(&slot).hardware_test(station, action).await
 }
 
-fn runtime(slot: &Option<Runtime>) -> Result<&Runtime, RuntimeError> {
-    slot.as_ref().ok_or_else(not_configured)
+fn runtime(slot: &Arc<Runtime>) -> &Runtime {
+    slot.as_ref()
 }
 
-/// Kept for the exit guard, which must stop the stations without holding the
-/// lock while a request is in flight.
+/// Cancel active work without waiting on the state lock it used to own.
 pub async fn shutdown_runtime(state: &AppState) {
-    let mut slot = state.runtime.write().await;
-    if let Some(mut running) = slot.take() {
+    let running = state.runtime.write().await.take();
+    if let Some(running) = running {
         let _ = running.shutdown().await;
     }
 }

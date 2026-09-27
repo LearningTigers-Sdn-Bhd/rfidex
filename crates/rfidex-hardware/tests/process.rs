@@ -156,6 +156,41 @@ fn stalled_operation_can_be_cancelled_without_request_lock() {
 }
 
 #[test]
+fn stop_during_stalled_open_reaps_child_without_request_lock() {
+    let fixture = Fixture::start("stall_open_reply");
+    let (tx, rx) = std::sync::mpsc::channel();
+    let runner = std::thread::spawn(move || {
+        let outcome = HardwareClient::start_with_stop(&launcher(), &config(9_000), |control| {
+            tx.send(control).unwrap();
+            Ok(())
+        });
+        start_error(outcome)
+    });
+    let control = rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("startup control published");
+    let wait_until = Instant::now() + Duration::from_secs(5);
+    while fixture.count_of("open") == 0 && Instant::now() < wait_until {
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert_eq!(fixture.count_of("open"), 1, "child stalled during Open");
+    let cancelled = Instant::now();
+    control.stop();
+    assert_eq!(runner.join().unwrap(), WireError::Disconnected);
+    assert!(cancelled.elapsed() < Duration::from_secs(2));
+    assert_eq!(fixture.count_of("open"), 1);
+}
+
+#[test]
+fn a_late_partial_reply_cannot_finish_after_deadline() {
+    let fixture = Fixture::start("late_partial_reply");
+    let mut client = HardwareClient::start(&launcher(), &config(300)).unwrap();
+    assert_eq!(client.call(Operation::Inventory), Err(WireError::Timeout));
+    assert!(!client.is_alive());
+    assert_eq!(fixture.count_of("inventory"), 1);
+}
+
+#[test]
 fn write_timeout_is_not_retried() {
     let fixture = Fixture::start("stall_write");
     let mut client = HardwareClient::start(&launcher(), &config(300)).expect("the helper starts");

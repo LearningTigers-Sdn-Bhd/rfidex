@@ -510,6 +510,28 @@ fn read_full(stream: &mut std::net::TcpStream, buffer: &mut [u8]) -> std::io::Re
 }
 
 #[tokio::test]
+async fn real_gate_never_claims_connected_before_a_reader_answers() {
+    let gate = Uuid::from_u128(52);
+    let mut harness = Harness::start_hardware(
+        RfidMode::Bind,
+        common::fast_options(),
+        vec![real_gate(52, "Entry gate", Role::Entry, idle_reader(4_000))],
+        no_helper(),
+    )
+    .await;
+    let status = harness.runtime.status().await.unwrap();
+    assert!(
+        !status
+            .stations
+            .iter()
+            .find(|s| s.id == gate)
+            .unwrap()
+            .connected
+    );
+    harness.stop().await;
+}
+
+#[tokio::test]
 async fn hardware_stall_does_not_block_status_or_other_station() {
     let desk = common::desk_id();
     let mut harness = Harness::start_hardware(

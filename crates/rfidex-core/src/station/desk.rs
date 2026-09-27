@@ -38,7 +38,7 @@ pub enum DeskError {
     PayloadTooLarge { capacity: usize, needed: usize },
     #[error("this reader cannot write stickers")]
     WriteUnsupported,
-    #[error("write failed after retry; use another sticker")]
+    #[error("write or readback failed; use another sticker")]
     WriteVerifyFailed,
     #[error("a reason is required to replace")]
     ReasonRequired,
@@ -332,22 +332,16 @@ impl<R: TagReaderWriter> DeskStation<R> {
         blocks: usize,
     ) -> Result<(), DeskError> {
         let data = codec::padded(public_id, mem.block_size);
-        for _attempt in 0..2 {
-            if self
-                .reader
-                .write_blocks(&tag.uid_raw, self.write_start_block, &data)
-                .is_err()
-            {
-                continue;
-            }
-            if self
-                .reader
-                .read_blocks(&tag.uid_raw, self.write_start_block, blocks as u8)?
-                == data
-            {
-                return Ok(());
-            }
+        // A failed call can have changed the sticker. Never replay an unknown write.
+        self.reader
+            .write_blocks(&tag.uid_raw, self.write_start_block, &data)
+            .map_err(|_| DeskError::WriteVerifyFailed)?;
+        match self
+            .reader
+            .read_blocks(&tag.uid_raw, self.write_start_block, blocks as u8)
+        {
+            Ok(readback) if readback == data => Ok(()),
+            _ => Err(DeskError::WriteVerifyFailed),
         }
-        Err(DeskError::WriteVerifyFailed)
     }
 }

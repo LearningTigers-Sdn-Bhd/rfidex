@@ -148,6 +148,61 @@ impl Deadline {
     }
 }
 
+/// A TCP stream whose individual socket attempts use the exchange's remaining
+/// time, rather than reusing the timeout set before the first byte arrived.
+pub struct DeadlineSocket<'a> {
+    stream: &'a mut std::net::TcpStream,
+    deadline: &'a Deadline,
+}
+
+impl<'a> DeadlineSocket<'a> {
+    pub fn new(stream: &'a mut std::net::TcpStream, deadline: &'a Deadline) -> Self {
+        Self { stream, deadline }
+    }
+
+    fn arm(&self) -> std::io::Result<()> {
+        let left = self
+            .deadline
+            .remaining()
+            .map_err(|_| std::io::ErrorKind::TimedOut)?;
+        if left < Duration::from_millis(1) {
+            return Err(std::io::ErrorKind::TimedOut.into());
+        }
+        self.stream.set_read_timeout(Some(left))?;
+        self.stream.set_write_timeout(Some(left))
+    }
+}
+
+impl Read for DeadlineSocket<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.arm()?;
+        let count = self.stream.read(buf)?;
+        self.deadline
+            .check()
+            .map_err(|_| std::io::ErrorKind::TimedOut)?;
+        Ok(count)
+    }
+}
+
+impl Write for DeadlineSocket<'_> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.arm()?;
+        let count = self.stream.write(buf)?;
+        self.deadline
+            .check()
+            .map_err(|_| std::io::ErrorKind::TimedOut)?;
+        Ok(count)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.arm()?;
+        self.stream.flush()?;
+        self.deadline
+            .check()
+            .map_err(|_| std::io::ErrorKind::TimedOut.into())
+    }
+}
+
 pub fn encode_frame<T: Serialize>(value: &T) -> Result<Vec<u8>, WireError> {
     let body = serde_json::to_vec(value).map_err(|_| WireError::BadResponse)?;
     if body.is_empty() || body.len() > MAX_FRAME {
@@ -167,6 +222,7 @@ pub fn write_frame<W: Write + ?Sized, T: Serialize>(
     let bytes = encode_frame(value)?;
     deadline.check()?;
     sink.write_all(&bytes).map_err(io_error)?;
+    deadline.check()?;
     sink.flush().map_err(io_error)?;
     deadline.check()
 }
@@ -186,6 +242,7 @@ pub fn read_frame_bytes<R: Read + ?Sized>(
     }
     let mut body = vec![0u8; len];
     read_exact(source, &mut body, deadline)?;
+    deadline.check()?;
     Ok(body)
 }
 
@@ -194,21 +251,27 @@ pub fn read_frame<R: Read + ?Sized, T: DeserializeOwned>(
     deadline: &Deadline,
 ) -> Result<T, WireError> {
     let body = read_frame_bytes(source, deadline)?;
-    serde_json::from_slice(&body).map_err(|_| WireError::BadResponse)
+    let value = serde_json::from_slice(&body).map_err(|_| WireError::BadResponse)?;
+    deadline.check()?;
+    Ok(value)
 }
 
 pub fn read_request<R: Read + ?Sized>(
     source: &mut R,
     deadline: &Deadline,
 ) -> Result<Request, WireError> {
-    parse_request(&read_frame_bytes(source, deadline)?)
+    let request = parse_request(&read_frame_bytes(source, deadline)?)?;
+    deadline.check()?;
+    Ok(request)
 }
 
 pub fn read_reply<R: Read + ?Sized>(
     source: &mut R,
     deadline: &Deadline,
 ) -> Result<Reply, WireError> {
-    parse_reply(&read_frame_bytes(source, deadline)?)
+    let reply = parse_reply(&read_frame_bytes(source, deadline)?)?;
+    deadline.check()?;
+    Ok(reply)
 }
 
 /// A request may carry only the fields its own operation defines.
@@ -281,7 +344,10 @@ fn read_exact<R: Read + ?Sized>(
         deadline.check()?;
         match source.read(&mut buf[filled..]) {
             Ok(0) => return Err(WireError::Disconnected),
-            Ok(n) => filled += n,
+            Ok(n) => {
+                filled += n;
+                deadline.check()?;
+            }
             Err(e) if e.kind() == ErrorKind::Interrupted => continue,
             Err(e) if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::TimedOut => {
                 return Err(WireError::Timeout)
@@ -389,6 +455,37 @@ mod tests {
         let mut reader = Cursor::new(encode_frame(&64u32).unwrap());
         assert_eq!(
             read_frame::<_, u32>(&mut reader, &deadline),
+            Err(WireError::Timeout)
+        );
+    }
+
+    struct LateFinalRead {
+        frame: Vec<u8>,
+        first: bool,
+    }
+
+    impl Read for LateFinalRead {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            if self.first {
+                self.first = false;
+                buf.copy_from_slice(&self.frame[..buf.len()]);
+                self.frame.drain(..buf.len());
+                return Ok(buf.len());
+            }
+            std::thread::sleep(Duration::from_millis(80));
+            let n = self.frame.len().min(buf.len());
+            buf[..n].copy_from_slice(&self.frame[..n]);
+            self.frame.drain(..n);
+            Ok(n)
+        }
+    }
+
+    #[test]
+    fn completed_frame_after_deadline_is_not_accepted() {
+        let frame = encode_frame(&42u32).unwrap();
+        let mut reader = LateFinalRead { frame, first: true };
+        assert_eq!(
+            read_frame::<_, u32>(&mut reader, &Deadline::started(25)),
             Err(WireError::Timeout)
         );
     }

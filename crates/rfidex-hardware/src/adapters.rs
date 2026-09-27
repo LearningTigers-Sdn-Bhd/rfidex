@@ -47,8 +47,11 @@ impl TransportStop {
         let stopped = self.stopped.clone();
         let current = self.current.clone();
         StopControl::new(move || {
-            stopped.store(true, Ordering::SeqCst);
-            let live = current.lock().unwrap_or_else(|e| e.into_inner()).take();
+            let live = {
+                let mut current = current.lock().unwrap_or_else(|e| e.into_inner());
+                stopped.store(true, Ordering::SeqCst);
+                current.take()
+            };
             if let Some(control) = live {
                 control.stop();
             }
@@ -58,11 +61,13 @@ impl TransportStop {
     /// Register a freshly built transport. A transport built after the stop
     /// flag was set is stopped at once and never used.
     fn adopt(&self, control: Arc<StopControl>) -> DeviceResult<()> {
+        let mut current = self.current.lock().unwrap_or_else(|e| e.into_inner());
         if self.stopped.load(Ordering::SeqCst) {
+            drop(current);
             control.stop();
             return Err(DeviceError::Disconnected);
         }
-        *self.current.lock().unwrap_or_else(|e| e.into_inner()) = Some(control);
+        *current = Some(control);
         Ok(())
     }
 
@@ -162,6 +167,9 @@ impl Reader {
     }
 
     fn ensure_connection(&mut self) -> DeviceResult<()> {
+        if self.stop.is_stopped() {
+            return Err(DeviceError::Disconnected);
+        }
         if self.connection.is_some() {
             return Ok(());
         }
@@ -175,8 +183,15 @@ impl Reader {
             }
             HardwareConfig::EcrfidSdk { .. } => {
                 let launcher = self.launcher.as_ref().ok_or(DeviceError::Disconnected)?;
-                let client = HardwareClient::start(launcher, &self.config).map_err(device_error)?;
-                self.stop.adopt(client.stop_control())?;
+                let client = HardwareClient::start_with_stop(launcher, &self.config, |control| {
+                    self.stop
+                        .adopt(control)
+                        .map_err(|_| WireError::Disconnected)
+                })
+                .map_err(device_error)?;
+                if self.stop.is_stopped() {
+                    return Err(DeviceError::Disconnected);
+                }
                 self.connection = Some(Connection::Sdk(client));
                 Ok(())
             }
@@ -237,7 +252,7 @@ impl Reader {
         }
         let uid = uid8(uid_raw)?;
         self.ensure_connection()?;
-        match self.connection.as_mut() {
+        let result = match self.connection.as_mut() {
             Some(Connection::Tcp(_)) => Err(DeviceError::WriteUnsupported),
             Some(Connection::Sdk(client)) => match client.call(Operation::Memory { uid }) {
                 Ok(Response::Memory {
@@ -252,7 +267,11 @@ impl Reader {
                 Err(e) => Err(device_error(e)),
             },
             None => Err(DeviceError::Disconnected),
+        };
+        if result.is_err() {
+            self.forget();
         }
+        result
     }
 
     fn read_blocks(&mut self, uid_raw: &[u8], start: u8, count: u8) -> DeviceResult<Vec<u8>> {
@@ -261,7 +280,7 @@ impl Reader {
         }
         let uid = uid8(uid_raw)?;
         self.ensure_connection()?;
-        match self.connection.as_mut() {
+        let result = match self.connection.as_mut() {
             Some(Connection::Tcp(_)) => Err(DeviceError::WriteUnsupported),
             Some(Connection::Sdk(client)) => {
                 match client.call(Operation::Read { uid, start, count }) {
@@ -271,7 +290,11 @@ impl Reader {
                 }
             }
             None => Err(DeviceError::Disconnected),
+        };
+        if result.is_err() {
+            self.forget();
         }
+        result
     }
 
     fn write_blocks(&mut self, uid_raw: &[u8], start: u8, data: &[u8]) -> DeviceResult<()> {
@@ -280,8 +303,13 @@ impl Reader {
             return Err(DeviceError::WriteUnsupported);
         }
         let uid = uid8(uid_raw)?;
+        // Once a session is uncertain, only an explicit read/probe may open a
+        // replacement. A second write must never trigger a fresh SDK handle.
+        if self.connection.is_none() && self.generation != 0 {
+            return Err(DeviceError::Disconnected);
+        }
         self.ensure_connection()?;
-        match self.connection.as_mut() {
+        let result = match self.connection.as_mut() {
             Some(Connection::Tcp(_)) => Err(DeviceError::WriteUnsupported),
             Some(Connection::Sdk(client)) => match client.call(Operation::Write {
                 uid,
@@ -293,19 +321,27 @@ impl Reader {
                 Err(e) => Err(device_error(e)),
             },
             None => Err(DeviceError::Disconnected),
+        };
+        if result.is_err() {
+            self.forget();
         }
+        result
     }
 
     fn raw_records(&mut self) -> DeviceResult<Vec<Vec<u8>>> {
         self.ensure_connection()?;
-        match self.connection.as_mut() {
+        let result = match self.connection.as_mut() {
             Some(Connection::Sdk(client)) => match client.call(Operation::RawRecords) {
                 Ok(Response::Records { raw }) => Ok(raw),
                 Ok(_) => Err(DeviceError::Other(UNREADABLE.to_string())),
                 Err(e) => Err(device_error(e)),
             },
             _ => Err(DeviceError::WriteUnsupported),
+        };
+        if result.is_err() {
+            self.forget();
         }
+        result
     }
 }
 

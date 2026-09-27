@@ -114,7 +114,6 @@ async fn write_mode_writes_verifies_and_binds() {
     let aina = d.scan_ticket(&id(1).to_string()).await.unwrap().ticket;
     d.reader.place(tag(TAG_A, 4, 28));
     let t = d.detect_tag().unwrap();
-    d.reader.tear_next_write_after = Some(6); // first attempt torn, retry succeeds
     let linked = d.link(&aina, &t, None).await.unwrap();
     assert_eq!(linked.binding.unwrap().mode, BindMode::Written);
     assert_eq!(
@@ -122,6 +121,21 @@ async fn write_mode_writes_verifies_and_binds() {
         Ok(id(1))
     );
     assert_eq!(state.mock.lock().unwrap().active_bindings().len(), 1);
+}
+
+#[tokio::test]
+async fn torn_write_is_not_replayed_or_bound() {
+    let (mut d, state) = desk(RfidMode::Write).await;
+    let aina = d.scan_ticket(&id(1).to_string()).await.unwrap().ticket;
+    d.reader.place(tag(TAG_A, 4, 28));
+    let t = d.detect_tag().unwrap();
+    d.reader.tear_next_write_after = Some(6);
+    assert!(matches!(
+        d.link(&aina, &t, None).await,
+        Err(DeskError::WriteVerifyFailed)
+    ));
+    assert!(codec::decode(&d.reader.tag(&t.uid_raw).unwrap().memory).is_err());
+    assert!(state.mock.lock().unwrap().active_bindings().is_empty());
 }
 
 #[tokio::test]

@@ -18,7 +18,9 @@ use std::time::Duration;
 
 use crate::config::HardwareConfig;
 use crate::sdk::{EnumerationKind, SdkReader};
-use crate::wire::{read_request, write_frame, Deadline, Operation, Reply, Response, WireError};
+use crate::wire::{
+    read_request, write_frame, Deadline, DeadlineSocket, Operation, Reply, Response, WireError,
+};
 
 /// The switch that puts an executable into child mode.
 pub const CHILD_SWITCH: &str = "--rfid-device-host";
@@ -50,6 +52,22 @@ pub const ENUMERATE: &str = "enumerate";
 pub fn run_host_from_args(args: &[OsString]) -> Option<i32> {
     let parsed = ChildMode::parse(args)?;
     Some(match parsed {
+        Ok(mode) => match mode.run() {
+            Ok(()) => EXIT_OK,
+            Err(_) => EXIT_SESSION_FAILED,
+        },
+        Err(BadArguments) => EXIT_BAD_ARGUMENTS,
+    })
+}
+
+/// Desktop child entry: never accept commissioning, even via hand-crafted argv.
+pub fn run_app_host_from_args(args: &[OsString]) -> Option<i32> {
+    let parsed = ChildMode::parse(args)?;
+    Some(match parsed {
+        Ok(ChildMode::Session {
+            commissioning: true,
+            ..
+        }) => EXIT_BAD_ARGUMENTS,
         Ok(mode) => match mode.run() {
             Ok(()) => EXIT_OK,
             Err(_) => EXIT_SESSION_FAILED,
@@ -167,23 +185,25 @@ impl ChildMode {
 
         // The token travels first and alone: the parent never reads a request
         // from a connection that has not proved it is the child it started.
+        let deadline = Deadline::started(HANDSHAKE_WINDOW_MS);
         write_frame(
-            &mut stream,
+            &mut DeadlineSocket::new(&mut stream, &deadline),
             &self.token().to_string(),
-            &Deadline::started(HANDSHAKE_WINDOW_MS),
+            &deadline,
         )?;
 
         match self {
             ChildMode::Session { commissioning, .. } => serve_session(stream, commissioning),
             ChildMode::Enumerate { kind, dll_path, .. } => {
                 let values = SdkReader::enumerate(&dll_path, kind)?;
+                let deadline = Deadline::started(REPLY_WINDOW_MS);
                 write_frame(
-                    &mut stream,
+                    &mut DeadlineSocket::new(&mut stream, &deadline),
                     &Reply {
                         id: 0,
                         result: Ok(Response::Strings { values }),
                     },
-                    &Deadline::started(REPLY_WINDOW_MS),
+                    &deadline,
                 )
             }
         }
@@ -195,15 +215,19 @@ fn serve_session(mut stream: TcpStream, commissioning: bool) -> Result<(), WireE
     let mut config: Option<HardwareConfig> = None;
     // A closed or unreadable channel is how a session ends: the parent owns the
     // decision to stop, and the child goes with it.
-    while let Ok(request) = read_request(&mut stream, &Deadline::started(WAIT_FOR_PARENT_MS)) {
+    while let Ok(request) = {
+        let deadline = Deadline::started(WAIT_FOR_PARENT_MS);
+        read_request(&mut DeadlineSocket::new(&mut stream, &deadline), &deadline)
+    } {
         let result = dispatch(&mut device, &mut config, commissioning, request.operation);
+        let deadline = Deadline::started(REPLY_WINDOW_MS);
         if write_frame(
-            &mut stream,
+            &mut DeadlineSocket::new(&mut stream, &deadline),
             &Reply {
                 id: request.id,
                 result,
             },
-            &Deadline::started(REPLY_WINDOW_MS),
+            &deadline,
         )
         .is_err()
         {
@@ -335,6 +359,19 @@ mod tests {
                 kind: EnumerationKind::Hid,
                 dll_path: PathBuf::from("C:\\rfidex\\ECRFID.dll"),
             })
+        );
+    }
+
+    #[test]
+    fn desktop_child_denies_commissioning_before_connection() {
+        assert_eq!(
+            run_app_host_from_args(&args(&[
+                "--rfid-device-host",
+                "51000",
+                "token",
+                "commissioning"
+            ])),
+            Some(EXIT_BAD_ARGUMENTS)
         );
     }
 

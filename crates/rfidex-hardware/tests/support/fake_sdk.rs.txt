@@ -32,6 +32,8 @@ struct State {
     closed: usize,
     /// Pointers handed out and not yet released.
     live: HashMap<usize, usize>,
+    /// Enum arrays have pointer-element ownership distinct from byte buffers.
+    arrays: HashMap<usize, usize>,
     /// A release of a pointer that was never handed out, or was released twice.
     bad_frees: usize,
     /// Records calls that must never happen at all.
@@ -43,7 +45,7 @@ struct State {
 }
 
 impl State {
-    const fn new() -> State {
+    fn new() -> State {
         State {
             connect: String::new(),
             memory: Vec::new(),
@@ -51,6 +53,7 @@ impl State {
             opened: 0,
             closed: 0,
             live: HashMap::new(),
+            arrays: HashMap::new(),
             bad_frees: 0,
             forbidden: 0,
             last_inventory: (0, 0),
@@ -61,7 +64,7 @@ impl State {
     }
 }
 
-static STATE: Mutex<State> = Mutex::new(State::new());
+static STATE: std::sync::LazyLock<Mutex<State>> = std::sync::LazyLock::new(|| Mutex::new(State::new()));
 
 fn scenario() -> String {
     std::env::var("RFIDEX_FAKE_SCENARIO").unwrap_or_default()
@@ -118,14 +121,10 @@ unsafe fn give_string(text: &str) -> *mut c_char {
 }
 
 unsafe fn give_array(count: usize) -> *mut *mut u8 {
-    let mut pointers = vec![std::ptr::null_mut::<u8>(); count.max(1)];
+    let mut pointers = vec![std::ptr::null_mut::<u8>(); count.max(1)].into_boxed_slice();
     let pointer = pointers.as_mut_ptr();
+    STATE.lock().unwrap().arrays.insert(pointer as usize, pointers.len());
     std::mem::forget(pointers);
-    STATE
-        .lock()
-        .unwrap()
-        .live
-        .insert(pointer as usize, count.max(1) * std::mem::size_of::<*mut u8>());
     pointer
 }
 
@@ -165,20 +164,14 @@ pub extern "system" fn FreeBufferArray(array: *mut *mut u8, len: i32) -> i32 {
             STATE.lock().unwrap().bad_frees += 1;
             return -1;
         }
+        // Caller owns the outer stack pointer array. Vendor owns only its members.
         for index in 0..len as usize {
             let member = *array.add(index);
             if !member.is_null() && !take(member) {
                 return -1;
             }
+            *array.add(index) = std::ptr::null_mut();
         }
-        // The array itself was handed out as `len` pointers.
-        let elements = len as usize;
-        let removed = STATE.lock().unwrap().live.remove(&(array as usize));
-        if removed != Some(elements * std::mem::size_of::<*mut u8>()) {
-            STATE.lock().unwrap().bad_frees += 1;
-            return -1;
-        }
-        drop(Vec::from_raw_parts(array, elements, elements));
     }
     0
 }
@@ -191,11 +184,12 @@ pub extern "system" fn FreeHGlobal(pointer: *mut c_void) -> i32 {
             STATE.lock().unwrap().bad_frees += 1;
             return -1;
         }
-        if take(pointer as *mut u8) {
-            0
-        } else {
-            -1
+        let count = STATE.lock().unwrap().arrays.remove(&(pointer as usize));
+        if let Some(count) = count {
+            drop(Box::from_raw(std::ptr::slice_from_raw_parts_mut(pointer as *mut *mut u8, count)));
+            return 0;
         }
+        if take(pointer as *mut u8) { 0 } else { -1 }
     }
 }
 
@@ -353,15 +347,11 @@ pub extern "system" fn TagInventory(
     if scenario == "error" {
         return -5;
     }
-    let count = match scenario.as_str() {
+    let count: usize = match scenario.as_str() {
         "none" => 0,
-        "two_tags" => 2,
+        "two_tags" | "null_member" | "terminal" => 2,
         "five_tags" => 5,
-        "null_member" => 2,
-        "terminal" => 2,
-        "status_bad" => 1,
-        "bad_length" => 1,
-        "zero_length" => 1,
+        "status_bad" | "terminal_bad" | "bad_length" | "zero_length" => 1,
         _ => 1,
     };
     if scenario == "over_capacity" {
@@ -378,8 +368,13 @@ pub extern "system" fn TagInventory(
                 ("null_member", 1) => std::ptr::null_mut(),
                 ("terminal", 0) => tag_buffer(0x00, UID),
                 ("terminal", _) => terminal_buffer(),
+                ("terminal_bad", _) => {
+                    let pointer = terminal_buffer();
+                    *pointer.add(4) = 0x0F;
+                    pointer
+                }
                 ("status_bad", _) => {
-                    let mut pointer = tag_buffer(0x00, UID);
+                    let pointer = tag_buffer(0x00, UID);
                     *pointer.add(4) = 0x0F;
                     pointer
                 }
@@ -399,7 +394,7 @@ pub extern "system" fn TagInventory(
             put(array, index, member);
         }
     }
-    count
+    count as i32
 }
 
 #[no_mangle]
@@ -430,7 +425,7 @@ pub extern "system" fn ISO15693_GetTagSystemInfo(
         *receive.add(14) = 0x00;
         *receive.add(15) = 0x00;
         *receive.add(16) = BLOCKS as u8;
-        *receive.add(17) = BLOCK_SIZE as u8;
+        *receive.add(17) = if scenario == "memory_other" { 8 } else { BLOCK_SIZE as u8 };
         *receive.add(18) = 0x01;
     }
     20
@@ -576,7 +571,7 @@ pub extern "system" fn MeetingGateTakeRecords(
     if scenario == "records_many" {
         return 4;
     }
-    let body: Vec<u8> = vec![0x10, 0x00, 0xFE, 0x01, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06];
+    let body: Vec<u8> = vec![0x0B, 0x00, 0xFE, 0x01, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06];
     unsafe {
         let pointer = give(body.len());
         std::ptr::copy_nonoverlapping(body.as_ptr(), pointer, body.len());
@@ -629,7 +624,8 @@ pub extern "system" fn FakeForbiddenCalls() -> i32 {
 
 #[no_mangle]
 pub extern "system" fn FakeLiveAllocations() -> i32 {
-    STATE.lock().unwrap().live.len() as i32
+    let state = STATE.lock().unwrap();
+    (state.live.len() + state.arrays.len()) as i32
 }
 
 #[no_mangle]

@@ -16,7 +16,7 @@ pub mod wire;
 
 pub use adapters::{EcrfidDesk, EcrfidGate};
 pub use config::{HardwareConfig, SdkConnection};
-pub use host::run_host_from_args;
+pub use host::{run_app_host_from_args, run_host_from_args};
 pub use process::{HardwareClient, HostLauncher, StopControl};
 pub use sdk::EnumerationKind;
 pub use wire::{Operation, Reply, Request, Response, WireError, WireTag};

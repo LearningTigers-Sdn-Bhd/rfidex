@@ -177,6 +177,16 @@ fn serve(stream: &mut TcpStream, scenario: &str) {
             },
             result,
         };
+        if scenario == "late_partial_reply" && matches!(request.operation, Operation::Inventory) {
+            let bytes = rfidex_hardware::wire::encode_frame(&reply).unwrap();
+            let split = bytes.len() - 1;
+            if stream.write_all(&bytes[..split]).is_err() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(600));
+            let _ = stream.write_all(&bytes[split..]);
+            return;
+        }
         if write_frame(stream, &reply, &Deadline::started(5_000)).is_err() {
             return;
         }

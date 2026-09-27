@@ -12,7 +12,7 @@ sticker registration and entry/exit capture, with a local cache and durable queu
 [![CI](https://github.com/LearningTigers-Sdn-Bhd/rfidex/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/LearningTigers-Sdn-Bhd/rfidex/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/LearningTigers-Sdn-Bhd/rfidex?style=flat-square&label=release&color=38CBB0)](https://github.com/LearningTigers-Sdn-Bhd/rfidex/releases/latest)
 ![Windows x64](https://img.shields.io/badge/Windows-x64-1479D0?style=flat-square)
-![Hardware](https://img.shields.io/badge/Hardware-simulators_now-D5A34A?style=flat-square)
+![Hardware](https://img.shields.io/badge/Hardware-native_checks_pending-D5A34A?style=flat-square)
 
 [**Download**](https://github.com/LearningTigers-Sdn-Bhd/rfidex/releases/latest) · [**Try it**](#try-it) · [**Quick start**](#quick-start) · [**Architecture**](#architecture) · [**Operations**](#operations) · [**Status**](#development-status)
 
@@ -50,7 +50,7 @@ Rust owns runtime outcomes, validation and operator error messages. React render
 ![RfiDex station topology: independently stored desk, entry and exit stations connect to the EventzFlow device API; desk printing uses a separate loopback connection.](.github/readme/system-overview.svg)
 
 > [!IMPORTANT]
-> **Current integration boundary:** development and tests use `rfidex-mock`. Real ECRFID hardware integration is pending; the production EventzFlow RFID backend is on hold. Installer availability and simulated tests do not certify real readers, physical printing or production backend behavior.
+> **Current integration boundary:** development and tests use `rfidex-mock`. Reader integrations exist in source, but Windows native checks and physical reader acceptance remain pending; the production EventzFlow RFID backend is on hold. Installer availability and simulated tests do not certify real readers, physical printing or production backend behavior.
 
 <details>
 <summary><strong>Documentation index</strong></summary>
@@ -140,10 +140,7 @@ Aina and Ben are valid demo guests; Chong is unpaid and Devi is cancelled. Use a
 A station can drive a real ECRFID reader instead of the simulator. Choose
 **Real reader** in Setup and pick one of two profiles.
 
-> **Status: implemented, not hardware-verified.** The software paths below are
-> built and tested against fake devices. No physical reader has been used yet,
-> so no model, firmware or write capability is verified. See
-> [Verification status](#verification-status).
+> **Status: integration in source; Windows native checks and physical reader acceptance pending.** Fake-device tests and browser stubs cannot certify the vendor DLL, model, firmware, RF performance or write capability. See [Verification status](#verification-status).
 
 ### EC v1.9 over TCP
 
@@ -166,9 +163,13 @@ writes.
 The vendor library (`ECRFID.dll`) over **USB HID**, a **serial port** or the
 **network**. Fields are explicit: the absolute DLL path, the connection, the
 model as printed on the reader, and the endpoint (device path, COM port/baud/
-frame, or interface plus reader address). Use **Look for readers** to list what
-the library can see and pick the one you want; the first device in the list is
-never chosen for you.
+frame/bus address, or interface plus reader address). Use **Look for readers**
+for the selected transport and choose explicitly; USB entries fill the device
+path, COM entries fill the port, and NET entries fill the local interface (not
+the reader address). Enter the network reader IP and port separately. Nothing
+selects the first entry for you. HID address mode and exclusive access are
+shown; exclusive access is fixed at 1. SDK write verification cannot be
+switched on in Setup.
 
 The library is loaded in a **separate helper process**, started from the same
 executable. A native crash or a driver that never returns therefore cannot take
@@ -207,13 +208,12 @@ That is a separate, deliberate switch, off in every saved setup; **no button in
 the app turns it on**. Until it is on, the write step is refused before a byte
 reaches a reader, and the desk says the reader cannot write stickers.
 
-Before enabling writes on a reader, complete the disposable-tag acceptance
-checks: write to disposable stickers only, confirm the memory geometry and
-baseline, run twenty tear trials, and get 100% verified readback on at least
-fifty stickers with no collateral block changes and no forbidden writes. Only
-then enable it for that tested profile. See
-[`docs/rfidex/AUDITOR-HANDOVER.md`](../docs/rfidex/AUDITOR-HANDOVER.md) for the
-phase index; the locked checklist itself lives with the phase plan.
+Before enabling writes on a reader, complete §7.1 of the locked
+`docs/superpowers/specs/2026-09-25-rfidex-design.md` (maintained outside this
+repository) on stickers marked **DISPOSABLE**, never production badges:
+verify geometry and baseline, twenty tear trials, at least fifty stickers
+with 100% verified readback, no collateral block changes and no forbidden
+writes. Keep the switch off until the tested profile passes every check.
 
 ### Setup fields and tests
 
@@ -223,10 +223,10 @@ UIDs (the first 20; the message carries the full count). Neither writes
 anything, and both go through the station's own reader, so no second handle is
 opened to a reader already in use.
 
-If the screen holds unsaved edits, the buttons say **Save setup to test this
-reader** instead: a test targets the station the app has running, and unsaved
-edits are not that station yet. Changing a reader field clears the previous
-result.
+If the screen holds unsaved station edits, reader test buttons are disabled and
+say **Save setup to test this reader** instead: a test targets the station the
+app has running, not unsaved settings. A changed station invalidates previous
+results, including replies from a test already in flight.
 
 **A successful test is not verification.** "Reader answered" means the reader
 answered. It does not say the model or firmware is compatible, that the
@@ -236,18 +236,65 @@ protocol assumptions are right, or that writing works.
 
 ### Verification status
 
-Three states, and this repository is in the first:
+Three separate gates; none is implied by the others:
 
 | State | Meaning | Where we are |
 | :-- | :-- | :-- |
-| Software implemented | Built and tested against fake devices and the regression suite | **Yes** |
-| Hardware verified | The identified model, firmware, SDK and connection passed the physical checks | **No** |
-| Production ready | Hardware acceptance plus the EventzFlow backend and deployment work | **No** |
+| Software implemented | Reader integration exists in source; fake-device regression and full integration gates must pass | **Pending current full gate** |
+| Hardware verified | Identified model, firmware, SDK and connection pass physical checks | **No** |
+| Production ready | Hardware acceptance plus EventzFlow backend and deployment work | **No** |
 
 No claim is made that identical hardware will need no correction. The checksum
 polynomial, the vendor's inventory buffer array capacity, the block count and
 size convention, and the stored-record layout are all explicit, localised
 assumptions recorded with the phase evidence.
+
+Commission each delivered reader against H0–H9 in the locked
+`docs/superpowers/specs/2026-09-25-rfidex-design.md` (maintained outside this
+repository); record model, firmware, interface, captures and failures outside
+this public repository.
+Candidate Release DLL SHA-256 from planning:
+`973b09bb42d4167917470b850d13096176df5bf797216af2bb4a05e7c546af28`.
+This identifies a candidate file, not a verified vendor match or permission
+to redistribute it. Unverified assumptions include reflected `0xA001` CRC,
+96-pointer SDK inventory capacity, SDK count/block geometry and stored-record
+layout. Do not promote stored records to events or enable physical writing
+without their respective evidence and the locked acceptance checks.
+
+### Developer commissioning (Windows x64 only)
+
+Build the separate developer executable on Windows x64 with
+`cargo build -p rfidex-hardware --bin rfidex-device-host --locked`. Keep the
+reader config file and raw captures outside this public repository. Config
+is one SDK `HardwareConfig` JSON object using the actual reader settings:
+
+```json
+{
+  "transport": "ecrfid_sdk",
+  "dll_path": "C:\\vendor\\ECRFID.dll",
+  "connection": { "kind": "hid", "model": "EC1101", "path": "DEVICE_PATH_FROM_ENUMERATION", "address_mode": 1, "exclusive": 1 },
+  "inventory_mode": 4,
+  "timeout_ms": 2000,
+  "write_verified": false
+}
+```
+
+Replace the example model, DLL and device path with measured settings;
+`DEVICE_PATH_FROM_ENUMERATION` is not a usable reader endpoint. For COM or
+NET, supply the corresponding connection fields shown in Setup. On the
+commissioning PC, from repository root:
+
+```text
+target\debug\rfidex-device-host.exe commissioning <private-config.json> records
+target\debug\rfidex-device-host.exe commissioning <private-config.json> write --disposable-tag <16-hex-character-UID> <start-block-u8> <block-aligned-hex-data>
+```
+
+`records` prints raw hex lines only; it neither parses nor deletes stored
+records. Run `write` only on stickers marked **DISPOSABLE**, with measured UID,
+start block and data. It reads baseline, makes one write, compares exact
+readback, then exits with failure on mismatch without retry. Complete locked
+§7.1 physical checks before enabling normal desk writes; commissioning itself
+never certifies hardware or changes ordinary Setup write capability.
 
 <a id="registration-workflow"></a>
 
@@ -570,7 +617,7 @@ A matching version-tag run publishes a release and `latest.json`; manual dispatc
 | **P2** | Native app, operator flows, simulation and diagnostics | Implemented in repository |
 | **P3** | Simulated event rehearsal and Windows packaging | Test harness and packaging workflow available; hardware certification is separate |
 | **P7** | Desk search, check-in result and local print integration | Implemented against mock; production backend integration pending |
-| **P4** | Real ECRFID reader integration: transports, isolated SDK host, desk and gate adapters, Setup | Software implemented and tested against fake devices; **hardware verification pending** |
+| **P4** | Real ECRFID reader integration: transports, isolated SDK host, desk and gate adapters, Setup | Integration in source; full gate, Windows native checks and physical acceptance pending |
 | **P5** | Production EventzFlow RFID endpoints, visits and reports | On hold; separate approval |
 | **P6** | EventzFlow panel RFID views/reports | After P5; outside this desktop repository |
 

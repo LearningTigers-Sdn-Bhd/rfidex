@@ -3,7 +3,7 @@
 // Everything here is a control: Rust validates what is saved and writes every
 // outcome message. Nothing in this file decides whether a reader works, and a
 // successful test never claims a reader is verified.
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   EnumerationKind,
   HardwareConfig,
@@ -64,26 +64,37 @@ interface Props {
 }
 
 export default function HardwareFields({ station, dirty, onChange }: Props) {
+  // Track station identity, not just serialized values: edit-then-revert must
+  // still invalidate a result returned by an earlier reader request.
+  const revision = useRef({ station, dirty, number: 0 });
+  if (revision.current.station !== station || revision.current.dirty !== dirty) {
+    revision.current = { station, dirty, number: revision.current.number + 1 };
+  }
   const [tested, setTested] = useState<
-    { action: HardwareTestAction; view: HardwareTestView } | null
+    { revision: number; action: HardwareTestAction; view: HardwareTestView } | null
   >(null);
   const [busy, setBusy] = useState(false);
-  const [failure, setFailure] = useState<string | null>(null);
+  const [failure, setFailure] = useState<{ revision: number; message: string } | null>(null);
 
   const device = station.device;
   if (device.type !== "ecrfid_desk" && device.type !== "ecrfid_gate") return null;
   const hardware = device.hardware;
 
   const test = async (action: HardwareTestAction) => {
+    if (dirty || busy) return;
+    const current = revision.current.number;
     setBusy(true);
     setFailure(null);
-    // A changed reader invalidates the last result, so it is dropped before a
-    // new one is asked for.
     setTested(null);
     try {
-      setTested({ action, view: await hardwareTest(station.id, action) });
+      const view = await hardwareTest(station.id, action);
+      if (revision.current.number === current && !revision.current.dirty) {
+        setTested({ revision: current, action, view });
+      }
     } catch (e) {
-      setFailure(errorText(e));
+      if (revision.current.number === current && !revision.current.dirty) {
+        setFailure({ revision: current, message: errorText(e) });
+      }
     } finally {
       setBusy(false);
     }
@@ -138,15 +149,15 @@ export default function HardwareFields({ station, dirty, onChange }: Props) {
       {hardware.transport === "ec_v19_plain_tcp" ? (
         <TcpFields value={hardware} onChange={onChange} />
       ) : (
-        <SdkFields station={station} value={hardware} onChange={onChange} />
+        <SdkFields value={hardware} onChange={onChange} />
       )}
 
       <div className="row">
         <div className="actions">
-          <button type="button" onClick={() => void test("connect")} disabled={busy}>
+          <button type="button" onClick={() => void test("connect")} disabled={busy || dirty}>
             {dirty ? "Save setup to test this reader" : "Test connection"}
           </button>
-          <button type="button" onClick={() => void test("read_tags")} disabled={busy}>
+          <button type="button" onClick={() => void test("read_tags")} disabled={busy || dirty}>
             {dirty ? "Save setup to read stickers" : "Read stickers"}
           </button>
         </div>
@@ -161,7 +172,7 @@ export default function HardwareFields({ station, dirty, onChange }: Props) {
           These edits take effect after the setup is saved.
         </p>
       )}
-      {tested && (
+      {tested?.revision === revision.current.number && !dirty && (
         <div className={tested.view.ok ? "note" : "failure"} role="status">
           <p>{tested.view.message}</p>
           {tested.view.uid_raw_hex.length > 0 && (
@@ -175,9 +186,9 @@ export default function HardwareFields({ station, dirty, onChange }: Props) {
           )}
         </div>
       )}
-      {failure && (
+      {failure?.revision === revision.current.number && !dirty && (
         <p className="failure" role="status">
-          {failure}
+          {failure.message}
         </p>
       )}
     </div>
@@ -229,18 +240,21 @@ function TcpFields({
 }
 
 function SdkFields({
-  station,
   value,
   onChange,
 }: {
-  station: StationConfig;
   value: Sdk;
   onChange: (hardware: HardwareConfig) => void;
 }) {
-  const [kind, setKind] = useState<EnumerationKind>("hid");
-  const [found, setFound] = useState<string[] | null>(null);
+  const revision = useRef({ value, number: 0 });
+  if (revision.current.value !== value) {
+    revision.current = { value, number: revision.current.number + 1 };
+  }
+  const [found, setFound] = useState<
+    { revision: number; kind: EnumerationKind; entries: string[] } | null
+  >(null);
   const [busy, setBusy] = useState(false);
-  const [failure, setFailure] = useState<string | null>(null);
+  const [failure, setFailure] = useState<{ revision: number; message: string } | null>(null);
 
   const set = (update: Partial<Sdk>) => onChange({ ...value, ...update });
   const setConnection = (connection: SdkConnection) =>
@@ -248,13 +262,19 @@ function SdkFields({
   const connection = value.connection;
 
   const look = async () => {
+    if (busy) return;
+    const current = revision.current.number;
+    const kind = connection.kind;
     setBusy(true);
     setFailure(null);
     setFound(null);
     try {
-      setFound(await hardwareEnumerate(value.dll_path, kind));
+      const entries = await hardwareEnumerate(value.dll_path, kind);
+      if (revision.current.number === current) setFound({ revision: current, kind, entries });
     } catch (e) {
-      setFailure(errorText(e));
+      if (revision.current.number === current) {
+        setFailure({ revision: current, message: errorText(e) });
+      }
     } finally {
       setBusy(false);
     }
@@ -315,20 +335,21 @@ function SdkFields({
               you.
             </small>
           </label>
-          <div className="actions">
-            <button type="button" onClick={() => void look()} disabled={busy}>
-              Look for readers
-            </button>
-            <select
-              aria-label="What to look for"
-              value={kind}
-              onChange={(e) => setKind(e.target.value as EnumerationKind)}
-            >
-              <option value="hid">USB devices</option>
-              <option value="com">Serial ports</option>
-              <option value="net">Network devices</option>
-            </select>
-          </div>
+          <label>
+            Address mode
+            <input
+              type="number"
+              min={0}
+              value={connection.address_mode}
+              onChange={(e) => setConnection({ ...connection, address_mode: Number(e.target.value) })}
+            />
+            <small className="field-help">The vendor HID address mode; the demo uses 1.</small>
+          </label>
+          <label>
+            Exclusive access
+            <input type="number" value={connection.exclusive} readOnly />
+            <small className="field-help">This app reserves one reader for one station.</small>
+          </label>
         </div>
       )}
 
@@ -359,6 +380,16 @@ function SdkFields({
               value={connection.frame}
               onChange={(e) => setConnection({ ...connection, frame: e.target.value })}
               placeholder="8E1"
+            />
+          </label>
+          <label>
+            Bus address
+            <input
+              type="number"
+              min={0}
+              max={255}
+              value={connection.bus_address}
+              onChange={(e) => setConnection({ ...connection, bus_address: Number(e.target.value) })}
             />
           </label>
         </div>
@@ -405,34 +436,52 @@ function SdkFields({
           </small>
         </label>
       </div>
+      <div className="row">
+        <label>
+          Write acceptance
+          <input readOnly value={value.write_verified ? "Write enabled in saved profile" : "Write disabled"} />
+          <small className="field-help">This flag is not proof of physical acceptance. Setup cannot enable writing.</small>
+        </label>
+      </div>
+      <div className="actions">
+        <button type="button" onClick={() => void look()} disabled={busy}>
+          Look for readers
+        </button>
+      </div>
 
-      {found && (
+      {found?.revision === revision.current.number && (
         <p className="note" role="status">
-          {found.length === 0
+          {found.entries.length === 0
             ? "The library found no devices."
-            : `${found.length} device${found.length === 1 ? "" : "s"} found.`}
+            : `${found.entries.length} device${found.entries.length === 1 ? "" : "s"} found.`}
         </p>
       )}
-      {found && found.length > 0 && (
+      {found?.revision === revision.current.number && found.entries.length > 0 && (
         <ul className="found-readers">
-          {found.map((entry) => (
+          {found.entries.map((entry) => (
             <li key={entry}>
               <code>{entry}</code>
-              {connection.kind === "hid" && (
-                <button
-                  type="button"
-                  onClick={() => setConnection({ ...connection, path: entry })}
-                >
-                  Use this one
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={() => {
+                  if (found.kind === "hid" && connection.kind === "hid") {
+                    setConnection({ ...connection, path: entry });
+                  } else if (found.kind === "com" && connection.kind === "com") {
+                    setConnection({ ...connection, port: entry });
+                  } else if (found.kind === "net" && connection.kind === "net") {
+                    setConnection({ ...connection, interface: entry });
+                  }
+                }}
+              >
+                Use this one
+              </button>
             </li>
           ))}
         </ul>
       )}
-      {failure && (
+      {failure?.revision === revision.current.number && (
         <p className="failure" role="status">
-          {failure}
+          {failure.message}
         </p>
       )}
     </>

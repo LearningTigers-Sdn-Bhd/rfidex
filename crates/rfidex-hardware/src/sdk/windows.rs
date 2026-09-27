@@ -139,29 +139,19 @@ impl Drop for Library {
     }
 }
 
-/// A native batch of buffers that must be released exactly once.
+/// Caller owns the pointer array on its stack; vendor owns only returned buffers.
 struct Batch {
     slots: *mut *mut u8,
     len: i32,
     free: FreeBufferArray,
-    armed: bool,
 }
 
 impl Batch {
     fn new(slots: *mut *mut u8, len: i32, free: FreeBufferArray) -> Batch {
-        Batch {
-            slots,
-            len,
-            free,
-            armed: true,
-        }
+        Batch { slots, len, free }
     }
 
-    /// Copy every buffer in the batch into memory this process owns.
-    ///
-    /// The copies happen first and the batch is released afterwards, so a
-    /// buffer that turns out not to be a tag still leaves the whole batch freed
-    /// exactly once.
+    /// Copy every returned buffer before releasing native storage.
     fn copy(&self, count: usize) -> Result<Vec<Vec<u8>>, WireError> {
         let mut out = Vec::with_capacity(count);
         for index in 0..count {
@@ -183,10 +173,7 @@ impl Batch {
 
 impl Drop for Batch {
     fn drop(&mut self) {
-        if self.armed {
-            self.armed = false;
-            unsafe { (self.free)(self.slots, self.len) };
-        }
+        unsafe { (self.free)(self.slots, self.len) };
     }
 }
 
@@ -305,10 +292,29 @@ impl SdkReader {
         })
     }
 
-    pub fn read(&self, uid: &[u8; 8], start: u8, count: u8) -> Result<Response, WireError> {
+    fn checked_range(&self, uid: &[u8; 8], start: u8, count: u8) -> Result<(), WireError> {
         if count == 0 || count > MAX_BLOCKS_PER_CALL {
             return Err(WireError::OutOfRange);
         }
+        let Response::Memory {
+            block_size,
+            block_count,
+            ..
+        } = self.memory(uid)?
+        else {
+            return Err(WireError::BadResponse);
+        };
+        if block_size != BLOCK_SIZE {
+            return Err(WireError::Unsupported);
+        }
+        if usize::from(start) + usize::from(count) > block_count {
+            return Err(WireError::OutOfRange);
+        }
+        Ok(())
+    }
+
+    pub fn read(&self, uid: &[u8; 8], start: u8, count: u8) -> Result<Response, WireError> {
+        self.checked_range(uid, start, count)?;
         let mut receive = [0u8; 256];
         let rc = unsafe {
             (self.api.read_blocks)(
@@ -335,6 +341,13 @@ impl SdkReader {
         let count = u8::try_from(blocks).map_err(|_| WireError::OutOfRange)?;
         if count > MAX_BLOCKS_PER_CALL {
             return Err(WireError::OutOfRange);
+        }
+        self.checked_range(uid, start, count)?;
+        let Response::Tags { tags } = self.inventory()? else {
+            return Err(WireError::BadResponse);
+        };
+        if tags.len() != 1 || tags[0].uid != *uid {
+            return Err(WireError::NoTag);
         }
         let mut receive = [0u8; 8];
         let rc = unsafe {

@@ -389,3 +389,57 @@ fn cancel_ends_an_exchange_that_is_waiting() {
     );
     handle.join().unwrap();
 }
+
+#[test]
+fn stopped_tcp_reader_never_connects_on_later_inventory() {
+    let fake = FakeReader::bind();
+    let mut reader = TcpReader::new(fake.config(9_000, false)).unwrap();
+    reader.stop_control().stop();
+    let started = std::time::Instant::now();
+    assert!(reader.inventory().is_err());
+    assert!(!reader.is_connected());
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "stop forbids a new socket"
+    );
+}
+
+#[test]
+fn stop_during_connect_publication_cannot_leave_a_live_socket() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = match listener.local_addr().unwrap() {
+        std::net::SocketAddr::V4(address) => address,
+        _ => unreachable!(),
+    };
+    let (accepted, rx) = std::sync::mpsc::channel();
+    let server = std::thread::spawn(move || {
+        let (mut socket, _) = listener.accept().unwrap();
+        accepted.send(()).unwrap();
+        socket
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let mut request = [0; 8];
+        let _ = std::io::Read::read_exact(&mut socket, &mut request);
+    });
+    let reader = TcpReader::new(rfidex_hardware::config::HardwareConfig::EcV19PlainTcp {
+        address,
+        bus_address: 0xFF,
+        antenna_byte: false,
+        timeout_ms: 9_000,
+    })
+    .unwrap();
+    let stop = reader.stop_control();
+    let worker = std::thread::spawn(move || {
+        let mut reader = reader;
+        let answer = reader.inventory();
+        (answer, reader.is_connected())
+    });
+    rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    let started = std::time::Instant::now();
+    stop.stop();
+    let (answer, connected) = worker.join().unwrap();
+    assert!(answer.is_err());
+    assert!(!connected);
+    assert!(started.elapsed() < Duration::from_secs(2));
+    server.join().unwrap();
+}

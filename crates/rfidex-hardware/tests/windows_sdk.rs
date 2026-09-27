@@ -203,6 +203,8 @@ fn sdk_enumerates_without_opening_a_device() {
         "enumeration must not open a device, and must not pick the first one"
     );
     fake.assert_clean();
+
+    assert_eq!(fake.counter("FakeCloses"), 0);
 }
 
 #[test]
@@ -224,7 +226,12 @@ fn sdk_inventory_owns_and_decodes_buffers() {
             assert_eq!(found[0].dsfid, 0x00);
             assert_eq!(found[0].antenna, None);
         }
+        assert_eq!(
+            fake.count_of("free_buffer_array"),
+            usize::from(expected > 0)
+        );
         drop(reader);
+        assert_eq!(fake.counter("FakeOpens"), fake.counter("FakeCloses"));
         fake.assert_clean();
     }
 
@@ -248,6 +255,7 @@ fn sdk_inventory_owns_and_decodes_buffers() {
         ("status_bad", "a buffer whose status is not success"),
         ("bad_length", "a buffer whose length field is impossible"),
         ("zero_length", "a zero length buffer"),
+        ("terminal_bad", "a failed terminal marker"),
         ("null_member", "a null pointer inside a positive batch"),
         (
             "over_capacity",
@@ -261,8 +269,13 @@ fn sdk_inventory_owns_and_decodes_buffers() {
             reader.inventory().is_err(),
             "{why} must be an error, never an empty field"
         );
+        assert_eq!(
+            fake.count_of("free_buffer_array"),
+            usize::from(!matches!(scenario, "over_capacity" | "error"))
+        );
         drop(reader);
         fake.assert_clean();
+        assert_eq!(fake.counter("FakeOpens"), fake.counter("FakeCloses"));
     }
 
     fake.scenario("none");
@@ -274,7 +287,11 @@ fn sdk_inventory_owns_and_decodes_buffers() {
         "the mode is not hardcoded"
     );
     drop(reader);
-    assert_eq!(fake.counter("FakeCloses"), 1, "one close per context");
+    assert_eq!(
+        fake.counter("FakeOpens"),
+        fake.counter("FakeCloses"),
+        "one close per context"
+    );
     fake.assert_clean();
 }
 
@@ -318,6 +335,10 @@ fn sdk_reads_and_writes_exact_selected_blocks() {
         "the demo's readSecSta branch"
     );
 
+    drop(reader);
+    assert_eq!(fake.counter("FakeOpens"), fake.counter("FakeCloses"));
+    fake.assert_clean();
+
     // A read that describes a different sticker, or the wrong number of blocks,
     // is refused rather than sliced.
     for scenario in ["read_corrupt", "read_short"] {
@@ -325,8 +346,23 @@ fn sdk_reads_and_writes_exact_selected_blocks() {
         let reader = SdkReader::open(&fake.config(4)).unwrap();
         assert!(reader.read(&UID, 2, 2).is_err(), "{scenario}");
         drop(reader);
+        assert_eq!(fake.counter("FakeOpens"), fake.counter("FakeCloses"));
         fake.assert_clean();
     }
+
+    fake.scenario("memory_other");
+    let reader = SdkReader::open(&fake.config(4)).unwrap();
+    let before = fake.count_of("read_multiple_blocks");
+    assert_eq!(reader.read(&UID, 0, 1), Err(WireError::Unsupported));
+    assert_eq!(fake.count_of("read_multiple_blocks"), before);
+    let before = fake.count_of("write_multiple_blocks");
+    assert_eq!(
+        reader.write(&UID, 0, &[1, 2, 3, 4]),
+        Err(WireError::Unsupported)
+    );
+    assert_eq!(fake.count_of("write_multiple_blocks"), before);
+    drop(reader);
+    fake.assert_clean();
 
     // Writes: exact block-aligned data only. Nothing reaches the vendor for an
     // unaligned or out-of-range request, which the call log proves.
@@ -348,6 +384,26 @@ fn sdk_reads_and_writes_exact_selected_blocks() {
             "{why} reached the vendor library"
         );
     }
+
+    for (start, count) in [(28, 1), (27, 2), (u8::MAX, 1), (0, 0), (0, 9)] {
+        let before = fake.count_of("read_multiple_blocks");
+        assert_eq!(reader.read(&UID, start, count), Err(WireError::OutOfRange));
+        assert_eq!(fake.count_of("read_multiple_blocks"), before);
+    }
+    for (start, data) in [(28, &[1, 2, 3, 4][..]), (27, &[0; 8][..])] {
+        let before = fake.count_of("write_multiple_blocks");
+        assert_eq!(reader.write(&UID, start, data), Err(WireError::OutOfRange));
+        assert_eq!(fake.count_of("write_multiple_blocks"), before);
+    }
+
+    for scenario in ["two_tags", "one"] {
+        fake.scenario(scenario);
+        let before = fake.count_of("write_multiple_blocks");
+        let uid = if scenario == "one" { [0x99; 8] } else { UID };
+        assert_eq!(reader.write(&uid, 0, &[1, 2, 3, 4]), Err(WireError::NoTag));
+        assert_eq!(fake.count_of("write_multiple_blocks"), before);
+    }
+    fake.scenario("write_ok");
 
     reader.write(&UID, 2, &[1, 2, 3, 4, 5, 6, 7, 8]).unwrap();
     let written = fake.counter("FakeWriteRequest");
@@ -373,7 +429,24 @@ fn sdk_reads_and_writes_exact_selected_blocks() {
         "the block after the write keeps its baseline value"
     );
 
-    // A vendor status that is not success is a failed write, not a silent one.
+    drop(reader);
+    fake.assert_clean();
+
+    // Vendor reports success but only part of the block range reaches tag.
+    fake.scenario("write_tear");
+    let reader = SdkReader::open(&fake.config(4)).unwrap();
+    reader
+        .write(&UID, 2, &[41, 42, 43, 44, 45, 46, 47, 48])
+        .unwrap();
+    assert_ne!(
+        bytes(reader.read(&UID, 2, 2).unwrap()),
+        [41, 42, 43, 44, 45, 46, 47, 48]
+    );
+    drop(reader);
+    assert_eq!(fake.counter("FakeOpens"), fake.counter("FakeCloses"));
+    fake.assert_clean();
+
+    // Nonzero vendor status must not be accepted as successful write.
     fake.scenario("write_error");
     let reader = SdkReader::open(&fake.config(4)).unwrap();
     assert_eq!(
@@ -436,14 +509,27 @@ fn sdk_context_is_opened_once_and_closed_once() {
         1,
         "the connection string the vendor built is released exactly once"
     );
+    assert_eq!(fake.counter("FakeOpens"), fake.counter("FakeCloses"));
     fake.assert_clean();
 
-    // A reader that cannot be opened is not a reader, and nothing is leaked.
+    // A valid builder can still yield no context. A failed Open must not Close.
     fake.scenario("noopen");
+    let mut noopen = fake.config(4);
+    if let HardwareConfig::EcrfidSdk {
+        connection: SdkConnection::Hid { path, .. },
+        ..
+    } = &mut noopen
+    {
+        path.push_str("noopen");
+    }
+    let opened = fake.counter("FakeOpens");
+    let closed = fake.counter("FakeCloses");
     assert!(matches!(
-        SdkReader::open(&fake.config(4)),
+        SdkReader::open(&noopen),
         Err(WireError::Disconnected)
     ));
+    assert_eq!(fake.counter("FakeOpens"), opened);
+    assert_eq!(fake.counter("FakeCloses"), closed);
     fake.assert_clean();
 }
 
@@ -498,4 +584,129 @@ fn sdk_connection_parameters_reach_the_vendor_unchanged() {
     );
     drop(reader);
     fake.assert_clean();
+}
+
+#[test]
+fn commissioning_child_captures_raw_records_without_deleting() {
+    let fake = FakeDll::build();
+    fake.scenario("records_one");
+    let config_path = fake._dir.path().join("reader.json");
+    std::fs::write(&config_path, serde_json::to_vec(&fake.config(4)).unwrap()).unwrap();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_rfidex-device-host"))
+        .args(["commissioning", config_path.to_str().unwrap(), "records"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).unwrap().trim(),
+        "0B00FE0100010203040506"
+    );
+    assert_eq!(fake.count_of("take_records flag=0 maxcrp=1"), 1);
+    assert_eq!(fake.count_of("close"), 1);
+    assert_eq!(fake.count_of("FORBIDDEN"), 0);
+}
+
+#[test]
+fn commissioning_child_refuses_torn_write_on_readback() {
+    let fake = FakeDll::build();
+    fake.scenario("write_tear");
+    let config_path = fake._dir.path().join("reader.json");
+    std::fs::write(&config_path, serde_json::to_vec(&fake.config(4)).unwrap()).unwrap();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_rfidex-device-host"))
+        .args([
+            "commissioning",
+            config_path.to_str().unwrap(),
+            "write",
+            "--disposable-tag",
+            "E0040150ABCD1234",
+            "2",
+            "292A2B2C2D2E2F30",
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("readback mismatch"));
+    assert_eq!(fake.count_of("write_multiple_blocks"), 1);
+    assert_eq!(fake.count_of("close"), 1);
+}
+
+#[test]
+fn commissioning_child_writes_only_selected_blocks_and_verifies_readback() {
+    let fake = FakeDll::build();
+    fake.scenario("write_ok");
+    let config_path = fake._dir.path().join("reader.json");
+    std::fs::write(&config_path, serde_json::to_vec(&fake.config(4)).unwrap()).unwrap();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_rfidex-device-host"))
+        .args([
+            "commissioning",
+            config_path.to_str().unwrap(),
+            "write",
+            "--disposable-tag",
+            "E0040150ABCD1234",
+            "2",
+            "292A2B2C2D2E2F30",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8(output.stdout)
+        .unwrap()
+        .contains("readback=292A2B2C2D2E2F30"));
+    assert_eq!(fake.count_of("write_multiple_blocks"), 1);
+    assert_eq!(fake.count_of("close"), 1);
+}
+
+#[test]
+fn commissioning_requires_disposable_tag_flag_before_opening() {
+    let fake = FakeDll::build();
+    fake.scenario("one");
+    let config_path = fake._dir.path().join("reader.json");
+    std::fs::write(&config_path, serde_json::to_vec(&fake.config(4)).unwrap()).unwrap();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_rfidex-device-host"))
+        .args([
+            "commissioning",
+            config_path.to_str().unwrap(),
+            "write",
+            "E0040150ABCD1234",
+            "2",
+            "01020304",
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert_eq!(fake.count_of("open "), 0);
+    assert_eq!(fake.count_of("write_multiple_blocks"), 0);
+}
+
+#[test]
+fn app_child_rejects_records_and_unverified_writes() {
+    use rfidex_hardware::{HardwareClient, HostLauncher, Operation};
+    let fake = FakeDll::build();
+    fake.scenario("one");
+    let launcher = HostLauncher::new(env!("CARGO_BIN_EXE_rfidex-device-host"));
+    let mut client = HardwareClient::start(&launcher, &fake.config(4)).unwrap();
+    assert_eq!(
+        client.call(Operation::RawRecords),
+        Err(WireError::Unsupported)
+    );
+    assert_eq!(
+        client.call(Operation::Write {
+            uid: UID,
+            start: 0,
+            data: vec![1, 2, 3, 4]
+        }),
+        Err(WireError::WriteUnsupported)
+    );
+    assert_eq!(client.call(Operation::Close), Ok(Response::Unit));
+    assert_eq!(fake.count_of("write_multiple_blocks"), 0);
+    assert_eq!(fake.count_of("take_records"), 0);
+    assert_eq!(fake.count_of("close"), 1);
 }

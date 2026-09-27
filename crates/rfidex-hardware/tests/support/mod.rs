@@ -136,6 +136,9 @@ pub struct Script {
     pub chunks: Vec<Chunk>,
     /// Keep the socket open after the last chunk instead of closing it.
     pub hold_open: bool,
+    /// How many requests this one connection answers. A real reader keeps its
+    /// socket between polls, so a caller that polls twice stays connected.
+    pub rounds: usize,
 }
 
 impl Script {
@@ -145,6 +148,15 @@ impl Script {
             expect: Some(request),
             chunks: vec![Chunk::now(response)],
             hold_open: false,
+            rounds: 1,
+        }
+    }
+
+    /// The same answer to `rounds` requests, on one connection.
+    pub fn answering(request: Vec<u8>, response: Vec<u8>, rounds: usize) -> Script {
+        Script {
+            rounds,
+            ..Script::answer(request, response)
         }
     }
 
@@ -153,6 +165,7 @@ impl Script {
             expect: Some(request),
             chunks,
             hold_open,
+            rounds: 1,
         }
     }
 }
@@ -207,26 +220,35 @@ impl FakeReader {
                     .set_read_timeout(Some(Duration::from_secs(5)))
                     .expect("a read timeout");
                 let wanted = script.expect.as_ref().map(Vec::len).unwrap_or(8);
-                let request = read_request(&mut stream, wanted);
-                match (&script.expect, request) {
-                    (Some(expected), Some(request)) => {
-                        assert_eq!(
-                            &request, expected,
-                            "the fixture received a different request"
-                        );
-                        seen.push(request);
+                let mut answered = 0;
+                while answered < script.rounds.max(1) {
+                    let request = read_request(&mut stream, wanted);
+                    match (&script.expect, request) {
+                        (Some(expected), Some(request)) => {
+                            assert_eq!(
+                                &request, expected,
+                                "the fixture received a different request"
+                            );
+                            seen.push(request);
+                        }
+                        (None, Some(request)) => seen.push(request),
+                        (_, None) => panic!("the client never sent a complete request"),
                     }
-                    (None, Some(request)) => seen.push(request),
-                    (_, None) => panic!("the client never sent a complete request"),
-                }
-                for chunk in &script.chunks {
-                    if !chunk.delay.is_zero() {
-                        std::thread::sleep(chunk.delay);
+                    answered += 1;
+                    let mut wrote = true;
+                    for chunk in &script.chunks {
+                        if !chunk.delay.is_zero() {
+                            std::thread::sleep(chunk.delay);
+                        }
+                        if stream.write_all(&chunk.bytes).is_err() {
+                            wrote = false;
+                            break;
+                        }
+                        let _ = stream.flush();
                     }
-                    if stream.write_all(&chunk.bytes).is_err() {
+                    if !wrote {
                         break;
                     }
-                    let _ = stream.flush();
                 }
                 if script.hold_open {
                     std::thread::sleep(Duration::from_millis(600));

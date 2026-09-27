@@ -13,6 +13,8 @@ thiserror.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+chrono.workspace = true
+tokio = { workspace = true, features = ["full"] }
 
 [features]
 default = []

@@ -3035,11 +3035,13 @@ dependencies = [
 name = "rfidex-hardware"
 version = "0.3.0"
 dependencies = [
+ "chrono",
  "rfidex-core",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",
+ "tokio",
  "uuid",
 ]
 

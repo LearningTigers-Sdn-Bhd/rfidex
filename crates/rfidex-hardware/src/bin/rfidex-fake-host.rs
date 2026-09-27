@@ -15,11 +15,48 @@ use std::io::Write;
 use std::net::{Ipv4Addr, SocketAddr, TcpStream};
 use std::time::Duration;
 
+use rfidex_hardware::config::{HardwareConfig, SdkConnection};
 use rfidex_hardware::wire::{
     read_request, write_frame, Deadline, Operation, Reply, Response, WireError, WireTag,
 };
 
 const EXIT_BAD_ARGUMENTS: i32 = 2;
+
+const BLOCK_SIZE: usize = 4;
+const BLOCKS: usize = 28;
+const UID_A: [u8; 8] = [0xE0, 0x04, 0x01, 0x50, 0xAB, 0xCD, 0x12, 0x34];
+const UID_B: [u8; 8] = [0xE0, 0x04, 0x01, 0x50, 0xAB, 0xCD, 0x56, 0x78];
+
+/// The sticker the fake reader is holding. It is only as real as the adapter
+/// contract needs: a block map that reads back what was written.
+struct Sticker {
+    memory: Vec<u8>,
+}
+
+impl Sticker {
+    fn new() -> Sticker {
+        Sticker {
+            memory: vec![0u8; BLOCKS * BLOCK_SIZE],
+        }
+    }
+
+    fn read(&self, start: u8, count: u8) -> Option<Vec<u8>> {
+        let from = usize::from(start) * BLOCK_SIZE;
+        let to = from + usize::from(count) * BLOCK_SIZE;
+        self.memory.get(from..to).map(<[u8]>::to_vec)
+    }
+
+    fn write(&mut self, start: u8, data: &[u8], tear_at: Option<usize>) -> bool {
+        let from = usize::from(start) * BLOCK_SIZE;
+        let to = from + data.len();
+        if to > self.memory.len() {
+            return false;
+        }
+        let written = tear_at.unwrap_or(data.len()).min(data.len());
+        self.memory[from..from + written].copy_from_slice(&data[..written]);
+        true
+    }
+}
 
 /// Long enough that only the parent's own stop can end a stall.
 fn stall_forever() -> ! {
@@ -81,8 +118,26 @@ fn main() {
     std::process::exit(0);
 }
 
+/// The model the operator selected, which the child reports back as the model
+/// it was told to use. Nothing is parsed out of the raw answer.
+fn configured_model(operation: &Operation) -> Option<String> {
+    let Operation::Open { config } = operation else {
+        return None;
+    };
+    let HardwareConfig::EcrfidSdk { connection, .. } = config else {
+        return None;
+    };
+    Some(match connection {
+        SdkConnection::Hid { model, .. }
+        | SdkConnection::Com { model, .. }
+        | SdkConnection::Net { model, .. } => model.clone(),
+    })
+}
+
 fn serve(stream: &mut TcpStream, scenario: &str) {
     let mut opens = 0usize;
+    let mut sticker = Sticker::new();
+    let mut model: Option<String> = None;
     while let Ok(request) = read_request(stream, &Deadline::started(u32::MAX)) {
         log(&format!("op={}", name(&request.operation)));
         match scenario {
@@ -110,7 +165,10 @@ fn serve(stream: &mut TcpStream, scenario: &str) {
             _ => {}
         }
 
-        let result = answer(&request.operation, scenario);
+        if let Some(selected) = configured_model(&request.operation) {
+            model = Some(selected);
+        }
+        let result = answer(&request.operation, scenario, &mut sticker, model.as_deref());
         let reply = Reply {
             id: if scenario == "wrong_id" {
                 request.id + 1
@@ -124,6 +182,7 @@ fn serve(stream: &mut TcpStream, scenario: &str) {
         }
         if matches!(request.operation, Operation::Open { .. }) {
             opens += 1;
+            sticker = Sticker::new();
         }
         if matches!(request.operation, Operation::Close) {
             return;
@@ -144,32 +203,77 @@ fn name(operation: &Operation) -> &'static str {
     }
 }
 
-fn answer(operation: &Operation, scenario: &str) -> Result<Response, WireError> {
+fn answer(
+    operation: &Operation,
+    scenario: &str,
+    sticker: &mut Sticker,
+    model: Option<&str>,
+) -> Result<Response, WireError> {
     if scenario == "fail_everything" {
         return Err(WireError::Disconnected);
     }
+    if scenario == "malformed_response" {
+        return Err(WireError::BadResponse);
+    }
     Ok(match operation {
-        Operation::Open { .. } | Operation::Close | Operation::Write { .. } => Response::Unit,
+        // A write is answered further down, by the arm that also touches the
+        // sticker's memory.
+        Operation::Open { .. } | Operation::Close => Response::Unit,
         Operation::Info => Response::Info {
-            model: Some("FAKE".into()),
+            model: model.map(str::to_string),
             firmware: None,
             raw: vec![0xEC, 0x1E],
         },
         Operation::Inventory => Response::Tags {
-            tags: vec![WireTag {
-                uid: [0xE0, 0x04, 0x01, 0x50, 0xAB, 0xCD, 0x12, 0x34],
-                dsfid: 0x00,
-                antenna: None,
-            }],
+            tags: if scenario == "two_tags" {
+                vec![tag(UID_A), tag(UID_B)]
+            } else {
+                vec![tag(UID_A)]
+            },
         },
-        Operation::Memory { .. } => Response::Memory {
-            block_size: 4,
-            block_count: 28,
-            raw: vec![0; 32],
-        },
-        Operation::Read { count, .. } => Response::Bytes {
-            data: vec![0xAB; usize::from(*count) * 4],
-        },
+        Operation::Memory { .. } => {
+            if scenario == "memory_error" {
+                return Err(WireError::BadResponse);
+            }
+            Response::Memory {
+                block_size: BLOCK_SIZE,
+                block_count: BLOCKS,
+                raw: vec![0; 32],
+            }
+        }
+        Operation::Read { start, count, .. } => {
+            if scenario == "read_error" {
+                return Err(WireError::NoTag);
+            }
+            let data = sticker.read(*start, *count).ok_or(WireError::OutOfRange)?;
+            // A readback that does not match what was written, which is how a
+            // torn or corrupted sticker is caught.
+            if scenario == "read_corrupt" {
+                Response::Bytes {
+                    data: data.iter().map(|byte| byte ^ 0xFF).collect(),
+                }
+            } else {
+                Response::Bytes { data }
+            }
+        }
+        Operation::Write { start, data, .. } => {
+            if scenario == "write_error" {
+                return Err(WireError::WriteUnsupported);
+            }
+            let tear = (scenario == "write_tear").then_some(data.len() / 2);
+            if !sticker.write(*start, data, tear) {
+                return Err(WireError::OutOfRange);
+            }
+            Response::Unit
+        }
         Operation::RawRecords => Response::Records { raw: Vec::new() },
     })
+}
+
+fn tag(uid: [u8; 8]) -> WireTag {
+    WireTag {
+        uid,
+        dsfid: 0x00,
+        antenna: None,
+    }
 }

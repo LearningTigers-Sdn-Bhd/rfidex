@@ -78,6 +78,11 @@ pub enum Response {
     Records {
         raw: Vec<Vec<u8>>,
     },
+    /// The bounded result of a device enumeration, which is a startup command
+    /// of its own rather than an operation on an open reader.
+    Strings {
+        values: Vec<String>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -101,6 +106,8 @@ pub enum WireError {
     OutOfRange,
     #[error("writing is not enabled for this reader")]
     WriteUnsupported,
+    #[error("this build or this mode does not offer that")]
+    Unsupported,
     #[error("the reader or the helper process sent something unreadable")]
     BadResponse,
     #[error("the reader did not answer in time")]

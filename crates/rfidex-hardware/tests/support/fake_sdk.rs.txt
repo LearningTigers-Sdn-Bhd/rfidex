@@ -1,0 +1,702 @@
+// A stand-in for the vendor ECRFID.dll, used only by the native Windows test.
+//
+// The test builds this file with rustc into a temporary .dll and loads it
+// through the real loader, so the ABI, the calling convention, the allocation
+// ownership and the freeing paths are all exercised for real. The vendor
+// library is never required, and no vendor binary is committed.
+//
+// The behaviour for one test run is chosen by two environment variables, read
+// on every call:
+//
+//   RFIDEX_FAKE_SCENARIO  which fixture the calls should return
+//   RFIDEX_FAKE_LOG       a file every call appends one line to
+//
+// Everything is allocation-counted: every pointer handed out is registered, and
+// freeing a pointer that was never handed out (or handing it out twice) is
+// recorded as a fault the test asserts is zero.
+
+use std::collections::HashMap;
+use std::ffi::{c_char, c_void};
+use std::sync::Mutex;
+
+const UID: [u8; 8] = [0xE0, 0x04, 0x01, 0x50, 0xAB, 0xCD, 0x12, 0x34];
+const BLOCKS: usize = 28;
+const BLOCK_SIZE: usize = 4;
+
+struct State {
+    connect: String,
+    /// The sticker's memory, exactly as a desk would read and write it.
+    memory: Vec<u8>,
+    uid: [u8; 8],
+    opened: usize,
+    closed: usize,
+    /// Pointers handed out and not yet released.
+    live: HashMap<usize, usize>,
+    /// A release of a pointer that was never handed out, or was released twice.
+    bad_frees: usize,
+    /// Records calls that must never happen at all.
+    forbidden: usize,
+    last_inventory: (u8, u8),
+    last_read: (u8, u8, u8),
+    last_write: (u8, u8, Vec<u8>),
+    last_records: (u8, u8),
+}
+
+impl State {
+    const fn new() -> State {
+        State {
+            connect: String::new(),
+            memory: Vec::new(),
+            uid: UID,
+            opened: 0,
+            closed: 0,
+            live: HashMap::new(),
+            bad_frees: 0,
+            forbidden: 0,
+            last_inventory: (0, 0),
+            last_read: (0, 0, 0),
+            last_write: (0, 0, Vec::new()),
+            last_records: (0, 0),
+        }
+    }
+}
+
+static STATE: Mutex<State> = Mutex::new(State::new());
+
+fn scenario() -> String {
+    std::env::var("RFIDEX_FAKE_SCENARIO").unwrap_or_default()
+}
+
+fn log(line: &str) {
+    let Ok(path) = std::env::var("RFIDEX_FAKE_LOG") else {
+        return;
+    };
+    use std::io::Write;
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
+        let _ = writeln!(file, "{line}");
+    }
+}
+
+/// Hand out `len` bytes and remember them.
+unsafe fn give(len: usize) -> *mut u8 {
+    let mut bytes = vec![0u8; len.max(1)];
+    let pointer = bytes.as_mut_ptr();
+    std::mem::forget(bytes);
+    STATE
+        .lock()
+        .unwrap()
+        .live
+        .insert(pointer as usize, len.max(1));
+    pointer
+}
+
+/// Take a pointer back. Returns false if it was never handed out.
+unsafe fn take(pointer: *mut u8) -> bool {
+    let removed = STATE.lock().unwrap().live.remove(&(pointer as usize));
+    match removed {
+        Some(len) => {
+            drop(Vec::from_raw_parts(pointer, len, len));
+            true
+        }
+        None => {
+            STATE.lock().unwrap().bad_frees += 1;
+            false
+        }
+    }
+}
+
+unsafe fn give_string(text: &str) -> *mut c_char {
+    let bytes = text.as_bytes();
+    let pointer = give(bytes.len() + 1);
+    std::ptr::copy_nonoverlapping(bytes.as_ptr(), pointer, bytes.len());
+    *pointer.add(bytes.len()) = 0;
+    pointer as *mut c_char
+}
+
+unsafe fn give_array(count: usize) -> *mut *mut u8 {
+    let mut pointers = vec![std::ptr::null_mut::<u8>(); count.max(1)];
+    let pointer = pointers.as_mut_ptr();
+    std::mem::forget(pointers);
+    STATE
+        .lock()
+        .unwrap()
+        .live
+        .insert(pointer as usize, count.max(1) * std::mem::size_of::<*mut u8>());
+    pointer
+}
+
+unsafe fn put(array: *mut *mut u8, index: usize, value: *mut u8) {
+    *array.add(index) = value;
+}
+
+/// A tag buffer exactly as the vendor demo describes: length, address, command,
+/// command, status, DSFID, then the eight UID bytes.
+unsafe fn tag_buffer(dsfid: u8, uid: [u8; 8]) -> *mut u8 {
+    let mut body = vec![0u8; 15];
+    body[0] = 15;
+    body[1] = 0x00;
+    body[2] = 0xFE;
+    body[3] = 0x01;
+    body[4] = 0x00;
+    body[5] = dsfid;
+    body[6..14].copy_from_slice(&uid);
+    let pointer = give(body.len());
+    std::ptr::copy_nonoverlapping(body.as_ptr(), pointer, body.len());
+    pointer
+}
+
+unsafe fn terminal_buffer() -> *mut u8 {
+    let body = vec![7u8, 0x00, 0xFE, 0x01, 0x00, 0x00, 0x00];
+    let size = body[0] as usize;
+    let pointer = give(size);
+    std::ptr::copy_nonoverlapping(body.as_ptr(), pointer, size);
+    pointer
+}
+
+#[no_mangle]
+pub extern "system" fn FreeBufferArray(array: *mut *mut u8, len: i32) -> i32 {
+    unsafe {
+        log(&format!("free_buffer_array len={len}"));
+        if array.is_null() || len <= 0 {
+            STATE.lock().unwrap().bad_frees += 1;
+            return -1;
+        }
+        for index in 0..len as usize {
+            let member = *array.add(index);
+            if !member.is_null() && !take(member) {
+                return -1;
+            }
+        }
+        // The array itself was handed out as `len` pointers.
+        let elements = len as usize;
+        let removed = STATE.lock().unwrap().live.remove(&(array as usize));
+        if removed != Some(elements * std::mem::size_of::<*mut u8>()) {
+            STATE.lock().unwrap().bad_frees += 1;
+            return -1;
+        }
+        drop(Vec::from_raw_parts(array, elements, elements));
+    }
+    0
+}
+
+#[no_mangle]
+pub extern "system" fn FreeHGlobal(pointer: *mut c_void) -> i32 {
+    unsafe {
+        log("free_h_global");
+        if pointer.is_null() {
+            STATE.lock().unwrap().bad_frees += 1;
+            return -1;
+        }
+        if take(pointer as *mut u8) {
+            0
+        } else {
+            -1
+        }
+    }
+}
+
+unsafe fn string_list(values: &[&str]) -> *mut *mut c_char {
+    let array = give_array(values.len() + 1);
+    for (index, value) in values.iter().enumerate() {
+        put(array, index, give_string(value) as *mut u8);
+    }
+    put(array, values.len(), std::ptr::null_mut());
+    array as *mut *mut c_char
+}
+
+#[no_mangle]
+pub extern "system" fn GetHIDDriverList() -> *mut *mut c_char {
+    log("get_hid_driver_list");
+    unsafe { string_list(&["\\\\?\\hid#vid_0483&pid_5750#1", "\\\\?\\hid#vid_0483&pid_5750#2"]) }
+}
+
+#[no_mangle]
+pub extern "system" fn GetPortNameList() -> *mut *mut c_char {
+    log("get_port_name_list");
+    unsafe { string_list(&["COM3"]) }
+}
+
+#[no_mangle]
+pub extern "system" fn GetNetworkList() -> *mut *mut c_char {
+    log("get_network_list");
+    unsafe { string_list(&[]) }
+}
+
+unsafe fn remember(connect: *mut c_char) {
+    let text = std::ffi::CStr::from_ptr(connect).to_string_lossy().into_owned();
+    STATE.lock().unwrap().connect = text;
+}
+
+#[no_mangle]
+pub extern "system" fn GetHidConnectString(
+    model: *mut c_char,
+    path: *mut c_char,
+    addr_mode: i32,
+    exclusive: i32,
+) -> *mut c_char {
+    let model = unsafe { std::ffi::CStr::from_ptr(model) }.to_string_lossy();
+    let path = unsafe { std::ffi::CStr::from_ptr(path) }.to_string_lossy();
+    log(&format!(
+        "get_hid_connect_string model={model} path={path} addr_mode={addr_mode} exclusive={exclusive}"
+    ));
+    let text = format!("FAKE|hid|{model}|{path}|{addr_mode}|{exclusive}");
+    unsafe {
+        let pointer = give_string(&text);
+        remember(pointer);
+        pointer
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn GetComConnectString(
+    model: *mut c_char,
+    port: *mut c_char,
+    baud: i32,
+    frame: *mut c_char,
+    bus_address: i32,
+) -> *mut c_char {
+    let model = unsafe { std::ffi::CStr::from_ptr(model) }.to_string_lossy();
+    let port = unsafe { std::ffi::CStr::from_ptr(port) }.to_string_lossy();
+    let frame = unsafe { std::ffi::CStr::from_ptr(frame) }.to_string_lossy();
+    log(&format!(
+        "get_com_connect_string model={model} port={port} baud={baud} frame={frame} bus_address={bus_address}"
+    ));
+    let text = format!("FAKE|com|{model}|{port}|{baud}|{frame}|{bus_address}");
+    unsafe {
+        let pointer = give_string(&text);
+        remember(pointer);
+        pointer
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn GetNetConnectString(
+    model: *mut c_char,
+    interface: *mut c_char,
+    ip: *mut c_char,
+    port: i32,
+) -> *mut c_char {
+    let model = unsafe { std::ffi::CStr::from_ptr(model) }.to_string_lossy();
+    let interface = unsafe { std::ffi::CStr::from_ptr(interface) }.to_string_lossy();
+    let ip = unsafe { std::ffi::CStr::from_ptr(ip) }.to_string_lossy();
+    log(&format!(
+        "get_net_connect_string model={model} interface={interface} ip={ip} port={port}"
+    ));
+    let text = format!("FAKE|net|{model}|{interface}|{ip}|{port}");
+    unsafe {
+        let pointer = give_string(&text);
+        remember(pointer);
+        pointer
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Open(connect: *mut c_char) -> *mut c_void {
+    if connect.is_null() {
+        log("open null");
+        return std::ptr::null_mut();
+    }
+    let text = unsafe { std::ffi::CStr::from_ptr(connect) }
+        .to_string_lossy()
+        .into_owned();
+    log(&format!("open {text}"));
+    if text.contains("noopen") {
+        return std::ptr::null_mut();
+    }
+    let mut state = STATE.lock().unwrap();
+    state.connect = text;
+    state.opened += 1;
+    state.memory = vec![0u8; BLOCKS * BLOCK_SIZE];
+    // A recognisable baseline so a write can be told from a read.
+    for (index, byte) in state.memory.iter_mut().enumerate() {
+        *byte = (index % 251) as u8;
+    }
+    0x1 as *mut c_void
+}
+
+#[no_mangle]
+pub extern "system" fn Close(_ctx: *mut c_void) -> i32 {
+    log("close");
+    STATE.lock().unwrap().closed += 1;
+    0
+}
+
+#[no_mangle]
+pub extern "system" fn GetDeviceInfo(_ctx: *mut c_void, receive: *mut u8) -> i32 {
+    log("get_device_info");
+    unsafe {
+        std::ptr::write_bytes(receive, 0, 256);
+        for (index, byte) in [0xEC, 0x1E, 0x00, 0xFE, 0x00].iter().enumerate() {
+            *receive.add(index) = *byte;
+        }
+    }
+    30
+}
+
+#[no_mangle]
+pub extern "system" fn TagInventory(
+    _ctx: *mut c_void,
+    array: *mut *mut u8,
+    aip: u8,
+    mode: u8,
+) -> i32 {
+    let scenario = scenario();
+    {
+        let mut state = STATE.lock().unwrap();
+        state.last_inventory = (aip, mode);
+    }
+    log(&format!("tag_inventory aip={aip} mode={mode} scenario={scenario}"));
+    if scenario == "error" {
+        return -5;
+    }
+    let count = match scenario.as_str() {
+        "none" => 0,
+        "two_tags" => 2,
+        "five_tags" => 5,
+        "null_member" => 2,
+        "terminal" => 2,
+        "status_bad" => 1,
+        "bad_length" => 1,
+        "zero_length" => 1,
+        _ => 1,
+    };
+    if scenario == "over_capacity" {
+        // More buffers than the client's array can describe. Nothing is written
+        // and nothing is handed out: the client must refuse before walking it.
+        return 97;
+    }
+    if count == 0 {
+        return 0;
+    }
+    unsafe {
+        for index in 0..count {
+            let member = match (scenario.as_str(), index) {
+                ("null_member", 1) => std::ptr::null_mut(),
+                ("terminal", 0) => tag_buffer(0x00, UID),
+                ("terminal", _) => terminal_buffer(),
+                ("status_bad", _) => {
+                    let mut pointer = tag_buffer(0x00, UID);
+                    *pointer.add(4) = 0x0F;
+                    pointer
+                }
+                ("bad_length", _) => {
+                    let pointer = give(15);
+                    std::ptr::write_bytes(pointer, 0, 15);
+                    *pointer = 3;
+                    pointer
+                }
+                ("zero_length", _) => {
+                    let pointer = give(1);
+                    *pointer = 0;
+                    pointer
+                }
+                (_, _) => tag_buffer(0x00, UID),
+            };
+            put(array, index, member);
+        }
+    }
+    count
+}
+
+#[no_mangle]
+pub extern "system" fn ISO15693_GetTagSystemInfo(
+    _ctx: *mut c_void,
+    uid: *mut u8,
+    receive: *mut u8,
+) -> i32 {
+    let scenario = scenario();
+    log(&format!(
+        "get_tag_system_info uid={}",
+        hex(unsafe { std::slice::from_raw_parts(uid, 8) })
+    ));
+    if scenario == "memory_error" {
+        return -4;
+    }
+    if scenario == "memory_zero" {
+        unsafe {
+            std::ptr::write_bytes(receive, 0, 32);
+            *receive.add(4) = 0x00;
+        }
+        return 20;
+    }
+    unsafe {
+        std::ptr::write_bytes(receive, 0, 32);
+        *receive.add(0) = 20;
+        *receive.add(4) = 0x00;
+        *receive.add(14) = 0x00;
+        *receive.add(15) = 0x00;
+        *receive.add(16) = BLOCKS as u8;
+        *receive.add(17) = BLOCK_SIZE as u8;
+        *receive.add(18) = 0x01;
+    }
+    20
+}
+
+#[no_mangle]
+pub extern "system" fn ISO15693_ReadMultipleBlocks(
+    _ctx: *mut c_void,
+    uid: *mut u8,
+    read_sec_sta: u8,
+    start: u8,
+    count: u8,
+    receive: *mut u8,
+) -> i32 {
+    let scenario = scenario();
+    let requested = unsafe { std::slice::from_raw_parts(uid, 8) };
+    {
+        let mut state = STATE.lock().unwrap();
+        state.last_read = (start, count, read_sec_sta);
+    }
+    log(&format!(
+        "read_multiple_blocks uid={} read_sec_sta={read_sec_sta} start={start} count={count} scenario={scenario}",
+        hex(requested)
+    ));
+    if scenario == "read_error" {
+        return -4;
+    }
+    let groups = if scenario == "read_short" {
+        count.saturating_sub(1)
+    } else {
+        count
+    };
+    let uid_out = if scenario == "read_corrupt" {
+        [9u8; 8]
+    } else {
+        let mut copy = [0u8; 8];
+        copy.copy_from_slice(requested);
+        copy
+    };
+    let memory = STATE.lock().unwrap().memory.clone();
+    let region: Vec<u8> = (0..groups as usize)
+        .flat_map(|group| {
+            let block = start as usize + group;
+            let mut out = vec![0u8];
+            let from = block * BLOCK_SIZE;
+            let to = (from + BLOCK_SIZE).min(memory.len());
+            if from < memory.len() {
+                out.extend_from_slice(&memory[from..to]);
+            }
+            out
+        })
+        .collect();
+    unsafe {
+        let length = 17 + region.len();
+        std::ptr::write_bytes(receive, 0, 256);
+        *receive = length as u8;
+        *receive.add(1) = 0x00;
+        *receive.add(2) = 0xFE;
+        *receive.add(3) = 0x23;
+        *receive.add(4) = 0x00;
+        std::ptr::copy_nonoverlapping(uid_out.as_ptr(), receive.add(5), 8);
+        std::ptr::copy_nonoverlapping(region.as_ptr(), receive.add(15), region.len());
+    }
+    0
+}
+
+#[no_mangle]
+pub extern "system" fn ISO15693_WriteMultipleBlocks(
+    _ctx: *mut c_void,
+    uid: *mut u8,
+    start: u8,
+    count: u8,
+    buffer: *mut u8,
+    receive: *mut u8,
+) -> i32 {
+    let scenario = scenario();
+    let data = unsafe { std::slice::from_raw_parts(buffer, count as usize * BLOCK_SIZE).to_vec() };
+    {
+        let mut state = STATE.lock().unwrap();
+        state.last_write = (start, count, data.clone());
+    }
+    log(&format!(
+        "write_multiple_blocks uid={} start={start} count={count} data={} scenario={scenario}",
+        hex(unsafe { std::slice::from_raw_parts(uid, 8) }),
+        hex(&data)
+    ));
+    unsafe {
+        std::ptr::write_bytes(receive, 0, 8);
+    }
+    if scenario == "write_error" {
+        unsafe {
+            *receive.add(4) = 0x0F;
+        }
+        return 0;
+    }
+    // A torn write: the sticker leaves the field partway through.
+    let written = if scenario == "write_tear" && data.len() > 2 {
+        data.len() / 2
+    } else {
+        data.len()
+    };
+    let uid_requested = unsafe { std::slice::from_raw_parts(uid, 8) };
+    {
+        let mut state = STATE.lock().unwrap();
+        if state.uid != uid_requested {
+            return -1;
+        }
+        let from = start as usize * BLOCK_SIZE;
+        if from + data.len() > state.memory.len() {
+            return -1;
+        }
+        state.memory[from..from + written].copy_from_slice(&data[..written]);
+    }
+    0
+}
+
+#[no_mangle]
+pub extern "system" fn MeetingGateTakeRecords(
+    _ctx: *mut c_void,
+    array: *mut *mut u8,
+    flag: u8,
+    maxcrp: u8,
+) -> i32 {
+    let scenario = scenario();
+    {
+        let mut state = STATE.lock().unwrap();
+        state.last_records = (flag, maxcrp);
+        if flag != 0 || maxcrp != 1 {
+            // Anything else would be a delete, an initialise or a paged read.
+            // The test asserts this counter is zero.
+            state.forbidden += 1;
+        }
+    }
+    log(&format!(
+        "take_records flag={flag} maxcrp={maxcrp} scenario={scenario}"
+    ));
+    if scenario == "records_empty" {
+        return 0;
+    }
+    if scenario == "records_error" {
+        return -7;
+    }
+    if scenario == "records_many" {
+        return 4;
+    }
+    let body: Vec<u8> = vec![0x10, 0x00, 0xFE, 0x01, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06];
+    unsafe {
+        let pointer = give(body.len());
+        std::ptr::copy_nonoverlapping(body.as_ptr(), pointer, body.len());
+        put(array, 0, pointer);
+    }
+    1
+}
+
+// Exports the client must never reach. They exist so a wrongly bound function
+// would be visible rather than a link error.
+#[no_mangle]
+pub extern "system" fn MeetingGateClearFlashRecords(_receive: *mut u8) -> i32 {
+    STATE.lock().unwrap().forbidden += 1;
+    log("FORBIDDEN meeting_gate_clear_flash_records");
+    -1
+}
+
+#[no_mangle]
+pub extern "system" fn GateClearRecords(_receive: *mut u8) -> i32 {
+    STATE.lock().unwrap().forbidden += 1;
+    log("FORBIDDEN gate_clear_records");
+    -1
+}
+
+#[no_mangle]
+pub extern "system" fn ISO15693_WriteAFI(_uid: *mut u8, _afi: u8, _receive: *mut u8) -> i32 {
+    STATE.lock().unwrap().forbidden += 1;
+    log("FORBIDDEN write_afi");
+    -1
+}
+
+#[no_mangle]
+pub extern "system" fn ISO15693_WriteDSFID(_uid: *mut u8, _dsfid: u8, _receive: *mut u8) -> i32 {
+    STATE.lock().unwrap().forbidden += 1;
+    log("FORBIDDEN write_dsfid");
+    -1
+}
+
+// Test-only inspection helpers, reached through GetProcAddress by the test.
+
+#[no_mangle]
+pub extern "system" fn FakeBadFrees() -> i32 {
+    STATE.lock().unwrap().bad_frees as i32
+}
+
+#[no_mangle]
+pub extern "system" fn FakeForbiddenCalls() -> i32 {
+    STATE.lock().unwrap().forbidden as i32
+}
+
+#[no_mangle]
+pub extern "system" fn FakeLiveAllocations() -> i32 {
+    STATE.lock().unwrap().live.len() as i32
+}
+
+#[no_mangle]
+pub extern "system" fn FakeOpens() -> i32 {
+    STATE.lock().unwrap().opened as i32
+}
+
+#[no_mangle]
+pub extern "system" fn FakeCloses() -> i32 {
+    STATE.lock().unwrap().closed as i32
+}
+
+#[no_mangle]
+pub extern "system" fn FakeInventoryAip() -> i32 {
+    i32::from(STATE.lock().unwrap().last_inventory.0)
+}
+
+#[no_mangle]
+pub extern "system" fn FakeInventoryMode() -> i32 {
+    i32::from(STATE.lock().unwrap().last_inventory.1)
+}
+
+#[no_mangle]
+pub extern "system" fn FakeReadRequest() -> i32 {
+    let state = STATE.lock().unwrap();
+    let (start, count, _) = state.last_read;
+    i32::from(start) << 16 | i32::from(count) << 8
+}
+
+#[no_mangle]
+pub extern "system" fn FakeReadSecurity() -> i32 {
+    i32::from(STATE.lock().unwrap().last_read.2)
+}
+
+#[no_mangle]
+pub extern "system" fn FakeWriteRequest() -> i32 {
+    let state = STATE.lock().unwrap();
+    let (start, count, _) = state.last_write;
+    i32::from(start) << 16 | i32::from(count) << 8
+}
+
+#[no_mangle]
+pub extern "system" fn FakeMemoryAt(block: i32, offset: i32) -> i32 {
+    let state = STATE.lock().unwrap();
+    let index = block as usize * BLOCK_SIZE + offset as usize;
+    i32::from(*state.memory.get(index).unwrap_or(&0xFF))
+}
+
+#[no_mangle]
+pub extern "system" fn FakeRecordsRequest() -> i32 {
+    let state = STATE.lock().unwrap();
+    let (flag, maxcrp) = state.last_records;
+    i32::from(flag) << 8 | i32::from(maxcrp)
+}
+
+#[no_mangle]
+pub extern "system" fn FakeConnectString(buffer: *mut c_char, len: i32) -> i32 {
+    let text = STATE.lock().unwrap().connect.clone();
+    let bytes = text.as_bytes();
+    let keep = bytes.len().min(len.saturating_sub(1) as usize);
+    unsafe {
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), buffer as *mut u8, keep);
+        *buffer.add(keep) = 0;
+    }
+    keep as i32
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02X}")).collect()
+}

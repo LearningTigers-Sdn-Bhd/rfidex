@@ -13,3 +13,7 @@ thiserror.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
+
+[[bin]]
+name = "rfidex-device-host"
+path = "src/bin/rfidex-device-host.rs"

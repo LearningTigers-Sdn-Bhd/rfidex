@@ -19,7 +19,7 @@ use rfidex_core::sync::{SyncReport, SyncWorker, SENT_RETENTION_DAYS};
 use rfidex_core::tag::UidRule;
 use rfidex_core::APP_VERSION;
 use rfidex_hardware::adapters::{EcrfidDesk, EcrfidGate};
-use rfidex_hardware::process::HostLauncher;
+use rfidex_hardware::process::{HostLauncher, StopControl};
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 use uuid::Uuid;
@@ -53,11 +53,65 @@ impl Default for RuntimeOptions {
     }
 }
 
-/// Boxed so the enum stays small whatever a device holds; one allocation per
-/// station at startup.
+/// Behind an `Arc` so the enum stays small whatever a device holds, and so a
+/// blocking worker can own its station's device without borrowing the runtime.
+/// One allocation per station at startup.
 enum StationDevice {
-    Desk(Box<tokio::sync::Mutex<DeskSession>>),
-    Gate(Box<tokio::sync::Mutex<GateStation<GateDevice>>>),
+    Desk(Arc<tokio::sync::Mutex<DeskSession>>),
+    Gate(Arc<tokio::sync::Mutex<GateStation<GateDevice>>>),
+}
+
+/// Hardware work runs on blocking workers, off the async executor: a native
+/// call or a stalled socket must never occupy a Tokio worker thread. Every such
+/// task is tracked, so shutdown waits for the work it started instead of
+/// dropping a handle and letting it run on.
+#[derive(Default)]
+struct HardwareJobs {
+    jobs: Mutex<Vec<JoinHandle<()>>>,
+    stopped: std::sync::atomic::AtomicBool,
+}
+
+impl HardwareJobs {
+    /// Run one piece of blocking hardware work and wait for it.
+    async fn run<T: Send + 'static>(
+        &self,
+        work: impl FnOnce() -> T + Send + 'static,
+    ) -> Result<T, RuntimeError> {
+        if self.stopped.load(Ordering::SeqCst) {
+            return Err(reader_stopped());
+        }
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        let handle = tokio::task::spawn_blocking(move || {
+            let _ = sender.send(work());
+        });
+        self.track(handle);
+        receiver.await.map_err(|_| reader_stopped())
+    }
+
+    fn track(&self, handle: JoinHandle<()>) {
+        let mut jobs = self.jobs.lock().unwrap_or_else(|e| e.into_inner());
+        jobs.retain(|job| !job.is_finished());
+        jobs.push(handle);
+    }
+
+    /// Refuse new work and wait for the work already started.
+    async fn join_all(&self) {
+        self.stopped.store(true, Ordering::SeqCst);
+        let running = {
+            let mut jobs = self.jobs.lock().unwrap_or_else(|e| e.into_inner());
+            std::mem::take(&mut *jobs)
+        };
+        for job in running {
+            let _ = job.await;
+        }
+    }
+}
+
+fn reader_stopped() -> RuntimeError {
+    RuntimeError::new(
+        "reader_stopped",
+        "The reader stopped. Reconnect it and try again.",
+    )
 }
 
 /// Everything the status bar needs, kept apart from the device and store locks
@@ -95,6 +149,10 @@ pub struct StationRuntime {
     device: StationDevice,
     /// Present only for a real reader. Shutdown uses it to end hardware that is
     /// stuck without waiting for the call that is stuck.
+    hardware_stop: Option<Arc<StopControl>>,
+    /// The runtime's blocking-worker tracker, so this station's own loops put
+    /// device work where the rest of the hardware work goes.
+    hardware_jobs: Arc<HardwareJobs>,
     inner: Mutex<StationInner>,
     next_sequence: AtomicU64,
     stop: watch::Receiver<bool>,
@@ -311,6 +369,13 @@ impl StationRuntime {
             .map_err(|_| store_failure())
     }
 
+    /// One gate poll.
+    ///
+    /// The poll itself is synchronous and can wait on a reader, so it runs on a
+    /// blocking worker that owns its station's device. Nothing is published
+    /// until the job comes back: the stop flag is read again inside the worker,
+    /// so a station that was reconfigured or removed while the poll ran cannot
+    /// show its result on the new screen.
     async fn gate_tick_once(&self, now: DateTime<Utc>) {
         let StationDevice::Gate(device) = &self.device else {
             return;
@@ -320,8 +385,29 @@ impl StationRuntime {
             // correctly. Leave it in the device rather than consuming it.
             return;
         }
-        let mut gate = device.lock().await;
-        match gate.tick(now) {
+        let device = device.clone();
+        let mut stop = self.stop.clone();
+        let outcome = self
+            .hardware_jobs
+            .run(move || {
+                if *stop.borrow_and_update() {
+                    return None;
+                }
+                let result = {
+                    let mut gate = device.blocking_lock();
+                    gate.tick(now)
+                };
+                // The last thing checked before the result can leave the worker.
+                if *stop.borrow() {
+                    return None;
+                }
+                Some(result)
+            })
+            .await;
+        let Ok(Some(result)) = outcome else {
+            return;
+        };
+        match result {
             Ok(_) => {
                 let mut inner = self.lock();
                 inner.connected = true;
@@ -561,6 +647,7 @@ pub struct Runtime {
     stations: Vec<Arc<StationRuntime>>,
     stop: watch::Sender<bool>,
     tasks: Vec<JoinHandle<()>>,
+    hardware_jobs: Arc<HardwareJobs>,
     shutdown_error: Option<RuntimeError>,
 }
 
@@ -616,11 +703,20 @@ impl Runtime {
         // through must not leave earlier stations running with no owner.
         let library = Arc::new(Mutex::new(SimLibrary::new()));
         let (stop, _) = watch::channel(false);
+        let hardware_jobs = Arc::new(HardwareJobs::default());
         let mut stations = Vec::with_capacity(config.stations.len());
         for station_config in &config.stations {
             stations.push(Arc::new(
-                StationRuntime::build(&paths, &config, station_config, &opts, &stop, &launcher)
-                    .await?,
+                StationRuntime::build(
+                    &paths,
+                    &config,
+                    station_config,
+                    &opts,
+                    &stop,
+                    &launcher,
+                    hardware_jobs.clone(),
+                )
+                .await?,
             ));
         }
 
@@ -640,12 +736,24 @@ impl Runtime {
             stations,
             stop,
             tasks,
+            hardware_jobs,
             shutdown_error: None,
         })
     }
 
+    /// Stop signal, hardware cancellation, then the join.
+    ///
+    /// Every real reader is cancelled **before** anything is joined: a native
+    /// call or a socket read that is stuck is exactly what would otherwise hold
+    /// the join open. Cancelling never takes the lock the stuck call holds, so
+    /// this works even while a station's session is busy.
     pub async fn shutdown(&mut self) -> Result<(), RuntimeError> {
         let _ = self.stop.send(true);
+        self.cancel_hardware();
+        // The work already started comes back as soon as its reader is
+        // cancelled, so waiting for it is bounded by the cancellation rather
+        // than by the reader's own deadline.
+        self.hardware_jobs.join_all().await;
         let tasks = std::mem::take(&mut self.tasks);
         let mut failure = None;
         for task in tasks {
@@ -667,6 +775,15 @@ impl Runtime {
             return Err(e);
         }
         Ok(())
+    }
+
+    /// End every real reader this runtime owns.
+    fn cancel_hardware(&self) {
+        for station in &self.stations {
+            if let Some(control) = &station.hardware_stop {
+                control.stop();
+            }
+        }
     }
 
     /// Try a normal sync pass on every station, in configuration order.
@@ -729,16 +846,34 @@ impl Runtime {
         Ok(crate::desk::scan(&mut session, &runtime.store, code).await)
     }
 
+    /// Link the sticker the operator just tapped.
+    ///
+    /// The reader half of this runs synchronously and can block for as long as
+    /// the reader's own deadline, so it is moved off the async workers entirely:
+    /// the existing linking workflow runs on a blocking worker with the Tokio
+    /// handle, which keeps its confirmation, payload and print semantics
+    /// unchanged while a stalled reader stays unable to occupy a worker thread.
     pub async fn desk_link(
         &self,
         station: Uuid,
         reason: Option<String>,
     ) -> Result<DeskView, RuntimeError> {
-        let (runtime, mut session) = self.desk_session(station).await?;
-        if runtime.settings().is_none() {
-            return Ok(session.connect_first());
-        }
-        Ok(crate::desk::link(&mut session, &runtime.store, reason).await)
+        let runtime = self.station(station)?.clone();
+        let handle = tokio::runtime::Handle::current();
+        self.hardware_jobs
+            .run(move || {
+                handle.block_on(async move {
+                    let StationDevice::Desk(device) = &runtime.device else {
+                        return Err(wrong_station("link stickers"));
+                    };
+                    let mut session = device.lock().await;
+                    if runtime.settings().is_none() {
+                        return Ok(session.connect_first());
+                    }
+                    Ok(crate::desk::link(&mut session, &runtime.store, reason).await)
+                })
+            })
+            .await?
     }
 
     pub async fn desk_reset(&self, station: Uuid) -> Result<DeskView, RuntimeError> {
@@ -1064,6 +1199,7 @@ impl StationRuntime {
         opts: &RuntimeOptions,
         stop: &watch::Sender<bool>,
         launcher: &HostLauncher,
+        hardware_jobs: Arc<HardwareJobs>,
     ) -> Result<StationRuntime, RuntimeError> {
         let store = Arc::new(Mutex::new(
             Store::open(&paths.station_db(station.id)).map_err(|_| {
@@ -1115,7 +1251,7 @@ impl StationRuntime {
             .map(|s| s.uid_rule)
             .unwrap_or(UidRule::AsIs);
 
-        let device = match (&station.kind, &station.device) {
+        let (device, hardware_stop) = match (&station.kind, &station.device) {
             (StationKind::Desk, DeviceChoice::SimDesk) => {
                 let desk = DeskStation::new(
                     DeskDevice::Sim(rfidex_core::device::sim_desk::SimDesk::new()),
@@ -1125,13 +1261,19 @@ impl StationRuntime {
                     uid_rule,
                     station.write_start_block,
                 );
-                StationDevice::Desk(Box::new(tokio::sync::Mutex::new(DeskSession::new(
-                    desk, mode, uid_rule,
-                ))))
+                (
+                    StationDevice::Desk(Arc::new(tokio::sync::Mutex::new(DeskSession::new(
+                        desk, mode, uid_rule,
+                    )))),
+                    None,
+                )
             }
             (StationKind::Desk, DeviceChoice::EcrfidDesk { hardware }) => {
                 let reader = EcrfidDesk::new(hardware.clone(), launcher.clone())
                     .map_err(|_| reader_failed())?;
+                // Taken before the session owns the reader: the control has to
+                // be usable while the stanza's own lock is held by a call.
+                let control = reader.stop_control();
                 let desk = DeskStation::new(
                     DeskDevice::Ecrfid(Box::new(reader)),
                     store.clone(),
@@ -1140,9 +1282,12 @@ impl StationRuntime {
                     uid_rule,
                     station.write_start_block,
                 );
-                StationDevice::Desk(Box::new(tokio::sync::Mutex::new(DeskSession::new(
-                    desk, mode, uid_rule,
-                ))))
+                (
+                    StationDevice::Desk(Arc::new(tokio::sync::Mutex::new(DeskSession::new(
+                        desk, mode, uid_rule,
+                    )))),
+                    Some(control),
+                )
             }
             (
                 StationKind::Gate,
@@ -1163,12 +1308,16 @@ impl StationRuntime {
                     uid_rule,
                     Duration::from_secs(station.debounce_secs),
                 );
-                StationDevice::Gate(Box::new(tokio::sync::Mutex::new(gate)))
+                (
+                    StationDevice::Gate(Arc::new(tokio::sync::Mutex::new(gate))),
+                    None,
+                )
             }
             (StationKind::Gate, DeviceChoice::EcrfidGate { hardware }) => {
                 let role = station.role.unwrap_or(Role::Entry);
                 let reader = EcrfidGate::new(hardware.clone(), launcher.clone())
                     .map_err(|_| reader_failed())?;
+                let control = reader.stop_control();
                 let gate = GateStation::new(
                     GateDevice::Ecrfid(Box::new(reader)),
                     store.clone(),
@@ -1177,7 +1326,10 @@ impl StationRuntime {
                     uid_rule,
                     Duration::from_secs(station.debounce_secs),
                 );
-                StationDevice::Gate(Box::new(tokio::sync::Mutex::new(gate)))
+                (
+                    StationDevice::Gate(Arc::new(tokio::sync::Mutex::new(gate))),
+                    Some(control),
+                )
             }
             _ => {
                 return Err(RuntimeError::new(
@@ -1203,6 +1355,8 @@ impl StationRuntime {
             sync_lock: tokio::sync::Mutex::new(()),
             notify: tokio::sync::Notify::new(),
             device,
+            hardware_stop,
+            hardware_jobs,
             inner: Mutex::new(StationInner {
                 event_name: settings.as_ref().map(|s| s.event.name.clone()),
                 settings,
@@ -1225,6 +1379,10 @@ fn reader_failed() -> RuntimeError {
 impl Drop for Runtime {
     fn drop(&mut self) {
         let _ = self.stop.send(true);
+        self.cancel_hardware();
+        // A blocking worker cannot be aborted, so the only thing that can end
+        // one is its own reader being cancelled above.
+        self.hardware_jobs.stopped.store(true, Ordering::SeqCst);
         for task in &self.tasks {
             task.abort();
         }

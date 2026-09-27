@@ -310,6 +310,20 @@ impl Harness {
         self.await_online().await;
     }
 
+    /// The same restart with the helper program chosen by the caller.
+    pub async fn restart_runtime_with_launcher(&mut self, launcher: PathBuf) {
+        self.runtime.shutdown().await.unwrap();
+        let config = self.runtime.config().clone();
+        self.runtime = Runtime::start_with_launcher(
+            self.paths.clone(),
+            config,
+            self.opts.clone(),
+            HostLauncher::new(launcher),
+        )
+        .await
+        .unwrap();
+    }
+
     /// The same restart, while the server is unreachable, so the test can check
     /// what the station knows from disk alone.
     pub async fn restart_runtime_offline(&mut self) {

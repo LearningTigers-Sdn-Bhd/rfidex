@@ -7,8 +7,12 @@
 
 mod common;
 
+use std::io::{Read, Write};
 use std::net::{SocketAddr, SocketAddrV4, TcpListener};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use common::{Harness, KEY};
 use rfidex_core::contract::{RfidMode, Role, StationKind};
@@ -405,5 +409,276 @@ async fn a_real_reader_station_reports_disconnected_and_keeps_working() {
         .ticket(common::ticket(1))
         .unwrap()
         .is_some());
+    harness.stop().await;
+}
+
+/// A reader that answers inventory the way the candidate protocol describes, so
+/// a real gate produces real passages without any hardware. The bytes are the
+/// pinned synthetic candidates, not a vendor capture.
+struct AnsweringReader {
+    address: SocketAddrV4,
+    enabled: Arc<AtomicBool>,
+    /// Whether the runtime asked with the candidate request this profile
+    /// defines. Read back by the test: the fixture cannot panic usefully.
+    saw_request: Arc<AtomicBool>,
+    _listener: Arc<TcpListener>,
+}
+
+const REQUEST: [u8; 8] = [0xEC, 0x07, 0xFF, 0xFE, 0x01, 0x00, 0x38, 0x8B];
+const TAG_A: [u8; 17] = [
+    0xEC, 0x10, 0x00, 0xFE, 0x01, 0x00, 0x00, 0xE0, 0x04, 0x01, 0x50, 0xAB, 0xCD, 0x12, 0x34, 0x0F,
+    0x02,
+];
+const TERMINAL: [u8; 8] = [0xEC, 0x07, 0x00, 0xFE, 0x01, 0x00, 0x08, 0x9F];
+
+impl AnsweringReader {
+    /// Bind, and start answering only when the test says so. A reader that
+    /// answers from the first poll would let a passage be sent before the test
+    /// has taken the server away.
+    fn start() -> AnsweringReader {
+        let listener = Arc::new(TcpListener::bind("127.0.0.1:0").expect("a loopback port"));
+        let SocketAddr::V4(address) = listener.local_addr().expect("a bound address") else {
+            panic!("the fixture binds IPv4 loopback");
+        };
+        let enabled = Arc::new(AtomicBool::new(false));
+        let saw_request = Arc::new(AtomicBool::new(false));
+        let answer = {
+            let enabled = enabled.clone();
+            let saw_request = saw_request.clone();
+            let accepting = listener.clone();
+            move || {
+                for incoming in accepting.incoming() {
+                    let Ok(mut stream) = incoming else { break };
+                    let enabled = enabled.clone();
+                    let saw_request = saw_request.clone();
+                    std::thread::spawn(move || {
+                        let mut request = [0u8; 8];
+                        loop {
+                            if read_full(&mut stream, &mut request).is_err() {
+                                return;
+                            }
+                            saw_request.store(request == REQUEST, Ordering::SeqCst);
+                            if !enabled.load(Ordering::SeqCst) {
+                                // Present but silent, exactly like a reader that
+                                // has been switched off.
+                                continue;
+                            }
+                            if stream.write_all(&TAG_A).is_err() {
+                                return;
+                            }
+                            if stream.write_all(&TERMINAL).is_err() {
+                                return;
+                            }
+                            let _ = stream.flush();
+                        }
+                    });
+                }
+            }
+        };
+        std::thread::spawn(answer);
+        AnsweringReader {
+            address,
+            enabled,
+            saw_request,
+            _listener: listener,
+        }
+    }
+
+    fn config(&self, timeout_ms: u32) -> HardwareConfig {
+        HardwareConfig::EcV19PlainTcp {
+            address: self.address,
+            bus_address: 0xFF,
+            antenna_byte: false,
+            timeout_ms,
+        }
+    }
+
+    fn answer_now(&self) {
+        self.enabled.store(true, Ordering::SeqCst);
+    }
+}
+
+fn read_full(stream: &mut std::net::TcpStream, buffer: &mut [u8]) -> std::io::Result<()> {
+    let mut filled = 0;
+    while filled < buffer.len() {
+        match stream.read(&mut buffer[filled..])? {
+            0 => return Err(std::io::ErrorKind::UnexpectedEof.into()),
+            n => filled += n,
+        }
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn hardware_stall_does_not_block_status_or_other_station() {
+    let desk = common::desk_id();
+    let mut harness = Harness::start_hardware(
+        RfidMode::Bind,
+        common::fast_options(),
+        vec![
+            common::desk_station(),
+            real_gate(42, "Entry gate", Role::Entry, idle_reader(4_000)),
+        ],
+        no_helper(),
+    )
+    .await;
+
+    // The gate is stuck inside a poll for four seconds. The status bar and the
+    // other station must not wait for it.
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    let started = Instant::now();
+    let status = harness.runtime.status().await.unwrap();
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "a stalled reader must not hold the status bar"
+    );
+    assert_eq!(status.stations.len(), 2);
+
+    harness
+        .runtime
+        .desk_scan(desk, &common::ticket(1).to_string())
+        .await
+        .unwrap();
+    harness
+        .runtime
+        .sim_place(desk, "3412CDAB500104E0")
+        .await
+        .unwrap();
+    let view = harness
+        .runtime
+        .desk_link(desk, None)
+        .await
+        .expect("the desk links while the gate is stuck");
+    assert_eq!(
+        view.step,
+        rfidex_runtime::DeskStep::Linked,
+        "the desk flow runs on a blocking worker and still completes"
+    );
+    harness.stop().await;
+}
+
+#[tokio::test]
+async fn shutdown_cancels_hardware_before_join() {
+    let mut harness = Harness::start_hardware(
+        RfidMode::Bind,
+        common::fast_options(),
+        vec![real_gate(51, "Entry gate", Role::Entry, idle_reader(9_000))],
+        no_helper(),
+    )
+    .await;
+    // Let the gate get stuck inside a poll, so shutdown has something to cancel.
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    let started = Instant::now();
+    harness.runtime.shutdown().await.unwrap();
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "shutdown cancels the stuck reader instead of waiting out its deadline"
+    );
+    harness.stop().await;
+}
+
+#[tokio::test]
+async fn reconfigure_discards_old_hardware_results() {
+    let gate = Uuid::from_u128(61);
+    let mut harness = Harness::start_hardware(
+        RfidMode::Bind,
+        common::fast_options(),
+        vec![real_gate(61, "Entry gate", Role::Entry, idle_reader(500))],
+        no_helper(),
+    )
+    .await;
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    let before = harness.store_of(gate).count(OutboxState::Pending).unwrap();
+
+    // A reconfigure stops the old runtime. The poll it started must come back
+    // and must publish nothing to the station that replaces it.
+    let started = Instant::now();
+    harness.runtime.shutdown().await.unwrap();
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "the stalled poll is cancelled, not waited out"
+    );
+    assert_eq!(
+        harness.store_of(gate).count(OutboxState::Pending).unwrap(),
+        before,
+        "a cancelled poll writes nothing"
+    );
+
+    harness.restart_runtime_with_launcher(no_helper()).await;
+    let status = harness.runtime.status().await.unwrap();
+    let station = status
+        .stations
+        .iter()
+        .find(|s| s.id == gate)
+        .expect("the replacement station is reported");
+    assert_eq!(
+        station.pending, before,
+        "the replacement starts from the same durable state and nothing more"
+    );
+    // And it reports its own reader honestly instead of inheriting a result.
+    common::eventually("the replacement to report its own reader", || async {
+        harness
+            .runtime
+            .status()
+            .await
+            .ok()
+            .and_then(|status| {
+                status
+                    .stations
+                    .iter()
+                    .find(|s| s.id == gate)
+                    .and_then(|s| s.last_error.clone())
+            })
+            .is_some()
+    })
+    .await;
+    harness.stop().await;
+}
+
+#[tokio::test]
+async fn offline_real_gate_uses_existing_outbox() {
+    let gate = Uuid::from_u128(71);
+    let reader = AnsweringReader::start();
+    let mut harness = Harness::start_hardware(
+        RfidMode::Bind,
+        common::fast_options(),
+        vec![real_gate(71, "Entry gate", Role::Entry, reader.config(500))],
+        no_helper(),
+    )
+    .await;
+
+    // The event server goes away, then the sticker arrives in the field.
+    harness.set_down(true);
+    reader.answer_now();
+    common::eventually("the passage to be saved on this computer", || async {
+        harness.store_of(gate).count(OutboxState::Pending).unwrap() == 1
+    })
+    .await;
+
+    // The sticker is still in the field and the gate keeps polling; the
+    // existing debounce means one passage, not one per poll.
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert_eq!(
+        harness.store_of(gate).count(OutboxState::Pending).unwrap(),
+        1,
+        "one sticker in the field is one passage"
+    );
+
+    harness.set_down(false);
+    harness.runtime.sync_now().await.unwrap();
+    common::eventually("the passage to reach the server", || async {
+        harness.store_of(gate).count(OutboxState::Pending).unwrap() == 0
+    })
+    .await;
+    assert_eq!(
+        harness.observations(),
+        1,
+        "the server saw the passage exactly once"
+    );
+    assert!(
+        reader.saw_request.load(Ordering::SeqCst),
+        "the runtime asked with the pinned candidate request"
+    );
     harness.stop().await;
 }

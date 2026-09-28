@@ -152,17 +152,14 @@ pub fn decode_read(buffer: &[u8], uid: &[u8; 8], blocks: u8) -> Result<Vec<u8>, 
 /// The demo reads `receive[4]` as the status, `[16]` as the block count and
 /// `[17]` as the block size. ISO 15693 stores both as "value minus one", the
 /// size in the low five bits: a real reader answered `4F 03` for an 80-block
-/// sticker with 4-byte blocks. Only 4-byte blocks are accepted, because
-/// [`decode_read`] can only split reads into 4-byte blocks.
+/// sticker with 4-byte blocks. Other block sizes are reported as they are;
+/// the reader refuses to read or write them.
 pub fn decode_geometry(buffer: &[u8]) -> Result<(usize, usize), WireError> {
     if buffer.len() < GEOMETRY_MIN_LENGTH || buffer[4] != 0x00 {
         return Err(WireError::BadResponse);
     }
     let block_count = usize::from(buffer[16]) + 1;
     let block_size = usize::from(buffer[17] & 0x1F) + 1;
-    if block_size != BLOCK_SIZE {
-        return Err(WireError::BadResponse);
-    }
     Ok((block_size, block_count))
 }
 
@@ -331,9 +328,9 @@ mod tests {
         receive[16] = 27;
         receive[17] = 0xE3;
         assert_eq!(decode_geometry(&receive).unwrap(), (4, 28));
-        // Blocks this reader cannot split are refused, not guessed at.
+        // Another block size is reported as it is, for the reader to refuse.
         receive[17] = 0x07;
-        assert_eq!(decode_geometry(&receive), Err(WireError::BadResponse));
+        assert_eq!(decode_geometry(&receive).unwrap(), (8, 28));
         receive[17] = 0x03;
         receive[4] = 0x0F;
         assert_eq!(decode_geometry(&receive), Err(WireError::BadResponse));

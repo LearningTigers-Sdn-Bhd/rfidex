@@ -424,8 +424,9 @@ pub extern "system" fn ISO15693_GetTagSystemInfo(
         *receive.add(4) = 0x00;
         *receive.add(14) = 0x00;
         *receive.add(15) = 0x00;
-        *receive.add(16) = BLOCKS as u8;
-        *receive.add(17) = if scenario == "memory_other" { 8 } else { BLOCK_SIZE as u8 };
+        // ISO 15693 "minus one" encoding, as a real reader reports it.
+        *receive.add(16) = (BLOCKS - 1) as u8;
+        *receive.add(17) = if scenario == "memory_other" { 7 } else { (BLOCK_SIZE - 1) as u8 };
         *receive.add(18) = 0x01;
     }
     20

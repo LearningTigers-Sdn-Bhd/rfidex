@@ -280,9 +280,12 @@ export function Desk({ station }: Props) {
         </form>
 
         {!station.simulated && (
-          <div className="hardware-field">
-            <p className="field-help">Place a sticker on the reader to check that it can be read.</p>
-            <div className="actions">
+          <section className="desk-tool" aria-label="Test the sticker reader">
+            <div className="desk-tool-head">
+              <div>
+                <h3>Test the sticker reader</h3>
+                <p>Place a sticker on the reader, then check it can be read.</p>
+              </div>
               <button type="button" onClick={() => void testReader()} disabled={busy || readerTestBusy}>
                 {readerTestBusy ? "Reading stickers…" : "Test sticker reader"}
               </button>
@@ -300,13 +303,21 @@ export function Desk({ station }: Props) {
               </div>
             )}
             {readerTestFailure && <p className="failure" role="alert">{readerTestFailure}</p>}
-          </div>
+          </section>
         )}
 
         {searchOpen ? (
-          <div className="search-panel" ref={searchRef}>
+          <section className="desk-tool search-panel" ref={searchRef} aria-label="Find a ticket">
+            <div className="desk-tool-head">
+              <div>
+                <h3>Find a ticket</h3>
+                <p>Search by name, email or phone instead of scanning.</p>
+              </div>
+              <button type="button" onClick={closeSearch}>
+                Back to QR scan
+              </button>
+            </div>
             <div className="search-line">
-              <label htmlFor="ticket-search">Find a ticket</label>
               <input
                 id="ticket-search"
                 ref={searchInputRef}
@@ -321,6 +332,7 @@ export function Desk({ station }: Props) {
                 autoComplete="off"
                 spellCheck={false}
                 placeholder="Name, email address or phone number"
+                aria-label="Find a ticket"
               />
               <div className="search-modes" role="group" aria-label="Search by">
                 {MODES.map((mode) => (
@@ -335,9 +347,6 @@ export function Desk({ station }: Props) {
                   </button>
                 ))}
               </div>
-              <button type="button" onClick={closeSearch}>
-                Back to QR scan
-              </button>
             </div>
             {found && found.message && (
               <p className="hint" role="status">{found.message}</p>
@@ -362,13 +371,19 @@ export function Desk({ station }: Props) {
                 Searching the tickets saved on this computer.
               </p>
             )}
-          </div>
+          </section>
         ) : (
-          <div className="search-launch">
-            <button type="button" onClick={openSearch} disabled={busy}>
-              Search by name, email or phone
-            </button>
-          </div>
+          <section className="desk-tool search-launch" aria-label="Find a ticket">
+            <div className="desk-tool-head">
+              <div>
+                <h3>Find a ticket</h3>
+                <p>Search by name, email or phone instead of scanning.</p>
+              </div>
+              <button type="button" onClick={openSearch} disabled={busy}>
+                Search
+              </button>
+            </div>
+          </section>
         )}
 
         <section

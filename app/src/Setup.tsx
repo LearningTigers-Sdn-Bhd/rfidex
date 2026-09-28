@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 
-import { errorText, setupGet, setupSave, setupTest, setupTestPrinter } from "./api";
+import { errorText, setupGet, setupSave, setupTest, setupTestPrinter, updateCheck, updateInstall } from "./api";
 import type {
   AppStatus,
   AppView,
@@ -13,6 +13,7 @@ import type {
   Role,
   StationConfig,
   StationKind,
+  UpdateView,
 } from "./api";
 import HardwareFields, { defaultHardware, fitHardware } from "./HardwareFields";
 
@@ -237,6 +238,12 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
   // A reader test targets the station the app has running, so an unsaved edit
   // means the thing on screen is not the thing that would be tested.
   const isDirty = JSON.stringify(stations) !== JSON.stringify(original);
+  // A hardware test runs against the saved config for a station id, so only a
+  // station that is new or edited must block its own test buttons.
+  const stationDirty = (station: StationConfig) => {
+    const saved = original.find((o) => o.id === station.id);
+    return !saved || JSON.stringify(saved) !== JSON.stringify(station);
+  };
 
   return (
     <div className="panel setup">
@@ -250,42 +257,48 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
       </div>
 
       <p className="hint">
-        Anyone at this computer can open Setup. The saved API key is never shown
-        again here, and it is only used to talk to the event server.
+        Point this computer at its EventzFlow server and declare the readers
+        plugged into it. The saved API key is never shown again — it only
+        authenticates this machine to the server.
       </p>
 
       <form onSubmit={submit}>
         <fieldset>
           <legend>Event server</legend>
-          <label htmlFor="server-url">Server address</label>
-          <input
-            id="server-url"
-            value={serverUrl}
-            onChange={(event) => setServerUrl(event.target.value)}
-            autoComplete="off"
-            spellCheck={false}
-            placeholder="https://events.example.com"
-          />
-          <small className="field-help">
-            The EventzFlow web address your organiser gave you. Copy it exactly,
-            starting with https://.
-          </small>
+          <div className="row two">
+            <div>
+              <label htmlFor="server-url">Server URL</label>
+              <input
+                id="server-url"
+                value={serverUrl}
+                onChange={(event) => setServerUrl(event.target.value)}
+                autoComplete="off"
+                spellCheck={false}
+                placeholder="https://events.example.com"
+              />
+              <small className="field-help">
+                The EventzFlow deployment this station reports to, e.g.
+                https://events.example.com.
+              </small>
+            </div>
+            <div>
+              <label htmlFor="api-key">API key</label>
+              <input
+                id="api-key"
+                type="password"
+                value={apiKey}
+                onChange={(event) => setApiKey(event.target.value)}
+                autoComplete="new-password"
+                placeholder={keyOnFile ? "Leave blank to keep current key" : "Paste the event API key"}
+              />
+              <small className="field-help">
+                In EventzFlow, open the event's API keys and copy the RFID one.
+                It links this computer to that event.
+              </small>
+            </div>
+          </div>
 
-          <label htmlFor="api-key">API key</label>
-          <input
-            id="api-key"
-            type="password"
-            value={apiKey}
-            onChange={(event) => setApiKey(event.target.value)}
-            autoComplete="new-password"
-            placeholder={keyOnFile ? "Leave blank to keep current key" : "Paste the event API key"}
-          />
-          <small className="field-help">
-            A long code that links this computer to one event. Get it from the
-            event admin in EventzFlow. Press Test connection to check both fields.
-          </small>
-
-          <div className="actions">
+          <div className="actions end">
             <button type="button" onClick={() => void testConnection()} disabled={busy}>
               Test connection
             </button>
@@ -297,14 +310,14 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
           )}
 
           <p className="hint">
-            Event mode: <strong>{modeName(mode)}</strong> — set by the server, not
-            here.
+            Event mode: <strong>{modeName(mode)}</strong> — read from the server
+            on connect; not editable here.
           </p>
         </fieldset>
 
         <fieldset>
           <legend>Stations on this computer</legend>
-          <p className="hint">
+          <p className="info">
             A station is one RFID reader plugged into this computer: a desk
             that links tickets to tags, or a gate that records guests passing.
             Add one for each reader.
@@ -315,21 +328,20 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
           <ul className="station-editor">
             {stations.map((station) => (
               <li key={station.id}>
-                <div className="row">
-                  <label>
-                    Name
+                <div className="station-identity">
+                  <div className="field grow">
+                    <label htmlFor={`name-${station.id}`}>Name</label>
                     <input
+                      id={`name-${station.id}`}
                       value={station.name}
                       onChange={(event) => patch(station.id, { name: event.target.value })}
                       autoComplete="off"
                     />
-                    <small className="field-help">
-                      Any label staff will recognise, e.g. "Main desk" or "Hall A gate".
-                    </small>
-                  </label>
-                  <label>
-                    Type
+                  </div>
+                  <div className="field">
+                    <label htmlFor={`kind-${station.id}`}>Type</label>
                     <select
+                      id={`kind-${station.id}`}
                       value={station.kind}
                       onChange={(event) =>
                         changeKind(station.id, event.target.value as StationKind)
@@ -338,144 +350,140 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
                       <option value="desk">Desk</option>
                       <option value="gate">Gate</option>
                     </select>
-                    <small className="field-help">
-                      Desk: staff scan a ticket and link it to a wristband or
-                      sticker. Gate: a reader records guests walking past.
-                    </small>
-                  </label>
+                  </div>
                   {SIMULATOR && (
-                  <label>
-                    Reader
-                    <select
-                      value={
-                        station.device.type === "ecrfid_desk" ||
-                        station.device.type === "ecrfid_gate"
-                          ? "real"
-                          : "sim"
-                      }
-                      onChange={(event) =>
-                        setReaderType(station.id, event.target.value as "sim" | "real")
-                      }
-                    >
-                      <option value="sim">Simulator</option>
-                      <option value="real">Real reader</option>
-                    </select>
-                    <small className="field-help">
-                      A simulator runs entirely on this computer. A real reader
-                      needs the hardware in front of you.
-                    </small>
-                  </label>
-                  )}
-                  {station.kind === "gate" && (
-                    <label>
-                      Direction
+                    <div className="field">
+                      <label htmlFor={`reader-${station.id}`}>Reader</label>
                       <select
-                        value={station.role ?? "entry"}
+                        id={`reader-${station.id}`}
+                        value={
+                          station.device.type === "ecrfid_desk" ||
+                          station.device.type === "ecrfid_gate"
+                            ? "real"
+                            : "sim"
+                        }
                         onChange={(event) =>
-                          patch(station.id, { role: event.target.value as Role })
+                          setReaderType(station.id, event.target.value as "sim" | "real")
                         }
                       >
-                        <option value="entry">Entry</option>
-                        <option value="exit">Exit</option>
+                        <option value="sim">Simulator</option>
+                        <option value="real">Real reader</option>
                       </select>
-                      <small className="field-help">
-                        Entry counts guests coming in, Exit counts guests leaving.
-                      </small>
-                    </label>
-                  )}
-                  {station.kind === "gate" && (
-                    <label>
-                      Wait between repeats (seconds)
-                      <input
-                        type="number"
-                        min={1}
-                        max={60}
-                        value={station.debounce_secs}
-                        onChange={(event) =>
-                          patch(station.id, { debounce_secs: Number(event.target.value) })
-                        }
-                      />
-                      <small className="field-help">
-                        A guest standing near the reader is counted once in this
-                        time. 5 suits most gates.
-                      </small>
-                    </label>
-                  )}
-                  {station.kind === "desk" && mode === "write" && (
-                    <label>
-                      Write start block
-                      <input
-                        type="number"
-                        min={0}
-                        max={255}
-                        value={station.write_start_block}
-                        onChange={(event) =>
-                          patch(station.id, { write_start_block: Number(event.target.value) })
-                        }
-                      />
-                      <small className="field-help">
-                        Technical: where on the sticker the ticket is written in
-                        Write mode. Leave at 0 unless your RFID supplier says otherwise.
-                      </small>
-                    </label>
-                  )}
-                  {station.kind === "desk" && (
-                    <div className="printer-field">
-                      <label htmlFor={`printer-${station.id}`}>
-                        Printer address
-                        <input
-                          id={`printer-${station.id}`}
-                          value={station.printer_url}
-                          onChange={(event) =>
-                            patch(station.id, { printer_url: event.target.value })
-                          }
-                          autoComplete="off"
-                          spellCheck={false}
-                          placeholder={DEFAULT_PRINTER_URL}
-                        />
-                        <small className="field-help">
-                          The badge printer app on this computer. Keep
-                          http://127.0.0.1:8000 unless the printer app uses another
-                          port. Start the printer app, then press Test printer. This
-                          is not the EventzFlow server address.
-                        </small>
-                      </label>
-                      <div className="actions">
-                        <button
-                          type="button"
-                          onClick={() => void testPrinter(station)}
-                          disabled={busy}
-                        >
-                          Test printer
-                        </button>
-                      </div>
-                      {printerTests[station.id]?.url === station.printer_url.trim() && (
-                        <p
-                          className={printerTests[station.id].view.ok ? "note" : "failure"}
-                          role="status"
-                        >
-                          {printerTests[station.id].view.message}
-                        </p>
-                      )}
                     </div>
                   )}
                 </div>
+
+                {(station.kind === "gate" || station.kind === "desk") && (
+                  <div className="station-cluster">
+                    {station.kind === "gate" && (
+                      <div className="field">
+                        <label htmlFor={`role-${station.id}`}>Direction</label>
+                        <select
+                          id={`role-${station.id}`}
+                          value={station.role ?? "entry"}
+                          onChange={(event) =>
+                            patch(station.id, { role: event.target.value as Role })
+                          }
+                        >
+                          <option value="entry">Entry</option>
+                          <option value="exit">Exit</option>
+                        </select>
+                        <small className="field-help">
+                          Counts guests coming in (entry) or leaving (exit).
+                        </small>
+                      </div>
+                    )}
+                    {station.kind === "gate" && (
+                      <div className="field">
+                        <label htmlFor={`debounce-${station.id}`}>Repeat window (s)</label>
+                        <input
+                          id={`debounce-${station.id}`}
+                          type="number"
+                          min={1}
+                          max={60}
+                          value={station.debounce_secs}
+                          onChange={(event) =>
+                            patch(station.id, { debounce_secs: Number(event.target.value) })
+                          }
+                        />
+                        <small className="field-help">
+                          A tag held near the reader counts once per window. 5 suits most gates.
+                        </small>
+                      </div>
+                    )}
+                    {station.kind === "desk" && mode === "write" && (
+                      <div className="field">
+                        <label htmlFor={`block-${station.id}`}>Write start block</label>
+                        <input
+                          id={`block-${station.id}`}
+                          type="number"
+                          min={0}
+                          max={255}
+                          value={station.write_start_block}
+                          onChange={(event) =>
+                            patch(station.id, { write_start_block: Number(event.target.value) })
+                          }
+                        />
+                        <small className="field-help">
+                          Where on the sticker the ticket is written. Leave at 0 unless the RFID supplier says otherwise.
+                        </small>
+                      </div>
+                    )}
+                    {station.kind === "desk" && (
+                      <div className="printer-field">
+                        <label htmlFor={`printer-${station.id}`}>Printer address</label>
+                        <div className="inline-test">
+                          <input
+                            id={`printer-${station.id}`}
+                            value={station.printer_url}
+                            onChange={(event) =>
+                              patch(station.id, { printer_url: event.target.value })
+                            }
+                            autoComplete="off"
+                            spellCheck={false}
+                            placeholder={DEFAULT_PRINTER_URL}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => void testPrinter(station)}
+                            disabled={busy}
+                          >
+                            Test printer
+                          </button>
+                        </div>
+                        <small className="field-help">
+                          Local badge-printer bridge, not the EventzFlow server.
+                          Default http://127.0.0.1:8000 — start the bridge, then test.
+                        </small>
+                        {printerTests[station.id]?.url === station.printer_url.trim() && (
+                          <p
+                            className={printerTests[station.id].view.ok ? "note" : "failure"}
+                            role="status"
+                          >
+                            {printerTests[station.id].view.message}
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {(station.device.type === "ecrfid_desk" ||
                 station.device.type === "ecrfid_gate") && (
                 <HardwareFields
                   station={station}
-                  dirty={isDirty}
+                  dirty={stationDirty(station)}
                   onChange={(hardware) => setRealReader(station.id, hardware)}
                   onSaved={onSaved}
                 />
               )}
 
               {SIMULATOR && station.device.type === "sim_gate" && (
-                  <div className="row">
-                    <label>
-                      Simulated gate output
+                  <div className="station-cluster">
+                    <div className="field">
+                      <label htmlFor={`gatekind-${station.id}`}>Simulated gate output</label>
                       <select
+                        id={`gatekind-${station.id}`}
                         value={station.device.gate_kind}
                         onChange={(event) =>
                           setGate(station.id, {
@@ -487,27 +495,26 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
                         <option value="live_inventory">Live inventory</option>
                       </select>
                       <small className="field-help">
-                        Practice setting. Stored records: the reader keeps a list
-                        of passes. Live inventory: it reports every tag it sees
-                        right now.
+                        Stored records keeps a list of passes; live inventory reports every tag in range.
                       </small>
-                    </label>
-                    <label className="checkbox">
-                      <input
-                        type="checkbox"
-                        checked={station.device.release_verified}
-                        onChange={(event) =>
-                          setGate(station.id, { release_verified: event.target.checked })
-                        }
-                      />
-                      Simulator only: the reader acknowledges releases. This says
-                      nothing about real hardware.
-                    </label>
+                    </div>
+                    <div className="sim-box">
+                      <label className="checkbox">
+                        <input
+                          type="checkbox"
+                          checked={station.device.release_verified}
+                          onChange={(event) =>
+                            setGate(station.id, { release_verified: event.target.checked })
+                          }
+                        />
+                        <span>Simulator acknowledges releases (says nothing about real hardware)</span>
+                      </label>
+                    </div>
                   </div>
                 )}
 
-                <div className="actions">
-                  <button type="button" onClick={() => setStations((list) => list.filter((s) => s.id !== station.id))}>
+                <div className="actions end">
+                  <button type="button" className="quiet-danger" onClick={() => setStations((list) => list.filter((s) => s.id !== station.id))}>
                     Remove station
                   </button>
                 </div>
@@ -521,6 +528,7 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
             <button className="primary" type="submit" disabled={busy}>
               {busy ? "Saving…" : "Save setup"}
             </button>
+            {isDirty && <span className="unsaved">Unsaved changes</span>}
           </div>
         </fieldset>
 
@@ -529,6 +537,11 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
             {failure}
           </p>
         )}
+
+        <fieldset>
+          <legend>About &amp; updates</legend>
+          <Updates />
+        </fieldset>
       </form>
 
       <dialog ref={dialogRef} className="confirm" aria-labelledby="direction-title" onCancel={() => setRoleChange(null)}>
@@ -603,4 +616,66 @@ function modeName(mode: "bind" | "write" | null): string {
   if (mode === "write") return "Write";
   if (mode === "bind") return "Bind";
   return "not known yet";
+}
+
+/**
+ * Checks once when the page opens, quietly: no internet at a venue is normal.
+ * The button checks again and says what it found.
+ */
+function Updates() {
+  const [info, setInfo] = useState<UpdateView | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    updateCheck().then(setInfo, () => {});
+  }, []);
+
+  const check = async () => {
+    setBusy(true);
+    setMessage(null);
+    try {
+      const next = await updateCheck();
+      setInfo(next);
+      if (!next.available) setMessage(`RfiDex ${next.current} is the latest version.`);
+    } catch (problem) {
+      setMessage(errorText(problem));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const install = async () => {
+    setBusy(true);
+    setMessage("Downloading the update. RfiDex will close and reopen by itself…");
+    try {
+      await updateInstall();
+    } catch (problem) {
+      setMessage(errorText(problem));
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className={info?.available ? "updates has-update" : "updates"} aria-live="polite">
+      {info?.available ? (
+        <p>
+          <strong>RfiDex {info.available} is ready to install</strong>
+          <span> · you have {info.current}. Setup and waiting scans are kept.</span>
+        </p>
+      ) : (
+        <p>RfiDex {info?.current ?? ""}</p>
+      )}
+      {message && <p className="update-message">{message}</p>}
+      {info?.available ? (
+        <button className="primary" type="button" onClick={() => void install()} disabled={busy}>
+          {busy ? "Updating…" : "Update now"}
+        </button>
+      ) : (
+        <button type="button" onClick={() => void check()} disabled={busy}>
+          {busy ? "Checking…" : "Check for updates"}
+        </button>
+      )}
+    </div>
+  );
 }

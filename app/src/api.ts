@@ -299,8 +299,12 @@ const UNKNOWN_FAILURE: AppFailure = {
   message: "The app could not finish this action.",
 };
 
+/** Styling preview: dev builds may add ?preview=1 to render pages in a plain
+ *  browser; every backend call then fails harmlessly. */
+const previewMode = import.meta.env.DEV && new URLSearchParams(window.location.search).has("preview");
+
 /** True only inside the Tauri window; a plain browser has no bridge to Rust. */
-export const inDesktopApp = () => "__TAURI_INTERNALS__" in window;
+export const inDesktopApp = () => "__TAURI_INTERNALS__" in window || previewMode;
 
 /**
  * Only messages from Rust reach the operator. A JavaScript error (an `Error`

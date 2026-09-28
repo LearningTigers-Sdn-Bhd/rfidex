@@ -138,109 +138,108 @@ export default function HardwareFields({ station, dirty, onChange, onSaved }: Pr
 
       <details className="advanced">
         <summary>Advanced reader settings</summary>
-        <p className="field-help">
-          Leave these alone unless your RFID supplier tells you otherwise.
-        </p>
-        <div className="row">
-          {station.kind === "gate" && (
+        <div className="advanced-body">
+          <p className="field-help">
+            Leave these alone unless your RFID supplier tells you otherwise.
+          </p>
+          <div className="row">
+            {station.kind === "gate" && (
+              <label>
+                Reader type
+                <select
+                  value={hardware.transport}
+                  onChange={(e) => {
+                    const wanted = e.target.value as HardwareConfig["transport"];
+                    if (wanted === hardware.transport) return;
+                    onChange(
+                      wanted === "ecrfid_sdk"
+                        ? defaultHardware(station.kind)
+                        : defaultTcp(),
+                    );
+                  }}
+                >
+                  <option value="ecrfid_sdk">ECRFID SDK</option>
+                  <option value="ec_v19_plain_tcp">EC v1.9 over TCP (unverified)</option>
+                </select>
+                <small className="field-help">
+                  {hardware.transport === "ec_v19_plain_tcp"
+                    ? "Unverified candidate: built from the vendor guide, with no capture confirming it yet."
+                    : "The vendor library. Use this unless told otherwise."}
+                </small>
+              </label>
+            )}
             <label>
-              Reader type
-              <select
-                value={hardware.transport}
-                onChange={(e) => {
-                  const wanted = e.target.value as HardwareConfig["transport"];
-                  if (wanted === hardware.transport) return;
-                  onChange(
-                    wanted === "ecrfid_sdk"
-                      ? defaultHardware(station.kind)
-                      : defaultTcp(),
-                  );
-                }}
-              >
-                <option value="ecrfid_sdk">ECRFID SDK</option>
-                <option value="ec_v19_plain_tcp">EC v1.9 over TCP (unverified)</option>
-              </select>
-              <small className="field-help">
-                {hardware.transport === "ec_v19_plain_tcp"
-                  ? "Unverified candidate: built from the vendor guide, with no capture confirming it yet."
-                  : "The vendor library. Use this unless told otherwise."}
-              </small>
-            </label>
-          )}
-          <label>
-            Reader timeout (ms)
-            <input
-              type="number"
-              min={100}
-              max={10000}
-              step={100}
-              value={hardware.timeout_ms}
-              onChange={(e) =>
-                onChange({ ...hardware, timeout_ms: Number(e.target.value) })
-              }
-            />
-            <small className="field-help">
-              The most one reader call may take, between 100 and 10000.
-            </small>
-          </label>
-          {hardware.transport === "ecrfid_sdk" && (
-            <label>
-              Inventory mode
+              Reader timeout (ms)
               <input
                 type="number"
-                min={0}
-                max={255}
-                value={hardware.inventory_mode}
+                min={100}
+                max={10000}
+                step={100}
+                value={hardware.timeout_ms}
                 onChange={(e) =>
-                  onChange({ ...hardware, inventory_mode: Number(e.target.value) })
+                  onChange({ ...hardware, timeout_ms: Number(e.target.value) })
                 }
               />
               <small className="field-help">
-                The vendor's mode byte. 4 is the value the vendor demo uses for
-                ISO15693.
+                The most one reader call may take, between 100 and 10000.
               </small>
             </label>
-          )}
-          {hardware.transport === "ecrfid_sdk" && hardware.connection.kind === "hid" && (
-            <label>
-              Address mode
-              <input
-                type="number"
-                min={0}
-                value={hardware.connection.address_mode}
-                onChange={(e) =>
-                  hardware.connection.kind === "hid" &&
-                  onChange({
-                    ...hardware,
-                    connection: { ...hardware.connection, address_mode: Number(e.target.value) },
-                  })
-                }
-              />
-              <small className="field-help">The vendor HID address mode; the demo uses 1.</small>
-            </label>
-          )}
+            {hardware.transport === "ecrfid_sdk" && (
+              <label>
+                Inventory mode
+                <input
+                  type="number"
+                  min={0}
+                  max={255}
+                  value={hardware.inventory_mode}
+                  onChange={(e) =>
+                    onChange({ ...hardware, inventory_mode: Number(e.target.value) })
+                  }
+                />
+                <small className="field-help">
+                  The vendor's mode byte. 4 is the value the vendor demo uses for
+                  ISO15693.
+                </small>
+              </label>
+            )}
+            {hardware.transport === "ecrfid_sdk" && hardware.connection.kind === "hid" && (
+              <label>
+                Address mode
+                <input
+                  type="number"
+                  min={0}
+                  value={hardware.connection.address_mode}
+                  onChange={(e) =>
+                    hardware.connection.kind === "hid" &&
+                    onChange({
+                      ...hardware,
+                      connection: { ...hardware.connection, address_mode: Number(e.target.value) },
+                    })
+                  }
+                />
+                <small className="field-help">The vendor HID address mode; the demo uses 1.</small>
+              </label>
+            )}
+          </div>
         </div>
       </details>
 
-      <div className="row">
-        <div className="actions">
-          <button type="button" onClick={() => void test("connect")} disabled={busy || dirty}>
-            {dirty ? "Save setup to test this reader" : "Test connection"}
-          </button>
-          <button type="button" onClick={() => void test("read_tags")} disabled={busy || dirty}>
-            {dirty ? "Save setup to read stickers" : "Read stickers"}
-          </button>
-        </div>
-      </div>
 
-      <p className="field-help">
-        Testing a reader is never a verification. Only the physical acceptance
-        checks on the real hardware can mark a reader verified.
-      </p>
-      {dirty && (
-        <p className="field-help">
-          These edits take effect after the setup is saved.
+      {dirty ? (
+        <p className="caution" role="status">
+          Unsaved changes. Press <strong>Save setup</strong> to test this reader.
         </p>
+      ) : (
+        <div className="row">
+          <div className="actions">
+            <button type="button" onClick={() => void test("connect")} disabled={busy}>
+              Test connection
+            </button>
+            <button type="button" onClick={() => void test("read_tags")} disabled={busy}>
+              Read stickers
+            </button>
+          </div>
+        </div>
       )}
       {tested?.revision === revision.current.number && !dirty && (
         <div className={tested.view.ok ? "note" : "failure"} role="status">
@@ -403,10 +402,7 @@ function SdkFields({
             list.
           </small>
         </label>
-      </div>
-
-      {connection.kind === "hid" && (
-        <div className="row">
+        {connection.kind === "hid" && (
           <label>
             Device path
             <input
@@ -419,6 +415,47 @@ function SdkFields({
               you.
             </small>
           </label>
+        )}
+        {connection.kind === "net" && (
+          <label>
+            Interface
+            <input
+              value={connection.interface}
+              onChange={(e) =>
+                setConnection({ ...connection, interface: e.target.value })
+              }
+              placeholder="192.168.1.10"
+            />
+            <small className="field-help">
+              The network card the gate is cabled to.
+            </small>
+          </label>
+        )}
+      </div>
+
+      {connection.kind === "net" && (
+        <div className="row net-address-row">
+          <label>
+            Reader address
+            <input
+              value={connection.address}
+              onChange={(e) =>
+                setConnection({ ...connection, address: e.target.value })
+              }
+              placeholder="192.168.1.20:6688"
+            />
+            <small className="field-help">
+              The gate's own IP and port. Press Find gates to fill it in.
+            </small>
+          </label>
+          <div className="actions">
+            <button type="button" onClick={() => void findGates()} disabled={busy}>
+              Find gates
+            </button>
+            <button type="button" onClick={() => void look()} disabled={busy}>
+              Look for network cards
+            </button>
+          </div>
         </div>
       )}
 
@@ -464,40 +501,6 @@ function SdkFields({
         </div>
       )}
 
-      {connection.kind === "net" && (
-        <div className="row">
-          <label>
-            Interface
-            <input
-              value={connection.interface}
-              onChange={(e) =>
-                setConnection({ ...connection, interface: e.target.value })
-              }
-              placeholder="192.168.1.10"
-            />
-          </label>
-          <label>
-            Reader address
-            <input
-              value={connection.address}
-              onChange={(e) =>
-                setConnection({ ...connection, address: e.target.value })
-              }
-              placeholder="192.168.1.20:6688"
-            />
-            <small className="field-help">
-              The gate's own IP and port. Press Find gates to fill it in.
-            </small>
-          </label>
-        </div>
-      )}
-      {connection.kind === "net" && (
-        <div className="actions">
-          <button type="button" onClick={() => void findGates()} disabled={busy}>
-            Find gates
-          </button>
-        </div>
-      )}
       {gates?.revision === revision.current.number && (
         <>
           <p className="note" role="status">
@@ -537,11 +540,13 @@ function SdkFields({
           </label>
         </div>
       )}
-      <div className="actions">
-        <button type="button" onClick={() => void look()} disabled={busy}>
-          {kind === "desk" ? "Look for readers" : "Look for network cards"}
-        </button>
-      </div>
+      {connection.kind !== "net" && (
+        <div className="actions">
+          <button type="button" onClick={() => void look()} disabled={busy}>
+            {kind === "desk" ? "Look for readers" : "Look for network cards"}
+          </button>
+        </div>
+      )}
 
       {found?.revision === revision.current.number && (
         <p className="note" role="status">

@@ -178,6 +178,7 @@ export interface StationStatus {
   online: boolean;
   unauthorized: boolean;
   connected: boolean;
+  connection_checked: boolean;
   event_name: string | null;
   mode: RfidMode | null;
   settings_ready: boolean;

@@ -61,6 +61,8 @@ p { margin-bottom: 14px; }
 .connection::before, .status-bar strong::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #4e8058; }
 .connection.disconnected { color: #a43b2e; }
 .connection.disconnected::before { background: #a43b2e; }
+.connection.unknown { color: #68716a; }
+.connection.unknown::before { background: #68716a; }
 .simulation-label { color: #646e61; background: #f1f3ed; border: 1px solid #dce1d5; padding: 3px 8px; border-radius: 4px; }
 .station-body { padding: 20px 24px; min-width: 0; }
 .station-layout { display: grid; gap: 28px; }

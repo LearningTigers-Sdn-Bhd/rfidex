@@ -209,7 +209,7 @@ export function App() {
                 >
                   <span className="station-kind">{candidate.kind === "desk" ? "Desk" : candidate.role === "exit" ? "Exit gate" : "Entry gate"}</span>
                   <span className="station-name">{candidate.name}</span>
-                  {!candidate.connected && <span className="badge">reader off</span>}
+                  {candidate.connection_checked && !candidate.connected && <span className="badge">reader off</span>}
                 </button>
               ))}
             </nav>
@@ -220,7 +220,7 @@ export function App() {
               <div className="station" key={station.id}>
                 <div className="station-heading">
                   <div><p className="eyebrow">{station.kind === "desk" ? "Registration" : "Access control"}</p><h2>{station.name}</h2></div>
-                  <div className="station-indicators"><span className={station.connected ? "connection" : "connection disconnected"}>{station.connected ? "Reader connected" : "Reader disconnected"}</span>{station.simulated && <span className="simulation-label">Simulated</span>}</div>
+                  <div className="station-indicators"><span className={`connection${!station.connection_checked ? " unknown" : station.connected ? "" : " disconnected"}`}>{!station.connection_checked ? "Reader not checked" : station.connected ? "Reader connected" : "Reader disconnected"}</span>{station.simulated && <span className="simulation-label">Simulated</span>}</div>
                 </div>
                 <div className="station-body">
                   {station.kind === "desk" ? (
@@ -258,7 +258,8 @@ function StatusBar({ status }: { status: AppStatus | null }) {
     );
   }
   const offline = status.stations.filter((station) => !station.online);
-  const readers = status.stations.filter((station) => !station.connected);
+  const readers = status.stations.filter((station) => station.connection_checked && !station.connected);
+  const unverified = status.stations.filter((station) => !station.connection_checked);
   return (
     <footer className={`status-bar${offline.length ? " has-offline" : ""}`} aria-live="polite">
       <p>
@@ -272,6 +273,9 @@ function StatusBar({ status }: { status: AppStatus | null }) {
         )}
         {readers.length > 0 && (
           <span className="bad"> · reader disconnected at {readers.length}</span>
+        )}
+        {unverified.length > 0 && (
+          <span> · reader not checked at {unverified.length} station(s)</span>
         )}
       </p>
       {status.alarm && <p className="alarm">{status.alarm}</p>}

@@ -8,8 +8,16 @@ import {
   deskScan,
   deskSearch,
   errorText,
+  hardwareTest,
 } from "./api";
-import type { BadgeView, DeskView, SearchBy, SearchView, StationStatus } from "./api";
+import type {
+  BadgeView,
+  DeskView,
+  HardwareTestView,
+  SearchBy,
+  SearchView,
+  StationStatus,
+} from "./api";
 
 interface Props {
   station: StationStatus;
@@ -28,6 +36,9 @@ export function Desk({ station }: Props) {
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
+  const [readerTest, setReaderTest] = useState<HardwareTestView | null>(null);
+  const [readerTestBusy, setReaderTestBusy] = useState(false);
+  const [readerTestFailure, setReaderTestFailure] = useState<string | null>(null);
   const [reason, setReason] = useState("");
   const [printing, setPrinting] = useState(false);
   // A print answer is only shown for the guest it was asked about.
@@ -69,12 +80,13 @@ export function Desk({ station }: Props) {
 
   const startScan = useCallback(
     (ticketCode: string) => {
+      if (busy) return;
       generation.current += 1;
       setCode("");
       setReason("");
       void run(() => deskScan(station.id, ticketCode));
     },
-    [run, station.id],
+    [busy, run, station.id],
   );
 
   const submitScan = (event: FormEvent) => {
@@ -82,6 +94,22 @@ export function Desk({ station }: Props) {
     const trimmed = code.trim();
     if (!trimmed || busy) return;
     startScan(trimmed);
+  };
+
+  const testReader = async () => {
+    if (busy || readerTestBusy) return;
+    setBusy(true);
+    setReaderTestBusy(true);
+    setReaderTest(null);
+    setReaderTestFailure(null);
+    try {
+      setReaderTest(await hardwareTest(station.id, "read_tags"));
+    } catch (problem) {
+      setReaderTestFailure(errorText(problem));
+    } finally {
+      setReaderTestBusy(false);
+      setBusy(false);
+    }
   };
 
   // A scanned ticket goes straight to the reader: in the normal flow the
@@ -247,9 +275,33 @@ export function Desk({ station }: Props) {
             placeholder="Scan the ticket QR code"
           />
           <button className="primary" type="submit" disabled={busy || code.trim() === ""}>
-            {busy ? "Working…" : "Scan ticket"}
+            {busy && !readerTestBusy ? "Working…" : "Scan ticket"}
           </button>
         </form>
+
+        {!station.simulated && (
+          <div className="hardware-field">
+            <p className="field-help">Place a sticker on the reader to check that it can be read.</p>
+            <div className="actions">
+              <button type="button" onClick={() => void testReader()} disabled={busy || readerTestBusy}>
+                {readerTestBusy ? "Reading stickers…" : "Test sticker reader"}
+              </button>
+            </div>
+            {readerTest && (
+              <div className={readerTest.ok ? "note" : "failure"} role="status">
+                <p>{readerTest.message}</p>
+                {readerTest.uid_raw_hex.length > 0 && (
+                  <ul className="found-readers">
+                    {readerTest.uid_raw_hex.map((uid) => (
+                      <li key={uid}><code>{uid}</code></li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+            {readerTestFailure && <p className="failure" role="alert">{readerTestFailure}</p>}
+          </div>
+        )}
 
         {searchOpen ? (
           <div className="search-panel" ref={searchRef}>
@@ -294,7 +346,7 @@ export function Desk({ station }: Props) {
               <ul className="search-rows">
                 {found.rows.map((row) => (
                   <li key={row.public_id}>
-                    <button type="button" onClick={() => pick(row.public_id)}>
+                    <button type="button" onClick={() => pick(row.public_id)} disabled={busy}>
                       <strong>{row.name}</strong>
                       <span> · {row.ticket_type}</span>
                       {row.email_hint && <span> · {row.email_hint}</span>}

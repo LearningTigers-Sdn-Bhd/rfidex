@@ -123,7 +123,9 @@ async fn probe_station(runtime: &StationRuntime, action: HardwareTestAction) -> 
         return hardware::stopped();
     }
     if runtime.hardware_stop.is_some() {
-        runtime.lock().connected = view.ok;
+        let mut inner = runtime.lock();
+        inner.connected = view.ok;
+        inner.connection_checked = true;
     }
     view
 }
@@ -158,6 +160,7 @@ struct StationInner {
     online: bool,
     unauthorized: bool,
     connected: bool,
+    connection_checked: bool,
     event_name: Option<String>,
     skew_secs: Option<i64>,
     last_sync: Option<DateTime<Utc>>,
@@ -253,6 +256,7 @@ impl StationRuntime {
             online: inner.online,
             unauthorized: inner.unauthorized,
             connected: inner.connected,
+            connection_checked: inner.connection_checked,
             event_name: inner.event_name.clone(),
             skew_secs: inner.skew_secs,
             last_sync: inner.last_sync,
@@ -308,7 +312,11 @@ impl StationRuntime {
                 let session = d.lock().await;
                 session.station.reader.connected()
             };
-            self.lock().connected = connected;
+            let mut inner = self.lock();
+            if inner.connection_checked || connected {
+                inner.connected = connected;
+                inner.connection_checked = true;
+            }
         }
     }
 
@@ -443,11 +451,13 @@ impl StationRuntime {
             Ok(_) => {
                 let mut inner = self.lock();
                 inner.connected = true;
+                inner.connection_checked = true;
                 inner.device_error = None;
             }
             Err(GateError::Device(DeviceError::Disconnected)) => {
                 let mut inner = self.lock();
                 inner.connected = false;
+                inner.connection_checked = true;
                 inner.device_error = None;
             }
             Err(GateError::Device(e)) => {
@@ -568,6 +578,7 @@ pub struct StationStatus {
     pub online: bool,
     pub unauthorized: bool,
     pub connected: bool,
+    pub connection_checked: bool,
     pub event_name: Option<String>,
     pub mode: Option<RfidMode>,
     pub settings_ready: bool,
@@ -645,6 +656,7 @@ fn station_status(
         online: inner.online,
         unauthorized: inner.unauthorized,
         connected: inner.connected,
+        connection_checked: inner.connection_checked,
         event_name: inner.event_name,
         mode: inner.settings.as_ref().map(|s| s.event.rfid_mode),
         settings_ready: inner.settings.is_some(),
@@ -962,8 +974,10 @@ impl Runtime {
         reason: Option<String>,
     ) -> Result<DeskView, RuntimeError> {
         let runtime = self.station(station)?.clone();
+        let refresh = runtime.clone();
         let handle = tokio::runtime::Handle::current();
-        self.hardware_jobs
+        let view = self
+            .hardware_jobs
             .run(move || {
                 handle.block_on(async move {
                     let StationDevice::Desk(device) = &runtime.device else {
@@ -976,7 +990,9 @@ impl Runtime {
                     Ok(crate::desk::link(&mut session, &runtime.store, reason).await)
                 })
             })
-            .await?
+            .await;
+        refresh.refresh_desk_connection().await;
+        view?
     }
 
     pub async fn desk_reset(&self, station: Uuid) -> Result<DeskView, RuntimeError> {
@@ -1218,7 +1234,9 @@ impl Runtime {
         drop(library);
         let connected = session.station.reader.connected();
         drop(session);
-        runtime.lock().connected = connected;
+        let mut inner = runtime.lock();
+        inner.connected = connected;
+        inner.connection_checked = true;
         Ok(())
     }
 
@@ -1266,7 +1284,9 @@ impl Runtime {
                 gate.gate.set_connected(connected)?;
             }
         }
-        runtime.lock().connected = connected;
+        let mut inner = runtime.lock();
+        inner.connected = connected;
+        inner.connection_checked = true;
         Ok(())
     }
 
@@ -1452,6 +1472,7 @@ impl StationRuntime {
                 .map(|gate| matches!(&gate.gate, GateDevice::Sim(sim) if sim.connected))
                 .unwrap_or(false),
         };
+        let connection_checked = hardware_stop.is_none();
 
         Ok(StationRuntime {
             config: station.clone(),
@@ -1467,6 +1488,7 @@ impl StationRuntime {
                 event_name: settings.as_ref().map(|s| s.event.name.clone()),
                 settings,
                 connected,
+                connection_checked,
                 ..StationInner::default()
             }),
             next_sequence: AtomicU64::new(next_sequence),

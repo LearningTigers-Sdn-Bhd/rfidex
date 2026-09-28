@@ -279,7 +279,9 @@ jobs:
           tickets=tools/app/dev/tickets.json
           mock_sha=$(sha256sum "$mock" | cut -d' ' -f1 | tr a-f A-F)
           cat > notes.md <<NOTES
-          Test build of RfiDex ${TAG#rfidex-v} for Windows 10/11 x64. **Simulator only** — no real RFID hardware yet.
+          Test build of RfiDex ${TAG#rfidex-v} for Windows 10/11 x64. Real-reader support is included for read-only commissioning, but has not been verified with physical hardware. The production EventzFlow RFID backend is not available yet.
+
+          For a USB reader, provide the vendor's x64 Release ECRFID.dll separately; it is not bundled. In Setup select ECRFID SDK and the actual reader model and device path. Use Test connection and Read stickers first. These checks are read-only; a successful connection does not certify compatibility. Sticker writing is disabled until disposable-tag physical acceptance passes. See README.md: Real readers.
 
           **Unsigned.** Windows SmartScreen will say "Windows protected your PC": choose **More info → Run anyway**.
           Installs for the current user; no admin rights needed. If WebView2 is missing, the installer downloads it, so the first install needs internet.

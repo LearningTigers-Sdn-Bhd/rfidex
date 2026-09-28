@@ -16,6 +16,33 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Runs beside `package` instead of before it: the two were ~3 min each in
+  # series. Publishing still needs both to pass.
+  rehearsal:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      CARGO_PROFILE_DEV_DEBUG: 0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: rehearsal
+      - name: Full headless rehearsal
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path evidence | Out-Null
+          cargo test --locked -p rfidex-runtime --test rehearsal -- --include-ignored --nocapture 2>&1 |
+            Tee-Object -FilePath evidence/rehearsal.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: rfidex-rehearsal-${{ github.sha }}-${{ github.run_id }}
+          path: evidence/rehearsal.txt
+          retention-days: 14
+
   package:
     runs-on: windows-latest
     timeout-minutes: 30
@@ -62,13 +89,6 @@ jobs:
           }
           "tag $($env:GITHUB_REF_NAME) matches version $expected" |
             Tee-Object -FilePath evidence/tag-check.txt
-
-      - name: Full headless rehearsal
-        shell: pwsh
-        run: |
-          cargo test --locked -p rfidex-runtime --test rehearsal -- --include-ignored --nocapture 2>&1 |
-            Tee-Object -FilePath evidence/rehearsal.txt
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Install frontend dependencies
         run: npm ci
@@ -191,7 +211,8 @@ jobs:
           ) | Set-Content evidence/installer.txt
           Get-Content evidence/installer.txt
 
-      # Uploaded only after the rehearsal, the build and the import gate passed.
+      # Uploaded after the build and the import gate passed; the release job also
+      # waits for the rehearsal job.
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
@@ -204,12 +225,12 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  # Tag pushes only: publish the installer that `package` built, rehearsed and
-  # audited as the latest GitHub release. Installed copies read latest.json
+  # Tag pushes only: publish the installer that `package` built and audited,
+  # once `rehearsal` has passed too, as the latest GitHub release. Installed copies read latest.json
   # from releases/latest, so it must not be a pre-release. Write access lives
   # in this job alone.
   prerelease:
-    needs: package
+    needs: [package, rehearsal]
     if: startsWith(github.ref, 'refs/tags/rfidex-v')
     runs-on: ubuntu-latest
     permissions:
@@ -237,7 +258,7 @@ jobs:
           cat > notes.md <<NOTES
           RfiDex ${TAG#rfidex-v} for Windows 10/11 x64, for use with the EventzFlow RFID backend.
 
-          For a USB reader, provide the vendor's x64 Release ECRFID.dll separately; it is not bundled. In Setup select the reader model and device path, then use Test connection and Read stickers. Sticker writing stays off until Setup → Sticker write test passes on this computer. See README.md: Real readers.
+          For a USB reader, copy the vendor's x64 Release ECRFID.dll into the RfiDex install folder and leave its path empty in Setup (or enter the full path to another copy); it is not bundled. Pick the reader from the list to fill the device path, then use Test connection and Read stickers. Sticker writing stays off until Setup → Sticker write test passes on this computer. See README.md: Real readers.
 
           **Unsigned.** Windows SmartScreen will say "Windows protected your PC": choose **More info → Run anyway**.
           Installs for the current user; no admin rights needed. If WebView2 is missing, the installer downloads it, so the first install needs internet.

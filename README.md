@@ -166,9 +166,11 @@ frame/bus address, or interface plus reader address). Use **Look for readers**
 for the selected transport and choose explicitly; USB entries fill the device
 path, COM entries fill the port, and NET entries fill the local interface (not
 the reader address). Enter the network reader IP and port separately. Nothing
-selects the first entry for you. HID address mode and exclusive access are
-shown; exclusive access is fixed at 1. SDK write verification cannot be
-switched on in Setup.
+selects the first entry for you. Setup shows only what the station kind
+uses: a desk gets a USB reader, a gate a network reader (**Find gates** fills
+the reader address). Timeout, inventory mode, HID address mode and, for a gate,
+the plain-TCP profile sit under **Advanced reader settings**. Exclusive access
+is fixed at 1. SDK write verification cannot be switched on in Setup.
 
 The library is loaded in a **separate helper process**, started from the same
 executable. A native crash or a driver that never returns therefore cannot take

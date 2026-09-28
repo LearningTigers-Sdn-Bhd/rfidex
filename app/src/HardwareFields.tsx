@@ -13,6 +13,7 @@ import {
   HardwareTestView,
   SdkConnection,
   StationConfig,
+  StationKind,
   errorText,
   hardwareDiscover,
   hardwareEnumerate,
@@ -24,8 +25,9 @@ const DEFAULT_TIMEOUT_MS = 2000;
 type Tcp = Extract<HardwareConfig, { transport: "ec_v19_plain_tcp" }>;
 type Sdk = Extract<HardwareConfig, { transport: "ecrfid_sdk" }>;
 
-/** The candidate TCP profile, the one an operator is most likely to start with. */
-export const defaultHardware = (): HardwareConfig => ({
+/** The unverified plain-TCP gate profile, reachable only from a gate's
+ * advanced settings. */
+const defaultTcp = (): HardwareConfig => ({
   transport: "ec_v19_plain_tcp",
   address: "192.168.1.20:6688",
   bus_address: 255,
@@ -40,6 +42,27 @@ export const defaultSdk = (dllPath: string): Sdk => ({
   inventory_mode: 4,
   timeout_ms: DEFAULT_TIMEOUT_MS,
 });
+
+/** A desk reader is on USB; a gate reader is on the network. */
+const connectionFor = (kind: StationKind): SdkConnection["kind"] =>
+  kind === "desk" ? "hid" : "net";
+
+/** A new real reader for a station of this kind. */
+export const defaultHardware = (kind: StationKind): HardwareConfig => ({
+  ...defaultSdk(""),
+  connection: defaultConnection(connectionFor(kind)),
+});
+
+/** The reader settings fitted to a station kind: a desk gets a USB reader and
+ * a gate a network one, keeping the DLL path. Anything else is replaced. */
+export const fitHardware = (kind: StationKind, hardware: HardwareConfig): HardwareConfig => {
+  if (hardware.transport !== "ecrfid_sdk") {
+    return kind === "gate" ? hardware : defaultHardware(kind);
+  }
+  return hardware.connection.kind === connectionFor(kind)
+    ? hardware
+    : { ...hardware, connection: defaultConnection(connectionFor(kind)) };
+};
 
 const defaultConnection = (kind: SdkConnection["kind"]): SdkConnection => {
   switch (kind) {
@@ -107,55 +130,97 @@ export default function HardwareFields({ station, dirty, onChange, onSaved }: Pr
 
   return (
     <div className="hardware-field">
-      <div className="row">
-        <label>
-          Reader type
-          <select
-            value={hardware.transport}
-            onChange={(e) => {
-              const wanted = e.target.value as HardwareConfig["transport"];
-              if (wanted === hardware.transport) return;
-              // The DLL path is the field an operator retypes most, so it is
-              // the one thing carried across a change of type.
-              onChange(
-                wanted === "ecrfid_sdk"
-                  ? defaultSdk(hardware.transport === "ecrfid_sdk" ? hardware.dll_path : "")
-                  : defaultHardware(),
-              );
-            }}
-          >
-            <option value="ec_v19_plain_tcp">EC v1.9 over TCP</option>
-            <option value="ecrfid_sdk">ECRFID SDK</option>
-          </select>
-          <small className="field-help">
-            {hardware.transport === "ec_v19_plain_tcp"
-              ? "Unverified candidate: built from the vendor guide, with no capture confirming it yet."
-              : "The vendor library, over USB, a serial port or the network."}
-          </small>
-        </label>
-        <label>
-          Reader timeout (ms)
-          <input
-            type="number"
-            min={100}
-            max={10000}
-            step={100}
-            value={hardware.timeout_ms}
-            onChange={(e) =>
-              onChange({ ...hardware, timeout_ms: Number(e.target.value) })
-            }
-          />
-          <small className="field-help">
-            The most one reader call may take, between 100 and 10000.
-          </small>
-        </label>
-      </div>
-
       {hardware.transport === "ec_v19_plain_tcp" ? (
         <TcpFields value={hardware} onChange={onChange} />
       ) : (
-        <SdkFields value={hardware} onChange={onChange} />
+        <SdkFields value={hardware} kind={station.kind} onChange={onChange} />
       )}
+
+      <details className="advanced">
+        <summary>Advanced reader settings</summary>
+        <p className="field-help">
+          Leave these alone unless your RFID supplier tells you otherwise.
+        </p>
+        <div className="row">
+          {station.kind === "gate" && (
+            <label>
+              Reader type
+              <select
+                value={hardware.transport}
+                onChange={(e) => {
+                  const wanted = e.target.value as HardwareConfig["transport"];
+                  if (wanted === hardware.transport) return;
+                  onChange(
+                    wanted === "ecrfid_sdk"
+                      ? defaultHardware(station.kind)
+                      : defaultTcp(),
+                  );
+                }}
+              >
+                <option value="ecrfid_sdk">ECRFID SDK</option>
+                <option value="ec_v19_plain_tcp">EC v1.9 over TCP (unverified)</option>
+              </select>
+              <small className="field-help">
+                {hardware.transport === "ec_v19_plain_tcp"
+                  ? "Unverified candidate: built from the vendor guide, with no capture confirming it yet."
+                  : "The vendor library. Use this unless told otherwise."}
+              </small>
+            </label>
+          )}
+          <label>
+            Reader timeout (ms)
+            <input
+              type="number"
+              min={100}
+              max={10000}
+              step={100}
+              value={hardware.timeout_ms}
+              onChange={(e) =>
+                onChange({ ...hardware, timeout_ms: Number(e.target.value) })
+              }
+            />
+            <small className="field-help">
+              The most one reader call may take, between 100 and 10000.
+            </small>
+          </label>
+          {hardware.transport === "ecrfid_sdk" && (
+            <label>
+              Inventory mode
+              <input
+                type="number"
+                min={0}
+                max={255}
+                value={hardware.inventory_mode}
+                onChange={(e) =>
+                  onChange({ ...hardware, inventory_mode: Number(e.target.value) })
+                }
+              />
+              <small className="field-help">
+                The vendor's mode byte. 4 is the value the vendor demo uses for
+                ISO15693.
+              </small>
+            </label>
+          )}
+          {hardware.transport === "ecrfid_sdk" && hardware.connection.kind === "hid" && (
+            <label>
+              Address mode
+              <input
+                type="number"
+                min={0}
+                value={hardware.connection.address_mode}
+                onChange={(e) =>
+                  hardware.connection.kind === "hid" &&
+                  onChange({
+                    ...hardware,
+                    connection: { ...hardware.connection, address_mode: Number(e.target.value) },
+                  })
+                }
+              />
+              <small className="field-help">The vendor HID address mode; the demo uses 1.</small>
+            </label>
+          )}
+        </div>
+      </details>
 
       <div className="row">
         <div className="actions">
@@ -250,9 +315,11 @@ function TcpFields({
 
 function SdkFields({
   value,
+  kind,
   onChange,
 }: {
   value: Sdk;
+  kind: StationKind;
   onChange: (hardware: HardwareConfig) => void;
 }) {
   const revision = useRef({ value, number: 0 });
@@ -324,24 +391,11 @@ function SdkFields({
           </small>
         </label>
         <label>
-          Connection
-          <select
-            value={connection.kind}
-            onChange={(e) =>
-              setConnection(defaultConnection(e.target.value as SdkConnection["kind"]))
-            }
-          >
-            <option value="hid">USB HID</option>
-            <option value="com">Serial port</option>
-            <option value="net">Network</option>
-          </select>
-        </label>
-        <label>
           Model
           <input
             value={connection.model}
             onChange={(e) => setConnection({ ...connection, model: e.target.value })}
-            placeholder="EC1101"
+            placeholder={kind === "desk" ? "EC1101" : ""}
           />
           <small className="field-help">
             The model printed on the reader. Nothing is assumed from the reader
@@ -363,21 +417,6 @@ function SdkFields({
               Pick the reader from the list. The first device is never chosen for
               you.
             </small>
-          </label>
-          <label>
-            Address mode
-            <input
-              type="number"
-              min={0}
-              value={connection.address_mode}
-              onChange={(e) => setConnection({ ...connection, address_mode: Number(e.target.value) })}
-            />
-            <small className="field-help">The vendor HID address mode; the demo uses 1.</small>
-          </label>
-          <label>
-            Exclusive access
-            <input type="number" value={connection.exclusive} readOnly />
-            <small className="field-help">This app reserves one reader for one station.</small>
           </label>
         </div>
       )}
@@ -488,32 +527,18 @@ function SdkFields({
         </>
       )}
 
-      <div className="row">
-        <label>
-          Inventory mode
-          <input
-            type="number"
-            min={0}
-            max={255}
-            value={value.inventory_mode}
-            onChange={(e) => set({ inventory_mode: Number(e.target.value) })}
-          />
-          <small className="field-help">
-            The vendor's mode byte. 4 is the value the vendor demo uses for
-            ISO15693.
-          </small>
-        </label>
-      </div>
-      <div className="row">
-        <label>
-          Write acceptance
-          <input readOnly value={value.write_verified ? "Write enabled in saved profile" : "Write disabled"} />
-          <small className="field-help">Turned on or off only by the sticker write test below, after a disposable sticker passes.</small>
-        </label>
-      </div>
+      {kind === "desk" && (
+        <div className="row">
+          <label>
+            Write acceptance
+            <input readOnly value={value.write_verified ? "Write enabled in saved profile" : "Write disabled"} />
+            <small className="field-help">Turned on or off only by the sticker write test below, after a disposable sticker passes.</small>
+          </label>
+        </div>
+      )}
       <div className="actions">
         <button type="button" onClick={() => void look()} disabled={busy}>
-          Look for readers
+          {kind === "desk" ? "Look for readers" : "Look for network cards"}
         </button>
       </div>
 

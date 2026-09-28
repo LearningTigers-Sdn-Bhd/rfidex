@@ -14,7 +14,7 @@ import type {
   StationConfig,
   StationKind,
 } from "./api";
-import HardwareFields, { defaultHardware } from "./HardwareFields";
+import HardwareFields, { defaultHardware, fitHardware } from "./HardwareFields";
 
 const DEFAULT_PRINTER_URL = "http://127.0.0.1:8000";
 
@@ -66,15 +66,15 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
         if (!live || !view) return;
         setServerUrl(view.server_url);
         // A release build has no simulator: a station saved with one needs a
-        // real reader before it can start again.
+        // real reader before it can start again. A real reader is fitted to
+        // its kind, so only the fields that kind uses are shown.
         setStations(
-          SIMULATOR
-            ? view.stations
-            : view.stations.map((s) =>
-                s.device.type === "sim_desk" || s.device.type === "sim_gate"
-                  ? { ...s, device: realDevice(s.kind, defaultHardware()) }
-                  : s,
-              ),
+          view.stations.map((s) => {
+            if (s.device.type === "ecrfid_desk" || s.device.type === "ecrfid_gate") {
+              return { ...s, device: realDevice(s.kind, fitHardware(s.kind, s.device.hardware)) };
+            }
+            return SIMULATOR ? s : { ...s, device: realDevice(s.kind, defaultHardware(s.kind)) };
+          }),
         );
         setOriginal(view.stations);
         setKeyOnFile(view.has_api_key);
@@ -144,8 +144,8 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
         if (choice === "real") {
           const hardware =
             s.device.type === "ecrfid_desk" || s.device.type === "ecrfid_gate"
-              ? s.device.hardware
-              : defaultHardware();
+              ? fitHardware(s.kind, s.device.hardware)
+              : defaultHardware(s.kind);
           return {
             ...s,
             device: {
@@ -166,7 +166,7 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
         name: `Station ${list.length + 1}`,
         kind: "desk",
         role: null,
-        device: SIMULATOR ? { type: "sim_desk" } : realDevice("desk", defaultHardware()),
+        device: SIMULATOR ? { type: "sim_desk" } : realDevice("desk", defaultHardware("desk")),
         debounce_secs: 5,
         write_start_block: 0,
         printer_url: DEFAULT_PRINTER_URL,
@@ -401,7 +401,7 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
                       </small>
                     </label>
                   )}
-                  {station.kind === "desk" && (
+                  {station.kind === "desk" && mode === "write" && (
                     <label>
                       Write start block
                       <input
@@ -565,10 +565,9 @@ function asSimGate(station: StationConfig) {
 }
 
 /**
- * The device a station should hold after its kind changes. A real reader only
- * survives a kind change that keeps its role: a desk reader is not a gate
- * reader, so switching kinds falls back to the simulator rather than sending
- * the wrong traffic at the wrong hardware.
+ * The device a station should hold after its kind changes. A real reader is
+ * refitted to the new kind (a desk reader is on USB, a gate reader on the
+ * network), so the wrong traffic never goes to the wrong hardware.
  */
 function asKindDevice(
   station: StationConfig,
@@ -580,15 +579,10 @@ function asKindDevice(
       station.device.type === "ecrfid_desk" || station.device.type === "ecrfid_gate"
         ? station.device.hardware
         : null;
-    if (hardware) {
-      return {
-        type: kind === "desk" ? "ecrfid_desk" : "ecrfid_gate",
-        hardware,
-      };
-    }
+    if (hardware) return realDevice(kind, fitHardware(kind, hardware));
     if (kind === "desk" && station.device.type === "sim_desk") return station.device;
   }
-  if (!SIMULATOR) return realDevice(kind, defaultHardware());
+  if (!SIMULATOR) return realDevice(kind, defaultHardware(kind));
   return kind === "gate" ? asSimGate(station) : { type: "sim_desk" };
 }
 

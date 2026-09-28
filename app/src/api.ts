@@ -294,11 +294,6 @@ export interface AppFailure {
   message: string;
 }
 
-const UNKNOWN_FAILURE: AppFailure = {
-  code: "app_error",
-  message: "The app could not finish this action.",
-};
-
 /** Styling preview: dev builds may add ?preview=1 to render pages in a plain
  *  browser; every backend call then fails harmlessly. */
 const previewMode = import.meta.env.DEV && new URLSearchParams(window.location.search).has("preview");
@@ -307,9 +302,9 @@ const previewMode = import.meta.env.DEV && new URLSearchParams(window.location.s
 export const inDesktopApp = () => "__TAURI_INTERNALS__" in window || previewMode;
 
 /**
- * Only messages from Rust reach the operator. A JavaScript error (an `Error`
- * instance) is logged for developers and shown as the neutral fallback, so a
- * raw "Cannot read properties of undefined" never appears on screen.
+ * Messages written by Rust are shown as they are. Anything else (a JavaScript
+ * exception, a Tauri transport error) is logged for developers and shown as a
+ * plain operator message; raw internal text never reaches the screen.
  */
 export function failureOf(failure: unknown): AppFailure {
   if (
@@ -322,7 +317,14 @@ export function failureOf(failure: unknown): AppFailure {
     return failure as AppFailure;
   }
   console.error(failure);
-  return UNKNOWN_FAILURE;
+  if (previewMode) {
+    return { code: "preview", message: "Preview only: this page is not connected to the RfiDex app." };
+  }
+  return {
+    code: "app_error",
+    message:
+      "Something unexpected went wrong inside RfiDex. Try again. If it keeps happening, restart RfiDex and tell support what you pressed.",
+  };
 }
 
 export const errorText = (failure: unknown): string => failureOf(failure).message;

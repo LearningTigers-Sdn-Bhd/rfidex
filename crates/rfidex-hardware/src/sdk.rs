@@ -11,9 +11,9 @@
 //! * `TagInventory` takes no output-capacity argument. The demo allocates 96
 //!   pointers and this profile does the same. That is a named profile, not a
 //!   proof of a maximum, and it is not memory-safety protection.
-//! * The system-information layout (`[16]` count, `[17]` size) and the
-//!   four-byte block size are the demo's layout. No vendor document states
-//!   whether the count is direct or minus one.
+//! * The system-information layout (`[16]` count, `[17]` size) is the demo's
+//!   layout. Both are ISO 15693 "minus one" values: a real EC reader reported
+//!   `4F 03` for an 80-block, 4-byte-block sticker (2026-09-28).
 //!
 //! Both are contained by the child process: a violation crashes the helper, not
 //! the app, and the parent records the failure and starts a fresh session.
@@ -150,16 +150,17 @@ pub fn decode_read(buffer: &[u8], uid: &[u8; 8], blocks: u8) -> Result<Vec<u8>, 
 /// The sticker's geometry from a system-information response.
 ///
 /// The demo reads `receive[4]` as the status, `[16]` as the block count and
-/// `[17]` as the block size. The count is used directly; whether the vendor
-/// means "count" or "highest block" is not established anywhere, so this is a
-/// provisional convention and the raw bytes are handed back alongside it.
+/// `[17]` as the block size. ISO 15693 stores both as "value minus one", the
+/// size in the low five bits: a real reader answered `4F 03` for an 80-block
+/// sticker with 4-byte blocks. Only 4-byte blocks are accepted, because
+/// [`decode_read`] can only split reads into 4-byte blocks.
 pub fn decode_geometry(buffer: &[u8]) -> Result<(usize, usize), WireError> {
     if buffer.len() < GEOMETRY_MIN_LENGTH || buffer[4] != 0x00 {
         return Err(WireError::BadResponse);
     }
-    let block_count = usize::from(buffer[16]);
-    let block_size = usize::from(buffer[17]);
-    if block_count == 0 || block_size == 0 {
+    let block_count = usize::from(buffer[16]) + 1;
+    let block_size = usize::from(buffer[17] & 0x1F) + 1;
+    if block_size != BLOCK_SIZE {
         return Err(WireError::BadResponse);
     }
     Ok((block_size, block_count))
@@ -320,19 +321,20 @@ mod tests {
     }
 
     #[test]
-    fn geometry_comes_from_the_demo_fields_and_zero_is_refused() {
+    fn geometry_is_iso_minus_one_as_a_real_reader_reports_it() {
         let mut receive = [0u8; 32];
-        receive[4] = 0x00;
-        receive[16] = 28;
-        receive[17] = 4;
+        // What an EC reader reported for an ICODE SLIX2 sticker.
+        receive[16] = 0x4F;
+        receive[17] = 0x03;
+        assert_eq!(decode_geometry(&receive).unwrap(), (4, 80));
+        // A 28-block sticker, and the size byte's upper bits are not size.
+        receive[16] = 27;
+        receive[17] = 0xE3;
         assert_eq!(decode_geometry(&receive).unwrap(), (4, 28));
-
-        receive[16] = 0;
+        // Blocks this reader cannot split are refused, not guessed at.
+        receive[17] = 0x07;
         assert_eq!(decode_geometry(&receive), Err(WireError::BadResponse));
-        receive[16] = 28;
-        receive[17] = 0;
-        assert_eq!(decode_geometry(&receive), Err(WireError::BadResponse));
-        receive[17] = 4;
+        receive[17] = 0x03;
         receive[4] = 0x0F;
         assert_eq!(decode_geometry(&receive), Err(WireError::BadResponse));
     }

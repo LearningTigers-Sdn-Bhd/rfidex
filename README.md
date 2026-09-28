@@ -183,8 +183,9 @@ The helper refuses to load on any other platform, and a station configured with
 an SDK reader simply reports a disconnected reader there.
 
 **Vendor DLL handling:** the vendor library is **not** distributed with RfiDex.
-Install it yourself and enter the full path in Setup. The app loads it from the
-path you chose, with the DLL's own directory and System32 as the only search
+Copy `ECRFID.dll` into the RfiDex install folder and leave the path empty in
+Setup, or enter the full path to a copy elsewhere. The app loads it from that
+path, with the DLL's own directory and System32 as the only search
 locations, so a file dropped in the working directory cannot be preferred over
 the one you selected.
 

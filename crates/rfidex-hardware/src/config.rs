@@ -214,8 +214,12 @@ fn check_dll_path(path: &Path) -> Result<(), String> {
     let text = path
         .to_str()
         .ok_or_else(|| "The reader library path must be ordinary text.".to_string())?;
-    if text.trim().is_empty() || !path.is_absolute() {
-        return Err("Enter the full path to the ECRFID reader library on this computer.".into());
+    // Empty: load ECRFID.dll from the RfiDex install folder.
+    if text.trim().is_empty() {
+        return Ok(());
+    }
+    if !path.is_absolute() {
+        return Err("Enter the full path to the ECRFID reader library on this computer, or leave it empty to use the copy in the RfiDex folder.".into());
     }
     if text.contains('\0') {
         return Err("The reader library path contains a character that cannot be used.".into());
@@ -375,7 +379,7 @@ mod tests {
     }
 
     #[test]
-    fn sdk_dll_path_must_be_absolute_and_carry_no_nul() {
+    fn sdk_dll_path_must_be_absolute_empty_or_carry_no_nul() {
         let mut relative = net("192.168.1.20:6688");
         if let HardwareConfig::EcrfidSdk { dll_path, .. } = &mut relative {
             *dll_path = "ECRFID.dll".into();
@@ -386,7 +390,7 @@ mod tests {
         if let HardwareConfig::EcrfidSdk { dll_path, .. } = &mut empty {
             *dll_path = "".into();
         }
-        assert!(empty.validate().is_err());
+        assert!(empty.validate().is_ok());
 
         let mut nul = net("192.168.1.20:6688");
         if let HardwareConfig::EcrfidSdk { dll_path, .. } = &mut nul {

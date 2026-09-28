@@ -91,6 +91,16 @@ struct Api {
 
 impl Api {
     fn load(dll_path: &Path) -> Result<(Library, Api), WireError> {
+        // An empty path means the copy installed beside RfiDex. The device host
+        // is this same executable, so its folder is the install folder.
+        let beside;
+        let dll_path = if dll_path.as_os_str().to_string_lossy().trim().is_empty() {
+            let exe = std::env::current_exe().map_err(|_| WireError::Disconnected)?;
+            beside = exe.with_file_name("ECRFID.dll");
+            beside.as_path()
+        } else {
+            dll_path
+        };
         let wide: Vec<u16> = dll_path
             .as_os_str()
             .encode_wide()

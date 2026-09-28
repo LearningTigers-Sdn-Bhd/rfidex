@@ -384,10 +384,11 @@ function SdkFields({
           <input
             value={value.dll_path}
             onChange={(e) => set({ dll_path: e.target.value })}
-            placeholder="C:\Program Files\RFiDex\ECRFID.dll"
+            placeholder="Empty: ECRFID.dll in the RfiDex folder"
           />
           <small className="field-help">
-            The full path to the vendor library on this computer.
+            Leave empty if ECRFID.dll is copied into the RfiDex install folder.
+            Otherwise enter its full path on this computer.
           </small>
         </label>
         <label>

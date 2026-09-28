@@ -449,6 +449,7 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
                   station={station}
                   dirty={isDirty}
                   onChange={(hardware) => setRealReader(station.id, hardware)}
+                  onSaved={onSaved}
                 />
               )}
 

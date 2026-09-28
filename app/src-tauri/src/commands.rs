@@ -9,7 +9,7 @@ use rfidex_runtime::config::{AppConfig, AppPaths, ConfigError, SetupInput, Setup
 use rfidex_runtime::{
     test_connection, test_printer, AppStatus, BadgeView, ConnectionView, DeskView, GateView,
     HardwareTestAction, HardwareTestView, ProblemView, Runtime, RuntimeError, RuntimeOptions,
-    SearchView,
+    SearchView, StickerTestStep, StickerTestView,
 };
 use serde::Serialize;
 use std::sync::Arc;
@@ -204,9 +204,19 @@ pub async fn setup_save(
         }
     }
 
+    restart_with(&state, &mut slot, candidate).await
+}
+
+/// Stop the stations, start them on `candidate`, and save it only once they
+/// run. Any failure brings the saved setup back.
+async fn restart_with(
+    state: &AppState,
+    slot: &mut Option<Arc<Runtime>>,
+    candidate: AppConfig,
+) -> Result<AppView, RuntimeError> {
     if let Some(running) = slot.take() {
         if let Err(error) = running.shutdown().await {
-            try_restore(&state, &mut slot).await;
+            try_restore(state, slot).await;
             return Err(error);
         }
     }
@@ -230,12 +240,12 @@ pub async fn setup_save(
                 // Nothing was saved, so the old setup is still the truth.
                 drop(runtime);
                 let error = config_error(e);
-                try_restore(&state, &mut slot).await;
+                try_restore(state, slot).await;
                 Err(error)
             }
         },
         Err(e) => {
-            try_restore(&state, &mut slot).await;
+            try_restore(state, slot).await;
             Err(e)
         }
     }
@@ -399,6 +409,33 @@ pub async fn hardware_test(
 ) -> Result<HardwareTestView, RuntimeError> {
     let slot = current(&state).await?;
     runtime(&slot).hardware_test(station, action).await
+}
+
+/// One step of the disposable-sticker write test on a real desk reader.
+#[tauri::command]
+pub async fn sticker_test(
+    state: tauri::State<'_, AppState>,
+    station: Uuid,
+    step: StickerTestStep,
+) -> Result<StickerTestView, RuntimeError> {
+    let slot = current(&state).await?;
+    runtime(&slot).sticker_test(station, step).await
+}
+
+/// Turn sticker writing on or off for one desk, then restart the stations on
+/// the saved change, exactly as a Setup save does.
+#[tauri::command]
+pub async fn sticker_writing(
+    state: tauri::State<'_, AppState>,
+    station: Uuid,
+    on: bool,
+) -> Result<AppView, RuntimeError> {
+    let mut slot = state.runtime.write().await;
+    let candidate = slot
+        .as_ref()
+        .ok_or_else(not_configured)?
+        .with_writing(station, on)?;
+    restart_with(&state, &mut slot, candidate).await
 }
 
 fn runtime(slot: &Arc<Runtime>) -> &Runtime {

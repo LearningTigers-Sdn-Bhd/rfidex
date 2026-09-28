@@ -93,6 +93,13 @@ impl DeskDevice {
     pub fn is_simulated(&self) -> bool {
         matches!(self, DeskDevice::Sim(_))
     }
+
+    /// Let go of a real reader so the sticker write test can open it.
+    pub fn release(&mut self) {
+        if let DeskDevice::Ecrfid(d) = self {
+            d.release();
+        }
+    }
 }
 
 impl TagReaderWriter for DeskDevice {

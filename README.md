@@ -203,17 +203,25 @@ the reader.
 
 ### The write gate
 
-Writing a sticker needs a profile whose physical acceptance tests have passed.
-That is a separate, deliberate switch, off in every saved setup; **no button in
-the app turns it on**. Until it is on, the write step is refused before a byte
-reaches a reader, and the desk says the reader cannot write stickers.
+Writing a sticker needs a profile whose write test has passed. The switch is
+off in every saved setup, and until it is on the write step is refused before a
+byte reaches a reader; the desk says the reader cannot write stickers.
 
-Before enabling writes on a reader, complete §7.1 of the locked
-`docs/superpowers/specs/2026-09-25-rfidex-design.md` (maintained outside this
-repository) on stickers marked **DISPOSABLE**, never production badges:
-verify geometry and baseline, twenty tear trials, at least fifty stickers
-with 100% verified readback, no collateral block changes and no forbidden
-writes. Keep the switch off until the tested profile passes every check.
+The switch lives in **Setup → desk reader → Sticker write test** (ECRFID SDK
+desks only). On stickers marked **DISPOSABLE**, never production badges:
+
+- **Test this sticker** reads the sticker's geometry, saves every block, writes
+  a test payload, reads it back, checks that no other block changed, writes the
+  original data back, confirms the UID is unchanged, and checks that a block
+  past the end is refused.
+- **Start tear** / **Check tear** interrupt a write by pulling the sticker away,
+  then confirm the half-written payload is caught.
+
+Results are kept in `sticker-tests.jsonl` in the RfiDex data folder. **Turn
+writing on** appears once one sticker has passed with no failures; the screen
+shows the tally against §7.1's full target (fifty stickers, twenty tears),
+which is recommended before relying on writing at an event. Writing can be
+turned off at any time.
 
 ### Setup fields and tests
 
@@ -293,8 +301,8 @@ target\debug\rfidex-device-host.exe commissioning <private-config.json> write --
 records. Run `write` only on stickers marked **DISPOSABLE**, with measured UID,
 start block and data. It reads baseline, makes one write, compares exact
 readback, then exits with failure on mismatch without retry. Complete locked
-§7.1 physical checks before enabling normal desk writes; commissioning itself
-never certifies hardware or changes ordinary Setup write capability.
+§7.1 physical checks before enabling normal desk writes; this command-line
+tool never changes the Setup write switch (the Sticker write test does).
 
 <a id="registration-workflow"></a>
 

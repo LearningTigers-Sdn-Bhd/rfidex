@@ -34,8 +34,8 @@ pub enum HardwareConfig {
         /// at ISO15693 by the adapter and is not configurable.
         inventory_mode: u8,
         timeout_ms: u32,
-        /// True only for a profile whose writes passed the locked disposable-tag
-        /// acceptance tests. Never set by the app itself.
+        /// True only for a profile whose writes passed the disposable-sticker
+        /// write test. Set only from that test's screen, never automatically.
         #[serde(default)]
         write_verified: bool,
     },
@@ -159,6 +159,19 @@ impl HardwareConfig {
     pub fn write_verified(&self) -> bool {
         match self {
             HardwareConfig::EcrfidSdk { write_verified, .. } => *write_verified,
+            HardwareConfig::EcV19PlainTcp { .. } => false,
+        }
+    }
+
+    /// Turn writing on or off for an SDK profile. Only the sticker write test
+    /// in Setup calls this, after a sticker passed. Returns false for a
+    /// profile that cannot write at all.
+    pub fn set_write_verified(&mut self, on: bool) -> bool {
+        match self {
+            HardwareConfig::EcrfidSdk { write_verified, .. } => {
+                *write_verified = on;
+                true
+            }
             HardwareConfig::EcV19PlainTcp { .. } => false,
         }
     }

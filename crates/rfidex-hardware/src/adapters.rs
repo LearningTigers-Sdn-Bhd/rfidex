@@ -414,6 +414,12 @@ impl EcrfidDesk {
         self.reader.probe()
     }
 
+    /// Close the helper so another one can open the reader. The next ordinary
+    /// call reconnects; a write still refuses until a read reopens it.
+    pub fn release(&mut self) {
+        self.reader.forget();
+    }
+
     /// Raw stored records. Only the commissioning host reaches this: the app's
     /// own commands never ask for gate records, and nothing here deletes one.
     pub fn raw_records(&mut self) -> DeviceResult<Vec<Vec<u8>>> {

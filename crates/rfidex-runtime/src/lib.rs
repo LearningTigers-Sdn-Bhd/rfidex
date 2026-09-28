@@ -15,6 +15,7 @@ pub mod printer;
 pub mod problems;
 pub mod runtime;
 pub mod search;
+pub mod sticker_test;
 
 pub use config::{
     default_printer_url, is_loopback_host, validate_connection, validate_printer_url, AppConfig,
@@ -28,6 +29,7 @@ pub use printer::{test_printer, PrinterClient};
 pub use problems::ProblemView;
 pub use runtime::{AppStatus, Runtime, RuntimeOptions, StationStatus};
 pub use search::{SearchRow, SearchView};
+pub use sticker_test::{StickerTestStep, StickerTestView};
 
 /// An error the operator can read. Never carries a raw database or HTTP error,
 /// a URL, or a server error body: the code says what happened, the message says

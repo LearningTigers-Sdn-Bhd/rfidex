@@ -245,3 +245,6 @@ dialog .checkbox input { width: 20px; }
   font-size: 0.85em;
   word-break: break-all;
 }
+.setup .checkbox { display: flex; gap: 8px; align-items: center; }
+.setup .checkbox input { width: auto; min-height: 0; }
+.sticker-test ul { margin: 8px 0 0 18px; }

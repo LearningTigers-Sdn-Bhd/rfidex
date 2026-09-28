@@ -254,6 +254,31 @@ export const hardwareEnumerate = (dllPath: string, kind: EnumerationKind) =>
   invoke<string[]>("hardware_enumerate", { dllPath, kind });
 export const hardwareTest = (station: string, action: HardwareTestAction) =>
   invoke<HardwareTestView>("hardware_test", { station, action });
+export type StickerTestStep = "status" | "check" | "tear_write" | "tear_check";
+
+export interface StickerTally {
+  passed: number;
+  failed: number;
+  tears: number;
+  tears_undetected: number;
+  target_stickers: number;
+  target_tears: number;
+}
+
+export interface StickerTestView {
+  ok: boolean;
+  message: string;
+  details: string[];
+  tally: StickerTally;
+  tear_waiting: boolean;
+  write_enabled: boolean;
+  can_enable: boolean;
+}
+
+export const stickerTest = (station: string, step: StickerTestStep) =>
+  invoke<StickerTestView>("sticker_test", { station, step });
+export const stickerWriting = (station: string, on: boolean) =>
+  invoke<AppView>("sticker_writing", { station, on });
 export const updateCheck = () => invoke<UpdateView>("update_check");
 export const updateInstall = () => invoke<void>("update_install");
 

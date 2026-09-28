@@ -4,7 +4,9 @@
 // outcome message. Nothing in this file decides whether a reader works, and a
 // successful test never claims a reader is verified.
 import { useRef, useState } from "react";
+import StickerTest from "./StickerTest";
 import {
+  AppView,
   EnumerationKind,
   HardwareConfig,
   HardwareTestAction,
@@ -61,9 +63,11 @@ interface Props {
   /** True when the screen still holds edits that have not been saved. */
   dirty: boolean;
   onChange: (hardware: HardwareConfig) => void;
+  /** Turning sticker writing on or off saves the setup and restarts stations. */
+  onSaved: (view: AppView) => void;
 }
 
-export default function HardwareFields({ station, dirty, onChange }: Props) {
+export default function HardwareFields({ station, dirty, onChange, onSaved }: Props) {
   // Track station identity, not just serialized values: edit-then-revert must
   // still invalidate a result returned by an earlier reader request.
   const revision = useRef({ station, dirty, number: 0 });
@@ -190,6 +194,10 @@ export default function HardwareFields({ station, dirty, onChange }: Props) {
         <p className="failure" role="status">
           {failure.message}
         </p>
+      )}
+
+      {device.type === "ecrfid_desk" && hardware.transport === "ecrfid_sdk" && !dirty && (
+        <StickerTest stationId={station.id} onSaved={onSaved} />
       )}
     </div>
   );
@@ -440,7 +448,7 @@ function SdkFields({
         <label>
           Write acceptance
           <input readOnly value={value.write_verified ? "Write enabled in saved profile" : "Write disabled"} />
-          <small className="field-help">This flag is not proof of physical acceptance. Setup cannot enable writing.</small>
+          <small className="field-help">Turned on or off only by the sticker write test below, after a disposable sticker passes.</small>
         </label>
       </div>
       <div className="actions">

@@ -51,4 +51,8 @@ impl SdkReader {
     pub fn enumerate(_dll_path: &Path, _kind: EnumerationKind) -> Result<Vec<String>, WireError> {
         Err(WireError::Unsupported)
     }
+
+    pub fn discover(_dll_path: &Path, _iface: &str) -> Result<Vec<String>, WireError> {
+        Err(WireError::Unsupported)
+    }
 }

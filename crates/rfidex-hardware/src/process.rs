@@ -22,7 +22,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use crate::config::HardwareConfig;
-use crate::host::{CHILD_SWITCH, COMMISSIONING, ENUMERATE};
+use crate::host::{CHILD_SWITCH, COMMISSIONING, DISCOVER, ENUMERATE};
 use crate::sdk::EnumerationKind;
 use crate::wire::{
     match_reply, read_frame, read_reply, write_frame, Deadline, DeadlineSocket, Operation, Request,
@@ -108,6 +108,33 @@ pub fn enumerate_devices(
     dll_path: &std::path::Path,
     kind: EnumerationKind,
 ) -> Result<Vec<String>, WireError> {
+    list_from_child(
+        launcher,
+        &[
+            ENUMERATE.as_ref(),
+            kind_word(kind).as_ref(),
+            dll_path.as_os_str(),
+        ],
+    )
+}
+
+/// Network readers that answer a broadcast on one PC interface. Like
+/// enumeration, a short-lived helper that opens no device.
+pub fn discover_readers(
+    launcher: &HostLauncher,
+    dll_path: &std::path::Path,
+    iface: &str,
+) -> Result<Vec<String>, WireError> {
+    list_from_child(
+        launcher,
+        &[DISCOVER.as_ref(), dll_path.as_os_str(), iface.as_ref()],
+    )
+}
+
+fn list_from_child(
+    launcher: &HostLauncher,
+    mode: &[&std::ffi::OsStr],
+) -> Result<Vec<String>, WireError> {
     let listener = TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))
         .map_err(|_| WireError::Disconnected)?;
     let port = listener
@@ -119,9 +146,7 @@ pub fn enumerate_devices(
         .arg(CHILD_SWITCH)
         .arg(port.to_string())
         .arg(&token)
-        .arg(ENUMERATE)
-        .arg(kind_word(kind))
-        .arg(dll_path)
+        .args(mode)
         .stdin(Stdio::null())
         .spawn()
         .map_err(|_| WireError::Disconnected)?;

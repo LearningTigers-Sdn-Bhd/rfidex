@@ -58,6 +58,17 @@ type ReadBlocks = unsafe extern "system" fn(*mut c_void, *const u8, u8, u8, u8, 
 type WriteBlocks =
     unsafe extern "system" fn(*mut c_void, *const u8, u8, u8, *const u8, *mut u8) -> i32;
 type TakeRecords = unsafe extern "system" fn(*mut c_void, *mut *mut u8, u8, u8) -> i32;
+type NetworkDiscovery =
+    unsafe extern "system" fn(*mut *mut u8, *const c_char, *const c_char, i32, i32) -> i32;
+
+/// The vendor demo's broadcast target and reader port (`Reader.cs`).
+const DISCOVERY_BROADCAST: &str = "255.255.255.255";
+pub const DISCOVERY_PORT: i32 = 6688;
+const DISCOVERY_TIMEOUT_MS: i32 = 1_000;
+/// The demo allocates 10 slots; more slots cost nothing and leave room.
+const DISCOVERY_SLOTS: usize = 64;
+/// Length byte, four unknown bytes, then IP, mask, gateway and MAC.
+const DISCOVERY_MIN_LENGTH: usize = 21;
 
 struct Api {
     free_buffer_array: FreeBufferArray,
@@ -435,6 +446,52 @@ impl SdkReader {
         }
         // Whatever was left unread is still released as one array.
         unsafe { (api.free_h_global)(head as *mut c_void) };
+        drop(library);
+        Ok(values)
+    }
+}
+
+impl SdkReader {
+    /// Find EC readers on one PC network interface by broadcast, as the vendor
+    /// demo's `NetworkDiscovery` does. Nothing is opened. Each answer reads
+    /// `address=IP:6688;mask=…;gateway=…;mac=…` from the demo's byte offsets, and the
+    /// batch is released with one `FreeBufferArray` call.
+    pub fn discover(dll_path: &Path, iface: &str) -> Result<Vec<String>, WireError> {
+        let (library, api) = Api::load(dll_path)?;
+        let discovery: NetworkDiscovery = symbol(library.module, "NetworkDiscovery")?;
+        let iface = ansi(iface)?;
+        let broadcast = ansi(DISCOVERY_BROADCAST)?;
+        let mut slots = [std::ptr::null_mut::<u8>(); DISCOVERY_SLOTS];
+        let found = unsafe {
+            discovery(
+                slots.as_mut_ptr(),
+                iface.as_ptr(),
+                broadcast.as_ptr(),
+                DISCOVERY_PORT,
+                DISCOVERY_TIMEOUT_MS,
+            )
+        };
+        if found <= 0 {
+            return Ok(Vec::new());
+        }
+        let found = (found as usize).min(DISCOVERY_SLOTS);
+        let mut values = Vec::new();
+        for &buffer in &slots[..found] {
+            if buffer.is_null() {
+                continue;
+            }
+            let length = usize::from(unsafe { *buffer });
+            if length < DISCOVERY_MIN_LENGTH {
+                continue;
+            }
+            let b = unsafe { std::slice::from_raw_parts(buffer, length) };
+            values.push(format!(
+                "address={}.{}.{}.{}:{DISCOVERY_PORT};mask={}.{}.{}.{};gateway={}.{}.{}.{};mac={:02X}:{:02X}:{:02X}:{:02X}",
+                b[5], b[6], b[7], b[8], b[9], b[10], b[11], b[12], b[13], b[14], b[15], b[16],
+                b[17], b[18], b[19], b[20]
+            ));
+        }
+        unsafe { (api.free_buffer_array)(slots.as_mut_ptr(), found as i32) };
         drop(library);
         Ok(values)
     }

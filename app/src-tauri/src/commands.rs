@@ -184,8 +184,17 @@ pub async fn setup_test_printer(url: String) -> Result<ConnectionView, RuntimeEr
 #[tauri::command]
 pub async fn setup_save(
     state: tauri::State<'_, AppState>,
-    input: SetupInput,
+    input: serde_json::Value,
 ) -> Result<AppView, RuntimeError> {
+    // Parsed here rather than by Tauri, so a field in the wrong shape (an empty
+    // reader address, a cleared number) gets a sentence instead of a generic
+    // failure. The parser's own text is never shown: it can echo input.
+    let input: SetupInput = serde_json::from_value(input).map_err(|_| {
+        RuntimeError::new(
+            "invalid_setup",
+            "A reader setting is not in the right format. Enter reader addresses as IP:port, for example 192.168.1.20:6688, and fill in every number field.",
+        )
+    })?;
     let mut slot = state.runtime.write().await;
     let old = match slot.as_ref() {
         Some(runtime) => Some(runtime.config().clone()),
@@ -397,6 +406,17 @@ pub async fn hardware_enumerate(
     let launcher = rfidex_hardware::process::HostLauncher::current_exe()
         .map_err(|_| rfidex_runtime::hardware::no_helper())?;
     rfidex_runtime::hardware::enumerate(&launcher, std::path::Path::new(&dll_path), kind)
+}
+
+/// Gates that answer a network broadcast on one PC interface.
+#[tauri::command]
+pub async fn hardware_discover(
+    dll_path: String,
+    iface: String,
+) -> Result<Vec<String>, RuntimeError> {
+    let launcher = rfidex_hardware::process::HostLauncher::current_exe()
+        .map_err(|_| rfidex_runtime::hardware::no_helper())?;
+    rfidex_runtime::hardware::discover(&launcher, std::path::Path::new(&dll_path), &iface)
 }
 
 /// Test a saved station's own reader. Connect and ReadTags only: there is no

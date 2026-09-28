@@ -141,6 +141,34 @@ pub fn enumerate(
     })
 }
 
+/// Network readers answering on one PC interface, as `address=IP:port;…` lines.
+/// Nothing is opened; the operator picks one to fill the reader address.
+pub fn discover(
+    launcher: &HostLauncher,
+    dll_path: &std::path::Path,
+    iface: &str,
+) -> Result<Vec<String>, RuntimeError> {
+    dll_path
+        .to_str()
+        .ok_or_else(|| RuntimeError::new("bad_reader_path", BAD_PATH))?;
+    if iface.trim().is_empty() {
+        return Err(RuntimeError::new(
+            "no_interface",
+            "Pick the network card the gate is plugged into first: press Look for readers, then Use this one on the Ethernet entry.",
+        ));
+    }
+    rfidex_hardware::process::discover_readers(launcher, dll_path, iface).map_err(|e| match e {
+        rfidex_hardware::wire::WireError::Timeout => RuntimeError::new(
+            "reader_timeout",
+            "No answer in time. Check the gate is powered and its Ethernet cable is in, then try again.",
+        ),
+        _ => RuntimeError::new(
+            "reader_unavailable",
+            "The reader library could not search the network. Check the path to ECRFID.dll on this computer.",
+        ),
+    })
+}
+
 const BAD_PATH: &str = "Enter the full path to the ECRFID reader library on this computer.";
 
 #[cfg(test)]

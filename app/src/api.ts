@@ -275,6 +275,8 @@ export interface StickerTestView {
   can_enable: boolean;
 }
 
+export const hardwareDiscover = (dllPath: string, iface: string) =>
+  invoke<string[]>("hardware_discover", { dllPath, iface });
 export const stickerTest = (station: string, step: StickerTestStep) =>
   invoke<StickerTestView>("sticker_test", { station, step });
 export const stickerWriting = (station: string, on: boolean) =>

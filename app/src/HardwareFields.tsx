@@ -14,6 +14,7 @@ import {
   SdkConnection,
   StationConfig,
   errorText,
+  hardwareDiscover,
   hardwareEnumerate,
   hardwareTest,
 } from "./api";
@@ -269,6 +270,26 @@ function SdkFields({
     onChange({ ...value, connection });
   const connection = value.connection;
 
+  const [gates, setGates] = useState<{ revision: number; entries: string[] } | null>(null);
+
+  const findGates = async () => {
+    if (busy || connection.kind !== "net") return;
+    const current = revision.current.number;
+    setBusy(true);
+    setFailure(null);
+    setGates(null);
+    try {
+      const entries = await hardwareDiscover(value.dll_path, connection.interface);
+      if (revision.current.number === current) setGates({ revision: current, entries });
+    } catch (e) {
+      if (revision.current.number === current) {
+        setFailure({ revision: current, message: errorText(e) });
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const look = async () => {
     if (busy) return;
     const current = revision.current.number;
@@ -424,8 +445,47 @@ function SdkFields({
               }
               placeholder="192.168.1.20:6688"
             />
+            <small className="field-help">
+              The gate's own IP and port. Press Find gates to fill it in.
+            </small>
           </label>
         </div>
+      )}
+      {connection.kind === "net" && (
+        <div className="actions">
+          <button type="button" onClick={() => void findGates()} disabled={busy}>
+            Find gates
+          </button>
+        </div>
+      )}
+      {gates?.revision === revision.current.number && (
+        <>
+          <p className="note" role="status">
+            {gates.entries.length === 0
+              ? "No gate answered on this network card. Check the gate is powered and on this cable, and that Interface is the Ethernet entry."
+              : `${gates.entries.length} gate${gates.entries.length === 1 ? "" : "s"} found.`}
+          </p>
+          {gates.entries.length > 0 && connection.kind === "net" && (
+            <ul className="found-readers">
+              {gates.entries.map((entry) => (
+                <li key={entry}>
+                  <code>{entry}</code>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setConnection({
+                        ...connection,
+                        address: /address=([^;]+)/.exec(entry)?.[1] ?? connection.address,
+                      })
+                    }
+                  >
+                    Use this one
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </>
       )}
 
       <div className="row">

@@ -42,6 +42,7 @@ const WAIT_FOR_PARENT_MS: u32 = u32::MAX;
 
 pub const COMMISSIONING: &str = "commissioning";
 pub const ENUMERATE: &str = "enumerate";
+pub const DISCOVER: &str = "discover";
 
 /// Parse the child's arguments and run the session they describe.
 ///
@@ -94,6 +95,13 @@ enum ChildMode {
         kind: EnumerationKind,
         dll_path: PathBuf,
     },
+    /// Broadcast for network readers on one PC interface. Opens nothing.
+    Discover {
+        port: u16,
+        token: String,
+        dll_path: PathBuf,
+        iface: String,
+    },
 }
 
 impl ChildMode {
@@ -122,6 +130,19 @@ impl ChildMode {
                         },
                         None => Err(BadArguments),
                     },
+                }
+            }
+            [port, token, mode, dll_path, iface] if mode.to_str() == Some(DISCOVER) => {
+                match (ChildMode::base(port, token), iface.to_str()) {
+                    (Ok((port, token)), Some(iface)) if !iface.is_empty() => {
+                        Ok(ChildMode::Discover {
+                            port,
+                            token,
+                            dll_path: PathBuf::from(dll_path),
+                            iface: iface.to_string(),
+                        })
+                    }
+                    _ => Err(BadArguments),
                 }
             }
             _ => Err(BadArguments),
@@ -159,13 +180,17 @@ impl ChildMode {
 
     fn port(&self) -> u16 {
         match self {
-            ChildMode::Session { port, .. } | ChildMode::Enumerate { port, .. } => *port,
+            ChildMode::Session { port, .. }
+            | ChildMode::Enumerate { port, .. }
+            | ChildMode::Discover { port, .. } => *port,
         }
     }
 
     fn token(&self) -> &str {
         match self {
-            ChildMode::Session { token, .. } | ChildMode::Enumerate { token, .. } => token,
+            ChildMode::Session { token, .. }
+            | ChildMode::Enumerate { token, .. }
+            | ChildMode::Discover { token, .. } => token,
         }
     }
 
@@ -194,8 +219,16 @@ impl ChildMode {
 
         match self {
             ChildMode::Session { commissioning, .. } => serve_session(stream, commissioning),
-            ChildMode::Enumerate { kind, dll_path, .. } => {
-                let values = SdkReader::enumerate(&dll_path, kind)?;
+            ChildMode::Enumerate { .. } | ChildMode::Discover { .. } => {
+                let values = match &self {
+                    ChildMode::Enumerate { kind, dll_path, .. } => {
+                        SdkReader::enumerate(dll_path, *kind)?
+                    }
+                    ChildMode::Discover {
+                        dll_path, iface, ..
+                    } => SdkReader::discover(dll_path, iface)?,
+                    ChildMode::Session { .. } => unreachable!(),
+                };
                 let deadline = Deadline::started(REPLY_WINDOW_MS);
                 write_frame(
                     &mut DeadlineSocket::new(&mut stream, &deadline),
@@ -360,6 +393,40 @@ mod tests {
                 dll_path: PathBuf::from("C:\\rfidex\\ECRFID.dll"),
             })
         );
+    }
+
+    #[test]
+    fn discovery_needs_a_library_and_an_interface() {
+        assert_eq!(
+            ChildMode::parse(&args(&[
+                "--rfid-device-host",
+                "51000",
+                "token",
+                "discover",
+                "C:\\rfidex\\ECRFID.dll",
+                "iface={GUID};ip=192.168.0.10;gateway="
+            ]))
+            .unwrap(),
+            Ok(ChildMode::Discover {
+                port: 51000,
+                token: "token".into(),
+                dll_path: PathBuf::from("C:\\rfidex\\ECRFID.dll"),
+                iface: "iface={GUID};ip=192.168.0.10;gateway=".into(),
+            })
+        );
+        for bad in [
+            vec!["--rfid-device-host", "51000", "token", "discover", "x.dll"],
+            vec![
+                "--rfid-device-host",
+                "51000",
+                "token",
+                "discover",
+                "x.dll",
+                "",
+            ],
+        ] {
+            assert!(ChildMode::parse(&args(&bad)).unwrap().is_err(), "{bad:?}");
+        }
     }
 
     #[test]

@@ -41,7 +41,7 @@ jobs:
 
       - name: Prepare evidence folders
         shell: pwsh
-        run: New-Item -ItemType Directory -Force -Path evidence, test-tools | Out-Null
+        run: New-Item -ItemType Directory -Force -Path evidence | Out-Null
 
       # A tag is a claim about a version. If it disagrees with the manifests,
       # fail the gate instead of editing files to make it agree.
@@ -103,13 +103,6 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
 
-      # A test tool for the manual Windows check, NOT part of the installer.
-      # Static CRT so it cannot add a runtime prerequisite to a clean machine.
-      - name: Build static mock server (test tool)
-        run: cargo build --locked --release -p rfidex-mock --target x86_64-pc-windows-msvc
-        env:
-          RUSTFLAGS: -C target-feature=+crt-static
-
       - name: Audit native imports
         shell: pwsh
         run: |
@@ -131,11 +124,7 @@ jobs:
 
           $root = (Resolve-Path 'target/x86_64-pc-windows-msvc/release').Path
           if (-not (Test-Path "$root/rfidex.exe")) { throw 'missing rfidex.exe' }
-          if (-not (Test-Path "$root/rfidex-mock.exe")) { throw 'missing rfidex-mock.exe' }
-          $targets = @(
-            (Resolve-Path "$root/rfidex.exe").Path
-            (Resolve-Path "$root/rfidex-mock.exe").Path
-          )
+          $targets = @((Resolve-Path "$root/rfidex.exe").Path)
           # Anything the bundler ships beside the app, wherever it staged it.
           foreach ($dir in @($root, "$root/bundle/nsis", "$root/nsis")) {
             $targets += Get-ChildItem $dir -Filter *.dll -Recurse -File -ErrorAction SilentlyContinue |
@@ -188,7 +177,6 @@ jobs:
           $hash = Get-FileHash $setup.FullName -Algorithm SHA256
           "$($hash.Hash)  $($setup.Name)" | Set-Content "$root/bundle/nsis/SHA256SUMS.txt"
 
-          $mockHash = Get-FileHash "$root/rfidex-mock.exe" -Algorithm SHA256
           $signature = Get-AuthenticodeSignature $setup.FullName
           $label = if ($signature.Status -eq 'NotSigned') {
             'UNSIGNED: controlled-test artifact, not for distribution'
@@ -198,7 +186,6 @@ jobs:
           @(
             "installer: $($setup.Name)"
             "installer sha256: $($hash.Hash)"
-            "test tool: rfidex-mock.exe sha256: $($mockHash.Hash)"
             "signing: $($signature.Status) - $($signature.StatusMessage)"
             "label: $label"
           ) | Set-Content evidence/installer.txt
@@ -217,28 +204,6 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Upload test tools (not part of the installer)
-        shell: pwsh
-        run: |
-          @(
-            'RfiDex test tools for the manual Windows check, Plan 3 Task 6.'
-            'TEST ONLY: rfidex-mock.exe is a disposable loopback mock server.'
-            'It is never installed, packaged, or shipped with RfiDex.'
-            'Run it with a throwaway key, for example:'
-            '  rfidex-mock.exe --port 4010 --api-key <32+ chars> --tickets tickets.json'
-          ) | Set-Content test-tools/README.txt
-
-      - name: Upload test tools artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: rfidex-test-tools-${{ github.sha }}-${{ github.run_id }}
-          path: |
-            target/x86_64-pc-windows-msvc/release/rfidex-mock.exe
-            app/dev/tickets.json
-            test-tools/README.txt
-          if-no-files-found: error
-          retention-days: 14
-
   # Tag pushes only: publish the installer that `package` built, rehearsed and
   # audited as the latest GitHub release. Installed copies read latest.json
   # from releases/latest, so it must not be a pre-release. Write access lives
@@ -254,12 +219,6 @@ jobs:
         with:
           name: rfidex-windows-x64-unsigned-${{ github.sha }}-${{ github.run_id }}
           path: dist
-      # Test tool only: attached so a tester needs no GitHub login, never
-      # bundled into the installer.
-      - uses: actions/download-artifact@v4
-        with:
-          name: rfidex-test-tools-${{ github.sha }}-${{ github.run_id }}
-          path: tools
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -275,29 +234,17 @@ jobs:
             --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
             '{version: $v, pub_date: $date, notes: "RfiDex \($v)",
               platforms: {"windows-x86_64": {signature: $sig, url: $url}}}' > latest.json
-          mock=tools/target/x86_64-pc-windows-msvc/release/rfidex-mock.exe
-          tickets=tools/app/dev/tickets.json
-          mock_sha=$(sha256sum "$mock" | cut -d' ' -f1 | tr a-f A-F)
           cat > notes.md <<NOTES
-          Test build of RfiDex ${TAG#rfidex-v} for Windows 10/11 x64. Real-reader support is included for read-only commissioning, but has not been verified with physical hardware. The production EventzFlow RFID backend is not available yet.
+          RfiDex ${TAG#rfidex-v} for Windows 10/11 x64, for use with the EventzFlow RFID backend.
 
-          For a USB reader, provide the vendor's x64 Release ECRFID.dll separately; it is not bundled. In Setup select ECRFID SDK and the actual reader model and device path. Use Test connection and Read stickers first. These checks are read-only; a successful connection does not certify compatibility. Sticker writing is disabled until disposable-tag physical acceptance passes. See README.md: Real readers.
+          For a USB reader, provide the vendor's x64 Release ECRFID.dll separately; it is not bundled. In Setup select the reader model and device path, then use Test connection and Read stickers. Sticker writing stays off until Setup → Sticker write test passes on this computer. See README.md: Real readers.
 
           **Unsigned.** Windows SmartScreen will say "Windows protected your PC": choose **More info → Run anyway**.
           Installs for the current user; no admin rights needed. If WebView2 is missing, the installer downloads it, so the first install needs internet.
 
           SHA-256: \`$(cut -d' ' -f1 "$sums")\`
 
-          ### Test tool: mock server (not part of RfiDex)
-
-          \`rfidex-mock.exe\` is a stand-in EventzFlow server for trying RfiDex before the real backend has RFID support. It is never installed with RfiDex. Put it in a folder with \`tickets.json\` (fictional attendees) and run:
-
-          \`rfidex-mock.exe --port 4010 --api-key rfidex_demo_key_0123456789abcdefghij --tickets tickets.json\`
-
-          Then in RfiDex Setup use server \`http://127.0.0.1:4010\` and that key. Add \`--mode write\` to try sticker-writing mode.
-
-          Mock SHA-256: \`${mock_sha}\`
           NOTES
-          gh release create "$TAG" "$setup" "$sums" latest.json "$mock" "$tickets" \
+          gh release create "$TAG" "$setup" "$sums" latest.json \
             --repo "$GITHUB_REPOSITORY" --latest \
-            --title "RfiDex ${TAG#rfidex-v} (test build)" --notes-file notes.md
+            --title "RfiDex ${TAG#rfidex-v}" --notes-file notes.md

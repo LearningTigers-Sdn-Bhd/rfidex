@@ -229,7 +229,7 @@ export function App() {
                     <Gate station={station} />
                   )}
                 </div>
-                <Simulator station={station} />
+                {import.meta.env.DEV && <Simulator station={station} />}
               </div>
             )}
           </>

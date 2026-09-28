@@ -12,9 +12,9 @@ sticker registration and entry/exit capture, with a local cache and durable queu
 [![CI](https://github.com/LearningTigers-Sdn-Bhd/rfidex/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/LearningTigers-Sdn-Bhd/rfidex/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/LearningTigers-Sdn-Bhd/rfidex?style=flat-square&label=release&color=38CBB0)](https://github.com/LearningTigers-Sdn-Bhd/rfidex/releases/latest)
 ![Windows x64](https://img.shields.io/badge/Windows-x64-1479D0?style=flat-square)
-![Hardware](https://img.shields.io/badge/Hardware-native_checks_pending-D5A34A?style=flat-square)
+![Hardware](https://img.shields.io/badge/Hardware-desk_verified%2C_gate_pending-D5A34A?style=flat-square)
 
-[**Download**](https://github.com/LearningTigers-Sdn-Bhd/rfidex/releases/latest) · [**Try it**](#try-it) · [**Quick start**](#quick-start) · [**Architecture**](#architecture) · [**Operations**](#operations) · [**Status**](#development-status)
+[**Download**](https://github.com/LearningTigers-Sdn-Bhd/rfidex/releases/latest) · [**Install**](#install) · [**Quick start**](#quick-start) · [**Architecture**](#architecture) · [**Operations**](#operations) · [**Status**](#development-status)
 
 </div>
 
@@ -41,21 +41,21 @@ Rust owns runtime outcomes, validation and operator error messages. React render
 | **Registration desk** | Keyboard-wedge QR scan; name, email and phone search; ticket check-in; existing-check-in detection |
 | **Sticker registration** | Bind factory UID, or write ticket ID and verify readback; explicit confirmation and reason for replacement |
 | **Badge printing** | Per-desk local printer address; health check; automatic first-check-in attempt; manual Reprint; independent sticker processing |
-| **Entry and exit gates** | Configured station direction; guest/result display; record-based and live-inventory simulators; repeat-read debounce |
+| **Entry and exit gates** | Configured station direction; guest/result display; record-based and live-inventory readers; repeat-read debounce |
 | **Offline operation** | Local ticket/binding cache; name-only search; durable outbox; retry backoff and idempotent delivery |
 | **Multi-station deployment** | Any mix of desk, entry and exit stations on one PC, each with its own UUID, database and API client |
-| **Operator support** | Connection/device status, queued-work counts, Problems list, simulator controls and redacted diagnostics export |
+| **Operator support** | Connection/device status, queued-work counts, Problems list and redacted diagnostics export |
 | **Windows distribution** | Per-user NSIS installer, WebView2 bootstrapper, separate packaging workflow and signed updater artifacts |
 
 ![RfiDex station topology: independently stored desk, entry and exit stations connect to the EventzFlow device API; desk printing uses a separate loopback connection.](.github/readme/system-overview.svg)
 
 > [!IMPORTANT]
-> **Current integration boundary:** development and tests use `rfidex-mock`. Reader integrations exist in source, but Windows native checks and physical reader acceptance remain pending; the production EventzFlow RFID backend is on hold. Installer availability and simulated tests do not certify real readers, physical printing or production backend behavior.
+> **Current integration boundary:** RfiDex runs against the production EventzFlow RFID backend. A desk reader has bound tickets on production. Gate readers, physical badge printing and sticker writing still need acceptance on real hardware. The simulated readers and `rfidex-mock` exist only in development builds and tests; release installers contain real readers only.
 
 <details>
 <summary><strong>Documentation index</strong></summary>
 
-- [Try it without building](#try-it)
+- [Install](#install)
 - [Quick start](#quick-start)
 - [Registration workflow](#registration-workflow)
 - [Ticket search](#ticket-search)
@@ -70,15 +70,14 @@ Rust owns runtime outcomes, validation and operator error messages. React render
 
 </details>
 
-<a id="try-it"></a>
+<a id="install"></a>
 
-## Try it without building
+## Install
 
 > [!TIP]
-> **For testers on Windows — no Rust or Node needed.**
-> 1. From the [latest release](https://github.com/LearningTigers-Sdn-Bhd/rfidex/releases/latest), download `RfiDex_<version>_x64-setup.exe`, `rfidex-mock.exe` and `tickets.json` into one folder, and run the setup (SmartScreen: **More info → Run anyway**).
-> 2. In that folder run `rfidex-mock.exe --port 4010 --api-key rfidex_demo_key_0123456789abcdefghij --tickets tickets.json`.
-> 3. In RfiDex **Setup**, use server `http://127.0.0.1:4010` and that key, add a desk and a gate, then follow step 3 of the quick start below.
+> **For event staff on Windows: no Rust or Node needed.**
+> 1. From the [latest release](https://github.com/LearningTigers-Sdn-Bhd/rfidex/releases/latest), download and run `RfiDex_<version>_x64-setup.exe` (SmartScreen: **More info → Run anyway**).
+> 2. In RfiDex **Setup**, enter the EventzFlow server address and the event's RFID API key, then add a station for each connected reader (see [Real readers](#real-readers)).
 >
 > Installed copies update themselves: **Check for updates** / **Update now** in the bottom bar.
 
@@ -86,7 +85,7 @@ Rust owns runtime outcomes, validation and operator error messages. React render
 
 ## Quick start
 
-Run a complete simulated desk/entry/exit setup without RFID hardware.
+For developers: run a complete simulated desk/entry/exit setup without RFID hardware. The simulated readers and the **Open simulator** panel exist only in development builds (`npm run tauri dev`); a release build refuses them.
 
 ### Prerequisites
 
@@ -137,10 +136,10 @@ Aina and Ben are valid demo guests; Chong is unpaid and Devi is cancelled. Use a
 
 ## Real readers
 
-A station can drive a real ECRFID reader instead of the simulator. Choose
-**Real reader** in Setup and pick one of two profiles.
+A station drives a real ECRFID reader. Release builds offer only real readers;
+in a development build choose **Real reader** in Setup. Pick one of two profiles.
 
-> **Status: integration in source; Windows native checks and physical reader acceptance pending.** Fake-device tests and browser stubs cannot certify the vendor DLL, model, firmware, RF performance or write capability. See [Verification status](#verification-status).
+> **Status: desk reader verified on production (native Windows window, ISO 15693 sticker bound against the live backend). Gate reader over Ethernet and sticker writing still need physical acceptance.** Fake-device tests and browser stubs cannot certify the vendor DLL, model, firmware, RF performance or write capability. See [Verification status](#verification-status).
 
 ### EC v1.9 over TCP
 
@@ -248,9 +247,9 @@ Three separate gates; none is implied by the others:
 
 | State | Meaning | Where we are |
 | :-- | :-- | :-- |
-| Software implemented | Reader integration exists in source; fake-device regression and full integration gates must pass | **Pending current full gate** |
-| Hardware verified | Identified model, firmware, SDK and connection pass physical checks | **No** |
-| Production ready | Hardware acceptance plus EventzFlow backend and deployment work | **No** |
+| Software implemented | Reader integration exists in source; fake-device regression and full integration gates must pass | **Yes**: full gate green in CI |
+| Hardware verified | Identified model, firmware, SDK and connection pass physical checks | **Desk reader: yes**. Gate reader, sticker writing, badge printing: not yet |
+| Production ready | Hardware acceptance plus EventzFlow backend and deployment work | **Desk: yes** (backend live, desk binding proven on production). Gates: after gate acceptance |
 
 No claim is made that identical hardware will need no correction. The checksum
 polynomial, the vendor's inventory buffer array capacity, the block count and
@@ -624,10 +623,10 @@ A matching version-tag run publishes a release and `latest.json`; manual dispatc
 | **P0 / P1** | Core, device contracts, codec, SQLite and mock API | Implemented in repository |
 | **P2** | Native app, operator flows, simulation and diagnostics | Implemented in repository |
 | **P3** | Simulated event rehearsal and Windows packaging | Test harness and packaging workflow available; hardware certification is separate |
-| **P7** | Desk search, check-in result and local print integration | Implemented against mock; production backend integration pending |
-| **P4** | Real ECRFID reader integration: transports, isolated SDK host, desk and gate adapters, Setup | Integration in source; full gate, Windows native checks and physical acceptance pending |
-| **P5** | Production EventzFlow RFID endpoints, visits and reports | On hold; separate approval |
-| **P6** | EventzFlow panel RFID views/reports | After P5; outside this desktop repository |
+| **P7** | Desk search, check-in result and local print integration | Running against the production backend; physical printing pending |
+| **P4** | Real ECRFID reader integration: transports, isolated SDK host, desk and gate adapters, Setup | Desk reader verified on production; gate reader and sticker writing acceptance pending |
+| **P5** | Production EventzFlow RFID endpoints, visits and reports | Live on production (EventzFlow backend) |
+| **P6** | EventzFlow panel RFID views/reports | Live on production; outside this desktop repository |
 
 Source availability, published release status and event-readiness are separate milestones. Use the release notes and actual verification evidence for deployment decisions.
 

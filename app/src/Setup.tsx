@@ -18,6 +18,12 @@ import HardwareFields, { defaultHardware } from "./HardwareFields";
 
 const DEFAULT_PRINTER_URL = "http://127.0.0.1:8000";
 
+/** Simulated readers exist only in development builds; staff get real ones. */
+const SIMULATOR = import.meta.env.DEV;
+
+const realDevice = (kind: StationKind, hardware: HardwareConfig): RealDevice =>
+  ({ type: kind === "desk" ? "ecrfid_desk" : "ecrfid_gate", hardware }) as RealDevice;
+
 interface Props {
   hasSavedConfig: boolean;
   status: AppStatus | null;
@@ -59,7 +65,17 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
       .then((view) => {
         if (!live || !view) return;
         setServerUrl(view.server_url);
-        setStations(view.stations);
+        // A release build has no simulator: a station saved with one needs a
+        // real reader before it can start again.
+        setStations(
+          SIMULATOR
+            ? view.stations
+            : view.stations.map((s) =>
+                s.device.type === "sim_desk" || s.device.type === "sim_gate"
+                  ? { ...s, device: realDevice(s.kind, defaultHardware()) }
+                  : s,
+              ),
+        );
         setOriginal(view.stations);
         setKeyOnFile(view.has_api_key);
       })
@@ -150,7 +166,7 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
         name: `Station ${list.length + 1}`,
         kind: "desk",
         role: null,
-        device: { type: "sim_desk" },
+        device: SIMULATOR ? { type: "sim_desk" } : realDevice("desk", defaultHardware()),
         debounce_secs: 5,
         write_start_block: 0,
         printer_url: DEFAULT_PRINTER_URL,
@@ -327,6 +343,7 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
                       sticker. Gate: a reader records guests walking past.
                     </small>
                   </label>
+                  {SIMULATOR && (
                   <label>
                     Reader
                     <select
@@ -348,6 +365,7 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
                       needs the hardware in front of you.
                     </small>
                   </label>
+                  )}
                   {station.kind === "gate" && (
                     <label>
                       Direction
@@ -453,7 +471,7 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
                 />
               )}
 
-              {station.device.type === "sim_gate" && (
+              {SIMULATOR && station.device.type === "sim_gate" && (
                   <div className="row">
                     <label>
                       Simulated gate output
@@ -570,6 +588,7 @@ function asKindDevice(
     }
     if (kind === "desk" && station.device.type === "sim_desk") return station.device;
   }
+  if (!SIMULATOR) return realDevice(kind, defaultHardware());
   return kind === "gate" ? asSimGate(station) : { type: "sim_desk" };
 }
 

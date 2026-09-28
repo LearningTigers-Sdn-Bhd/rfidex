@@ -41,6 +41,19 @@ fn config_error(e: ConfigError) -> RuntimeError {
     }
 }
 
+/// The simulated readers exist for development and tests only. A release build
+/// refuses them so staff at a real event can never run on a fake reader.
+fn simulated_station(config: &AppConfig) -> Option<&str> {
+    if cfg!(debug_assertions) {
+        return None;
+    }
+    config
+        .stations
+        .iter()
+        .find(|s| s.device.is_simulated())
+        .map(|s| s.name.as_str())
+}
+
 fn not_configured() -> RuntimeError {
     RuntimeError::new("not_configured", "Open Setup before using a station.")
 }
@@ -115,8 +128,10 @@ pub async fn app_state(state: tauri::State<'_, AppState>) -> Result<AppView, Run
         });
     }
     let config = match state.paths.load().map_err(config_error)? {
-        Some(config) => config,
-        None => {
+        // A setup saved by an older version with a simulator goes back to
+        // Setup, which swaps in a real reader.
+        Some(config) if simulated_station(&config).is_none() => config,
+        _ => {
             return Ok(AppView {
                 configured: false,
                 status: None,
@@ -202,6 +217,12 @@ pub async fn setup_save(
     };
     // Validate the whole candidate before anything is stopped or written.
     let candidate = AppConfig::from_input(old.as_ref(), input).map_err(config_error)?;
+    if let Some(name) = simulated_station(&candidate) {
+        return Err(RuntimeError::new(
+            "simulator_unavailable",
+            &format!("Station {name} has no real reader. Choose a real reader for it."),
+        ));
+    }
     if let Some(old) = &old {
         if let Some(name) = removed_station_with_work(&state.paths, old, &candidate)? {
             return Err(RuntimeError::new(

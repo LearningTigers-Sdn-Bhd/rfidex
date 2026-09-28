@@ -846,7 +846,7 @@ impl Runtime {
     /// One step of the disposable-sticker write test on a real SDK desk.
     ///
     /// The desk's own session is held for the whole step and its reader is let
-    /// go, so the one-off commissioning helper is the only thing talking to the
+    /// go, so the one-off test helper is the only thing talking to the
     /// reader. The desk reconnects afterwards with writing still exactly as its
     /// saved profile says.
     // ponytail: the test helper is not registered with shutdown's stop control;
@@ -887,8 +887,15 @@ impl Runtime {
                             };
                             let mut session = device.lock().await;
                             session.station.reader.release();
-                            let result = match rfidex_hardware::HardwareClient::start_commissioning(
-                                &launcher, &hardware,
+                            // The desktop helper refuses commissioning mode, so
+                            // the test runs an ordinary helper whose own copy of
+                            // the profile allows writes. The desk's session keeps
+                            // the saved profile, so it still cannot write.
+                            let mut test_profile = hardware.clone();
+                            test_profile.set_write_verified(true);
+                            let result = match rfidex_hardware::HardwareClient::start(
+                                &launcher,
+                                &test_profile,
                             ) {
                                 Err(_) => (sticker_test::refused(TEST_READER_BUSY), None),
                                 Ok(mut client) => {

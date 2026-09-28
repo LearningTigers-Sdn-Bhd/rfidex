@@ -1,6 +1,6 @@
 //! The disposable-sticker write test (spec §7.1), run from Setup.
 //!
-//! Every step runs over a one-off commissioning helper, never the desk's own
+//! Every step runs over a one-off helper opened with writes allowed, never the desk's own
 //! reader session, so the desk's refusal to write stays exactly as it is until
 //! the operator turns writing on. The steps only read, write whole blocks and
 //! read back: the helper has no lock, password, AFI, DSFID or EAS operation.

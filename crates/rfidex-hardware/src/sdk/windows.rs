@@ -337,13 +337,15 @@ impl SdkReader {
     pub fn read(&self, uid: &[u8; 8], start: u8, count: u8) -> Result<Response, WireError> {
         self.checked_range(uid, start, count)?;
         let mut receive = [0u8; 256];
+        // The vendor read counts from zero: 0 reads one block, 7 reads eight
+        // (demo Reader.cs: "0为读1个块"). Write takes the real count.
         let rc = unsafe {
             (self.api.read_blocks)(
                 self.context,
                 uid.as_ptr(),
                 READ_SECURITY_NO,
                 start,
-                count,
+                count - 1,
                 receive.as_mut_ptr(),
             )
         };

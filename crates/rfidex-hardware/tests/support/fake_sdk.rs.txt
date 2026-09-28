@@ -454,10 +454,11 @@ pub extern "system" fn ISO15693_ReadMultipleBlocks(
     if scenario == "read_error" {
         return -4;
     }
+    // Like the vendor DLL: `count` is zero-based, so count + 1 blocks come back.
     let groups = if scenario == "read_short" {
-        count.saturating_sub(1)
-    } else {
         count
+    } else {
+        count + 1
     };
     let uid_out = if scenario == "read_corrupt" {
         [9u8; 8]

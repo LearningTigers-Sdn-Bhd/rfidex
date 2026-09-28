@@ -326,8 +326,8 @@ fn sdk_reads_and_writes_exact_selected_blocks() {
     let requested = fake.counter("FakeReadRequest");
     assert_eq!(
         (start_of(requested), count_of_packed(requested)),
-        (2, 2),
-        "the exact block range reached the vendor"
+        (2, 1),
+        "two blocks from block 2 reach the vendor as the zero-based count 1"
     );
     assert_eq!(
         fake.counter("FakeReadSecurity"),

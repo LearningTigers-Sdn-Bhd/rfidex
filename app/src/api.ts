@@ -279,6 +279,7 @@ export interface StickerTestView {
 
 export const hardwareDiscover = (dllPath: string, iface: string) =>
   invoke<string[]>("hardware_discover", { dllPath, iface });
+export const hardwareAllowNetwork = () => invoke<string>("hardware_allow_network");
 export const stickerTest = (station: string, step: StickerTestStep) =>
   invoke<StickerTestView>("sticker_test", { station, step });
 export const stickerWriting = (station: string, on: boolean) =>

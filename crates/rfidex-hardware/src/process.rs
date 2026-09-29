@@ -90,6 +90,22 @@ impl HostLauncher {
         }
     }
 
+    /// The gate helper written in the vendor's own language (C#, managed
+    /// `rfidclib_reader.dll`), when it is installed beside the app or in its
+    /// `gate-host/` folder. Absent in developer builds and tests, where gates
+    /// keep using the helper the caller passes.
+    pub fn gate_host_installed() -> Option<HostLauncher> {
+        let exe = std::env::current_exe().ok()?;
+        let dir = exe.parent()?;
+        [
+            dir.join("gate-host").join(GATE_HOST_NAME),
+            dir.join(GATE_HOST_NAME),
+        ]
+        .into_iter()
+        .find(|path| path.is_file())
+        .map(HostLauncher::new)
+    }
+
     /// The running program, started again in child mode.
     pub fn current_exe() -> Result<HostLauncher, WireError> {
         std::env::current_exe()
@@ -182,6 +198,8 @@ pub fn kind_from_word(word: &str) -> Option<EnumerationKind> {
         _ => None,
     }
 }
+
+pub const GATE_HOST_NAME: &str = "rfidex-gate-host.exe";
 
 /// A live helper: one child process, one open device context, one request at a
 /// time.
@@ -496,6 +514,7 @@ fn answers(operation: &Operation, response: &Response) -> bool {
             | (Operation::Read { .. }, Response::Bytes { .. })
             | (Operation::RawRecords, Response::Records { .. })
             | (Operation::LibraryRecords { .. }, Response::Records { .. })
+            | (Operation::LibraryRecords { .. }, Response::Passes { .. })
             | (Operation::LibraryAlarm { .. }, Response::Unit)
     )
 }

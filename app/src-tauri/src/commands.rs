@@ -440,6 +440,12 @@ pub async fn hardware_discover(
     rfidex_runtime::hardware::discover(&launcher, std::path::Path::new(&dll_path), &iface)
 }
 
+/// One administrator prompt, then Windows Firewall lets the gate through.
+#[tauri::command]
+pub async fn hardware_allow_network() -> Result<String, RuntimeError> {
+    rfidex_runtime::hardware::allow_network()
+}
+
 /// Test a saved station's own reader. Connect and ReadTags only: there is no
 /// destructive test in the ordinary interface.
 #[tauri::command]

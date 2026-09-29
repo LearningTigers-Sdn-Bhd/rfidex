@@ -116,6 +116,11 @@ jobs:
       # twice. Output is the explicit target directory, not target/release.
       # The updater key signs the installer so installed copies accept it as
       # an update. It is not Windows code signing: SmartScreen is unaffected.
+      # The gate helper is C#, like the vendor's gate demos. It lands in
+      # app/src-tauri/gate-host/, which Tauri ships inside the installer.
+      - name: Build gate helper
+        run: dotnet build gate-host/rfidex-gate-host.csproj -c Release -o app/src-tauri/gate-host --nologo
+
       - name: Build NSIS installer
         run: npm run tauri build -- --target x86_64-pc-windows-msvc --bundles nsis -- --locked
         working-directory: app

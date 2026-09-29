@@ -150,6 +150,18 @@ export interface SearchView {
   rows: SearchRow[];
 }
 
+export type VerifyState = "waiting" | "verified" | "invalid" | "unknown" | "problem";
+
+/** One look at the desk reader for the Verify screen. Every sentence is Rust's. */
+export interface VerifyView {
+  state: VerifyState;
+  code: string | null;
+  message: string;
+  holder: TicketSummary | null;
+  /** The sticker's own ID: tells one tap from the next. */
+  sticker: string | null;
+}
+
 export type GateStatus = "recorded" | "accepted" | "denied" | "problem";
 
 export interface GateView {
@@ -238,6 +250,7 @@ export const deskSearch = (station: string, by: SearchBy, query: string) =>
   invoke<SearchView>("desk_search", { station, by, query });
 export const deskPrint = (station: string, sessionId: string) =>
   invoke<BadgeView>("desk_print", { station, sessionId });
+export const deskVerify = (station: string) => invoke<VerifyView>("desk_verify", { station });
 export const gateRecent = (station: string, limit = 30) =>
   invoke<GateView[]>("gate_recent", { station, limit });
 export const problems = () => invoke<ProblemView[]>("problems");

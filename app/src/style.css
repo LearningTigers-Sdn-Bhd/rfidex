@@ -315,3 +315,49 @@ dialog .checkbox input { width: 20px; }
 .help-body th, .help-body td { text-align: left; vertical-align: top; padding: 6px 8px; border-bottom: 1px solid var(--line); }
 .help-body .warn { background: var(--caution-bg); border: 1px solid var(--caution-line); padding: 10px 12px; margin: 10px 0; }
 .port-field { max-width: 130px; }
+
+/* Verify: a full-screen stage, built to be read from across a desk. */
+.workspace.is-stage { padding: 0; display: flex; }
+.verify { --stage: #f7f8f4; --ink-on: var(--ink); --soft-on: #59635b; flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 32px 40px 20px; background: var(--stage); color: var(--ink-on); transition: background 320ms ease, color 320ms ease; }
+.verify-verified { --stage: #2f6f45; --ink-on: #fff; --soft-on: #d6ebdb; }
+.verify-invalid { --stage: #a8382b; --ink-on: #fff; --soft-on: #f6d9d3; }
+.verify-unknown { --stage: #f3e7c9; --ink-on: #4a3510; --soft-on: #6f5527; }
+.verify-problem { --stage: #e7eae1; --ink-on: var(--ink); --soft-on: #59635b; }
+.verify-card { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; max-width: 1100px; width: 100%; min-width: 0; }
+.verify h1 { margin: 0; font-weight: 700; letter-spacing: -.045em; line-height: 1.04; text-wrap: balance; overflow-wrap: anywhere; }
+.verify-idle h1 { font-size: clamp(30px, 4.2vw, 54px); font-weight: 650; margin-top: 8px; }
+.verify-name { font-size: clamp(52px, 9vw, 132px); margin-top: 26px; }
+.verify-name.plain { font-size: clamp(34px, 5vw, 64px); max-width: 18ch; }
+.verify-sub { margin: 16px 0 0; font-size: clamp(16px, 1.6vw, 21px); color: var(--soft-on); max-width: 46ch; }
+.verify-offline { margin: 22px 0 0; padding: 10px 16px; background: #fff8e9; border: 1px solid #e0cd9c; color: #7a571c; font-size: 15px; }
+.verify-meta { display: flex; align-items: center; justify-content: center; gap: 18px; flex-wrap: wrap; margin: 22px 0 0; font-size: clamp(20px, 2.2vw, 30px); font-weight: 600; }
+.verify-meta .pill { font-size: .62em; font-weight: 650; padding: 6px 16px; border: 2px solid currentColor; opacity: .85; }
+.verify-meta .pill.in { background: #ffffff26; opacity: 1; }
+.verify-sticker { margin: 34px 0 0; font-size: 13px; color: var(--soft-on); font-variant-numeric: tabular-nums; letter-spacing: .04em; user-select: text; }
+.verify-foot { margin: 0; padding-top: 16px; font-size: 13px; color: var(--soft-on); opacity: .85; }
+.verify-disc { width: clamp(84px, 11vw, 132px); height: clamp(84px, 11vw, 132px); }
+.disc-bg { fill: #ffffff26; }
+.verify-unknown .disc-bg { fill: #4a351018; }
+.verify-problem .disc-bg { fill: #252c2a14; }
+.mark { stroke: currentColor; stroke-width: 7; stroke-linecap: round; stroke-linejoin: round; }
+.mark.draw { stroke-dasharray: 110; stroke-dashoffset: 110; animation: verify-draw 520ms 160ms cubic-bezier(.2, .7, .2, 1) forwards; }
+.verify-reveal .verify-disc { animation: verify-pop 380ms cubic-bezier(.2, 1.3, .4, 1) both; }
+.verify-reveal :is(.verify-name, .verify-meta, .verify-sub, .verify-sticker) { animation: verify-rise 460ms cubic-bezier(.2, .7, .2, 1) both; }
+.verify-reveal .verify-meta { animation-delay: 70ms; }
+.verify-reveal .verify-sub { animation-delay: 130ms; }
+.verify-reveal .verify-sticker { animation-delay: 190ms; }
+@keyframes verify-pop { from { transform: scale(.5); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes verify-rise { from { transform: translateY(18px); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes verify-draw { to { stroke-dashoffset: 0; } }
+.verify-pulse { width: clamp(180px, 26vw, 300px); }
+.verify-pulse svg { display: block; width: 100%; }
+.verify-pulse .core { fill: var(--accent); }
+.verify-pulse .waves { stroke: #fff; stroke-width: 7; }
+.verify-pulse .waves path { fill: none; }
+.verify-pulse .dot { fill: #fff; stroke: none; }
+.verify-pulse .ring { stroke: var(--accent); stroke-width: 2.5; transform-origin: 120px 120px; opacity: 0; animation: verify-ring 3.6s cubic-bezier(.25, .6, .3, 1) infinite; }
+.verify-pulse .r2 { animation-delay: 1.2s; }
+.verify-pulse .r3 { animation-delay: 2.4s; }
+@keyframes verify-ring { 0% { transform: scale(1); opacity: .55; } 100% { transform: scale(2.7); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .verify *, .verify *::before { animation: none !important; } .mark.draw { stroke-dashoffset: 0; } .verify-pulse .ring { opacity: .2; } }
+@media (max-width: 760px) { .verify { padding: 24px 20px 16px; } }

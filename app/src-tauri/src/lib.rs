@@ -58,6 +58,7 @@ pub fn run() {
             commands::desk_reset,
             commands::desk_search,
             commands::desk_print,
+            commands::desk_verify,
             commands::gate_recent,
             commands::problems,
             commands::dismiss_problem,

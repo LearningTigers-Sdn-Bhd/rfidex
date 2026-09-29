@@ -9,11 +9,12 @@ import { Help } from "./Help";
 import { Problems } from "./Problems";
 import { Setup } from "./Setup";
 import { Simulator } from "./Simulator";
+import { Verify } from "./Verify";
 
 /** The status bar refreshes after each answer, never on an overlapping clock. */
 const STATUS_MS = 1000;
 
-type Tab = "station" | "problems" | "help";
+type Tab = "station" | "verify" | "problems" | "help";
 
 export function App() {
   const [view, setView] = useState<AppView | null>(null);
@@ -124,6 +125,10 @@ export function App() {
   const station: StationStatus | null =
     stations.find((candidate) => candidate.id === selected) ?? stations[0] ?? null;
 
+  // Verify reads the first desk reader; only a desk can be asked.
+  const verifyDesk = stations.find((candidate) => candidate.kind === "desk") ?? null;
+  const onVerify = tab === "verify" && verifyDesk !== null;
+
   const runSync = async () => {
     setBusy(true);
     setNotice(null);
@@ -164,6 +169,16 @@ export function App() {
           >
             Stations
           </button>
+          {verifyDesk && (
+            <button
+              type="button"
+              className={tab === "verify" ? "tab is-current" : "tab"}
+              aria-current={tab === "verify" ? "page" : undefined}
+              onClick={() => setTab("verify")}
+            >
+              Verify
+            </button>
+          )}
           <button
             type="button"
             className={tab === "problems" ? "tab is-current" : "tab"}
@@ -194,9 +209,12 @@ export function App() {
         </div>
       </header>
 
-      <main className="workspace">
+      <main className={onVerify ? "workspace is-stage" : "workspace"}>
         {tab === "help" ? (
           <Help />
+        ) : onVerify ? (
+          // Keyed like a station: a desk switch never keeps an old answer up.
+          <Verify key={verifyDesk.id} station={verifyDesk} />
         ) : stations.length === 0 ? (
           <section className="empty-state">
             <h2>No stations on this computer yet</h2>

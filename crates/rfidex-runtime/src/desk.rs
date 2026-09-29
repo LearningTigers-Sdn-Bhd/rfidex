@@ -165,6 +165,9 @@ pub struct DeskSession {
     /// One print in flight per desk: a second press joins the one running
     /// instead of sending a second job.
     pub printing: Arc<AtomicBool>,
+    /// The last final answer of the Verify screen, kept while the same sticker
+    /// stays on the reader so one tap asks the server once.
+    pub verified: Option<crate::verify::VerifyView>,
 }
 
 impl DeskSession {
@@ -184,6 +187,7 @@ impl DeskSession {
             session_id,
             badge,
             printing: Arc::new(AtomicBool::new(false)),
+            verified: None,
         }
     }
 

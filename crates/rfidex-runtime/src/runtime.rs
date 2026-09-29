@@ -1228,6 +1228,63 @@ impl Runtime {
         crate::search::desk_search(&runtime.client, &runtime.store, !known_offline, by, query).await
     }
 
+    /// One look at the desk reader for the Verify screen: whose sticker is
+    /// this? Asked again and again while the screen is open, so it never holds
+    /// a lock over the server and asks the server once per tap.
+    pub async fn desk_verify(
+        &self,
+        station: Uuid,
+    ) -> Result<crate::verify::VerifyView, RuntimeError> {
+        use crate::verify::{answer, reader_problem, server_problem};
+        let runtime = self.station(station)?.clone();
+        let refresh = runtime.clone();
+        let handle = tokio::runtime::Handle::current();
+        let read = self
+            .hardware_jobs
+            .run(move || {
+                handle.block_on(async move {
+                    let StationDevice::Desk(device) = &runtime.device else {
+                        return Err(wrong_station("verify stickers"));
+                    };
+                    let mut session = device.lock().await;
+                    let read = session.station.detect_tag();
+                    // A sticker that is gone forgets its answer, so the next
+                    // tap of the same sticker asks the server afresh.
+                    if read.is_err() {
+                        session.verified = None;
+                    }
+                    let cached = match &read {
+                        Ok(tag) => session.verified.clone().filter(|v| {
+                            v.sticker.as_deref() == Some(&rfidex_core::tag::hex_upper(&tag.uid_raw))
+                        }),
+                        Err(_) => None,
+                    };
+                    Ok((read, cached))
+                })
+            })
+            .await;
+        refresh.refresh_desk_connection().await;
+        let (read, cached) = read??;
+        let tag = match read {
+            Ok(tag) => tag,
+            Err(e) => return Ok(reader_problem(&e)),
+        };
+        if let Some(cached) = cached {
+            return Ok(cached);
+        }
+        let sticker = rfidex_core::tag::hex_upper(&tag.uid_raw);
+        let view = match refresh.client.lookup(&sticker).await {
+            Ok(reply) => answer(&sticker, reply),
+            Err(e) => server_problem(&e),
+        };
+        if view.is_final() {
+            if let StationDevice::Desk(device) = &refresh.device {
+                device.lock().await.verified = Some(view.clone());
+            }
+        }
+        Ok(view)
+    }
+
     /// Print the badge for the guest on screen. The same call serves the first
     /// print and every Reprint: Rust never prints on its own.
     ///

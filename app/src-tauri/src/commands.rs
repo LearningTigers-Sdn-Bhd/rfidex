@@ -9,7 +9,7 @@ use rfidex_runtime::config::{AppConfig, AppPaths, ConfigError, SetupInput, Setup
 use rfidex_runtime::{
     test_connection, test_printer, AppStatus, BadgeView, ConnectionView, DeskView, GateView,
     HardwareTestAction, HardwareTestView, ProblemView, Runtime, RuntimeError, RuntimeOptions,
-    SearchView, StickerTestStep, StickerTestView,
+    SearchView, StickerTestStep, StickerTestView, VerifyView,
 };
 use serde::Serialize;
 use std::sync::Arc;
@@ -351,6 +351,16 @@ pub async fn desk_print(
 ) -> Result<BadgeView, RuntimeError> {
     let slot = current(&state).await?;
     runtime(&slot).desk_print(station, session_id).await
+}
+
+/// One look at the desk reader for the Verify screen. Changes nothing.
+#[tauri::command]
+pub async fn desk_verify(
+    state: tauri::State<'_, AppState>,
+    station: Uuid,
+) -> Result<VerifyView, RuntimeError> {
+    let slot = current(&state).await?;
+    runtime(&slot).desk_verify(station).await
 }
 
 #[tauri::command]

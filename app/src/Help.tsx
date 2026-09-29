@@ -48,6 +48,28 @@ export function Help() {
         </dl>
       </Section>
 
+      <Section title="Checking a sticker (Verify)">
+        <p>
+          Use <strong>Verify</strong> when a guest asks whether their sticker works, or to check whose
+          sticker you are holding. It only looks: it never links, checks in or prints.
+        </p>
+        <ol>
+          <li>Open the <strong>Verify</strong> tab at the top. It needs the internet, because the name comes from the server.</li>
+          <li>Hold the sticker near the reader. The guest&apos;s name fills the screen for a few seconds.</li>
+          <li>Take the sticker away. The screen goes back to waiting for the next one.</li>
+        </ol>
+        <dl>
+          <dt>Green with a name</dt>
+          <dd>The sticker belongs to that guest and the ticket is valid.</dd>
+          <dt>Red with a name</dt>
+          <dd>The sticker is linked, but the ticket is not valid (unpaid or cancelled). Send the guest to registration.</dd>
+          <dt>Yellow: not linked to any ticket</dt>
+          <dd>Nobody has linked this sticker. Send the guest to the registration desk.</dd>
+          <dt>Grey message</dt>
+          <dd>Hold one sticker at a time, check the reader is connected, or wait for the connection to return.</dd>
+        </dl>
+      </Section>
+
       <Section title="Entry and exit gates">
         <p>
           A guest walks through, the gate reads the sticker, and the screen shows the name and

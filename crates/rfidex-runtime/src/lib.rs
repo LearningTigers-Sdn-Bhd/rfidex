@@ -18,8 +18,9 @@ pub mod search;
 pub mod sticker_test;
 
 pub use config::{
-    default_alarm_all_panels, default_printer_url, is_loopback_host, validate_connection, validate_printer_url, AppConfig,
-    AppPaths, ConfigError, DeviceChoice, SetupInput, SetupView, StationConfig,
+    default_alarm_all_panels, default_printer_url, is_loopback_host, validate_connection,
+    validate_printer_url, AppConfig, AppPaths, ConfigError, DeviceChoice, SetupInput, SetupView,
+    StationConfig,
 };
 pub use desk::{BadgeView, DeskStep, DeskView};
 pub use diagnostics::{test_connection, ConnectionView};

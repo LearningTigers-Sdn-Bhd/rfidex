@@ -197,7 +197,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_refused_connection_says_so() {
+    fn an_unreachable_server_is_named_without_its_address() {
         let client = ApiClient::new("http://127.0.0.1:1", "key", "st", Duration::from_secs(3));
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
@@ -205,7 +205,12 @@ mod tests {
             .unwrap();
         match rt.block_on(client.cache()) {
             Err(ApiError::Retryable(text)) => {
-                assert!(text.contains("refused"), "{text}");
+                // Windows takes over 2 seconds to refuse a closed port, so the
+                // connect timeout can answer first; both are honest.
+                assert!(
+                    text.contains("refused") || text.contains("did not answer"),
+                    "{text}"
+                );
                 assert!(
                     !text.contains("127.0.0.1"),
                     "no address in the text: {text}"

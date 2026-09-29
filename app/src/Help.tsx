@@ -1,0 +1,210 @@
+import type { ReactNode } from "react";
+
+/**
+ * Static operator guide. It works with no internet, so it lives in the app and
+ * moves with the version. Messages quoted here are the ones the app shows.
+ */
+export function Help() {
+  return (
+    <div className="help">
+      <header className="help-head">
+        <p className="eyebrow">Guide</p>
+        <h2>Using RfiDex</h2>
+        <p>
+          Short answers for the desk and the gates. Everything works offline:
+          scans are saved on this computer and sent when the network is back.
+        </p>
+      </header>
+
+      <Section title="Before doors open" open>
+        <ol>
+          <li>The status bar at the bottom says <strong>Online</strong> and shows the right event name.</li>
+          <li>Each station shows <strong>Reader connected</strong>. If it says disconnected, check power and cable first.</li>
+          <li>Do one test scan: a good ticket at the desk, a good sticker at each gate.</li>
+          <li>Team lead only: the gate clock, network address and firewall are set up in advance (see <em>Setting up a gate</em>).</li>
+        </ol>
+      </Section>
+
+      <Section title="Registration desk">
+        <ol>
+          <li>Scan the ticket QR code. The cursor stays in <strong>Ticket code</strong>, so the scanner always works.</li>
+          <li><strong>Ticket found</strong> appears with the guest name. The guest is checked in.</li>
+          <li>Put a sticker or wristband on the reader. <strong>Linked</strong> means the sticker now belongs to that ticket.</li>
+          <li>The badge prints by itself the first time a guest checks in, when the computer is online.</li>
+        </ol>
+        <dl>
+          <dt>Guest has no QR code</dt>
+          <dd>Use <strong>Find a ticket</strong> and type a name, email address or phone number. Offline, only names can be searched.</dd>
+          <dt>Sticker did not link</dt>
+          <dd>Press <strong>Try the sticker again</strong>. Check the sticker sits flat on the reader.</dd>
+          <dt>Badge did not print</dt>
+          <dd>Press <strong>Reprint badge</strong>. If it still fails, check the badge printer app is running on this PC.</dd>
+          <dt>Wrong ticket scanned</dt>
+          <dd>Press <strong>Cancel and start over</strong>.</dd>
+          <dt>Guest lost or damaged the sticker</dt>
+          <dd>Scan the ticket again and link a new sticker. The app asks <strong>Replace this sticker?</strong> and needs a reason. The old sticker stops working.</dd>
+          <dt>Mode: Bind or Write</dt>
+          <dd>Set by the event on the server. Bind links a sticker that already has a code. Write also writes the ticket onto the sticker.</dd>
+        </dl>
+      </Section>
+
+      <Section title="Entry and exit gates">
+        <p>
+          A guest walks through, the gate reads the sticker, and the screen shows the name and
+          <strong> Welcome</strong> (entry) or <strong>Goodbye</strong> (exit). The heading over the name
+          says which direction this gate is recording.
+        </p>
+        <h4>Switching a gate between Entry and Exit</h4>
+        <p>Takes seconds. Nothing restarts, the reader stays connected and no scan is lost.</p>
+        <ol>
+          <li>Open <strong>Setup</strong>.</li>
+          <li>Change <strong>Direction</strong> on that gate to Entry or Exit.</li>
+          <li>Press <strong>Save setup</strong>, then <strong>Change it and save</strong> in the box that asks <em>Change a gate direction?</em></li>
+        </ol>
+        <p>
+          Passes scanned before the switch keep the direction they had when scanned.
+          Gates need RfiDex 0.6.16 or newer for the instant switch.
+        </p>
+        <div className="warn">
+          Do not press <strong>Read gate records</strong> in Setup while the event is running.
+          It is a test button: it takes the next pass off the gate and does not save it.
+        </div>
+      </Section>
+
+      <Section title="What the gate screen says">
+        <table>
+          <thead>
+            <tr><th>You see</th><th>It means</th><th>Do</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Welcome / Goodbye</td><td>Pass accepted</td><td>Nothing</td></tr>
+            <tr><td>Recorded — waiting for the server</td><td>Saved here; the server has not answered yet</td><td>Nothing. It sends by itself. Do not scan again.</td></tr>
+            <tr><td>Sticker not recognised.</td><td>Not linked to any ticket</td><td>Send the guest to registration</td></tr>
+            <tr><td>Check in at registration first.</td><td>Ticket not checked in yet</td><td>Send the guest to registration</td></tr>
+            <tr><td>This sticker has been replaced.</td><td>The guest has a newer sticker</td><td>Ask for the new sticker</td></tr>
+            <tr><td>This sticker belongs to another event.</td><td>Wrong event</td><td>Check the guest</td></tr>
+            <tr><td>This ticket cannot be used.</td><td>Ticket is cancelled or invalid</td><td>Send to registration</td></tr>
+            <tr><td>This attendee has not checked in at registration.</td><td>Warning only: the pass is still recorded</td><td>Note it, no action</td></tr>
+            <tr><td>The reader reported a different direction.</td><td>Warning only: the direction set in Setup was used</td><td>Nothing</td></tr>
+          </tbody>
+        </table>
+        <p>
+          A red light and buzzer on the gate means a declined pass (sticker not recognised, replaced,
+          not checked in, or ticket invalid). Read the message on screen before letting the guest through.
+        </p>
+      </Section>
+
+      <Section title="Offline and sending">
+        <ul>
+          <li>The bar at the bottom shows <strong>Online</strong> or <strong>Offline at n station(s)</strong>, and how many actions are <strong>waiting to send</strong>.</li>
+          <li>Offline is fine. Keep scanning. Everything is saved on this computer and sent when the network returns.</li>
+          <li>Do not scan the same guest twice to &ldquo;force it&rdquo;. Do not restart the app to fix offline.</li>
+          <li><strong>Sync now</strong> (top right) tries to send everything immediately.</li>
+          <li>Keep the computer on and plugged in until it says <strong>0 waiting to send</strong>.</li>
+        </ul>
+      </Section>
+
+      <Section title="Problems tab">
+        <p>
+          The <strong>Problems</strong> tab lists saved actions the server refused or the app could not send.
+          The number in the tab is how many need attention. Ask the team lead before doing anything about them.
+        </p>
+        <p>
+          <strong>Dismiss from this list</strong> only hides a row here. It does not fix the server&rsquo;s answer,
+          delete the saved action, or change who holds a sticker.
+        </p>
+      </Section>
+
+      <Section title="Setting up a gate (team lead)">
+        <ol>
+          <li>
+            <strong>Event server.</strong> Setup → <em>Event server</em>: enter the Server URL and the event API key,
+            then press <strong>Test connection</strong>. The key is never shown again after saving.
+          </li>
+          <li>
+            <strong>Add the station.</strong> <em>Stations on this computer</em> → add a station, choose Type
+            <em> Gate</em>, a name, and the Direction (Entry or Exit).
+          </li>
+          <li>
+            <strong>Network address.</strong> The gate PC needs a fixed address on the gate&rsquo;s network
+            (for example gate <code>192.168.1.222</code>, PC <code>192.168.1.50</code>, mask
+            <code> 255.255.255.0</code>) and Windows Firewall must allow <code>rfidex.exe</code>.
+          </li>
+          <li>
+            <strong>Interface</strong> is this computer&rsquo;s own address on the cable to the gate.
+            <strong> Look for network cards</strong> lists this computer&rsquo;s network addresses. Pick the one on the
+            gate&rsquo;s network with <em>Use this one</em>.
+          </li>
+          <li>
+            <strong>Gate IP address</strong> is the gate&rsquo;s own IP (for example <code>192.168.1.222</code>). The
+            <strong> Port</strong> is already filled in as 6688, the vendor default; leave it unless someone changed it
+            on the gate. <strong>Find gates</strong> broadcasts on the chosen network card and lists gates that answer;
+            press <em>Use this one</em> to fill the IP in. It only finds gates that reply to the vendor&rsquo;s discovery
+            call, so if <em>No gate answered</em> appears, check power, cable and firewall, then just type the IP
+            printed in the vendor tool or on the gate.
+          </li>
+          <li>
+            <strong>Repeat window</strong> (seconds) and <strong>Alarm</strong> (all panels or only the panel that read the
+            sticker) are per gate. 5 seconds suits most gates.
+          </li>
+          <li>Press <strong>Save setup</strong>. The station should show <strong>Reader connected</strong> within a few seconds.</li>
+          <li>
+            <strong>Gate clock.</strong> Open the vendor D-tool, connect to the gate and run <em>Update system time</em>.
+            A wrong gate clock does not change counts here, but it makes the gate&rsquo;s own record times wrong.
+          </li>
+        </ol>
+      </Section>
+
+      <Section title="Setting up the desk (team lead)">
+        <ol>
+          <li>Add a station with Type <em>Desk</em> and choose the Reader (leave the DLL path empty if <code>ECRFID.dll</code> is in the RfiDex folder).</li>
+          <li>Set the <strong>Printer address</strong> only if the badge printer app is on this PC, then use its test button.</li>
+          <li>Writing stickers is off until the <em>Sticker write test</em> passes with a spare sticker.</li>
+        </ol>
+      </Section>
+
+      <Section title="If something goes wrong">
+        <dl>
+          <dt>Reader disconnected</dt>
+          <dd>Check power and the cable. Wait 30 seconds before touching Setup. The station reconnects by itself.</dd>
+          <dt>&ldquo;The server did not accept the API key&rdquo;</dt>
+          <dd>The key is wrong or was replaced. Call the team lead; do not change it yourself.</dd>
+          <dt>&ldquo;This API key belongs to a different event&rdquo;</dt>
+          <dd>Enter the key for this event in Setup. Saved scans stay safe and are not sent to the wrong event.</dd>
+          <dt>Computer clock warning</dt>
+          <dd>Fix the computer date and time. Scans use this clock.</dd>
+          <dt>Low disk space</dt>
+          <dd>Free some space on this computer before continuing.</dd>
+          <dt>Wrong direction after a break</dt>
+          <dd>Switch it again as above. Staff can also correct past direction in the panel.</dd>
+          <dt>Still stuck</dt>
+          <dd>Press <strong>Export diagnostics</strong> (top right) and send the file to the team. It never contains the API key.</dd>
+        </dl>
+      </Section>
+
+      <Section title="Updates">
+        <p>
+          Setup → <em>About &amp; updates</em> shows the installed version. When a newer one is ready, press
+          <strong> Update now</strong>. Do it before doors open, not during the event.
+        </p>
+      </Section>
+    </div>
+  );
+}
+
+function Section({
+  title,
+  open,
+  children,
+}: {
+  title: string;
+  open?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <details className="help-section" open={open}>
+      <summary>{title}</summary>
+      <div className="help-body">{children}</div>
+    </details>
+  );
+}

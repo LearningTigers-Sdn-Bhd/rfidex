@@ -244,6 +244,12 @@ export default function HardwareFields({ station, dirty, onChange, onSaved }: Pr
               </button>
             )}
           </div>
+          {station.kind === "gate" && (
+            <small className="field-help">
+              Read gate records takes the next pass off the gate and does not save it. Use it for
+              setup only, never while guests are passing.
+            </small>
+          )}
         </div>
       )}
       {tested?.revision === revision.current.number && !dirty && (
@@ -283,15 +289,12 @@ function TcpFields({
   const set = (update: Partial<Tcp>) => onChange({ ...value, ...update });
   return (
     <div className="row">
-      <label>
-        Address
-        <input
-          value={value.address}
-          onChange={(e) => set({ address: e.target.value })}
-          placeholder="192.168.1.20:6688"
-        />
-        <small className="field-help">The reader's own IP address and port.</small>
-      </label>
+      <AddressFields
+        address={value.address}
+        onChange={(address) => set({ address })}
+        ipLabel="Reader IP address"
+        ipHelp="The reader's own IP address, for example 192.168.1.20."
+      />
       <label>
         Bus address
         <input
@@ -440,19 +443,12 @@ function SdkFields({
 
       {connection.kind === "net" && (
         <div className="row net-address-row">
-          <label>
-            Reader address
-            <input
-              value={connection.address}
-              onChange={(e) =>
-                setConnection({ ...connection, address: e.target.value })
-              }
-              placeholder="192.168.1.20:6688"
-            />
-            <small className="field-help">
-              The gate's own IP and port. Press Find gates to fill it in.
-            </small>
-          </label>
+          <AddressFields
+            address={connection.address}
+            onChange={(address) => setConnection({ ...connection, address })}
+            ipLabel="Gate IP address"
+            ipHelp="The gate's own IP address, for example 192.168.1.222. Find gates can fill it in."
+          />
           <div className="actions">
             <button type="button" onClick={() => void findGates()} disabled={busy}>
               Find gates
@@ -588,6 +584,57 @@ function SdkFields({
           {failure.message}
         </p>
       )}
+    </>
+  );
+}
+
+const DEFAULT_PORT = "6688";
+
+/** The saved address is `IP:port`; the screen edits the two halves apart. */
+function splitAddress(address: string): { ip: string; port: string } {
+  const at = address.lastIndexOf(":");
+  return at < 0
+    ? { ip: address, port: DEFAULT_PORT }
+    : { ip: address.slice(0, at), port: address.slice(at + 1) };
+}
+
+function AddressFields({
+  address,
+  onChange,
+  ipLabel,
+  ipHelp,
+}: {
+  address: string;
+  onChange: (address: string) => void;
+  ipLabel: string;
+  ipHelp: string;
+}) {
+  const { ip, port } = splitAddress(address);
+  // Untouched, both halves stay empty, so a new station still asks for the IP.
+  const join = (nextIp: string, nextPort: string) =>
+    nextIp === "" && nextPort === DEFAULT_PORT ? "" : `${nextIp}:${nextPort}`;
+  return (
+    <>
+      <label>
+        {ipLabel}
+        <input
+          value={ip}
+          onChange={(e) => onChange(join(e.target.value.trim(), port))}
+          placeholder="192.168.1.222"
+        />
+        <small className="field-help">{ipHelp}</small>
+      </label>
+      <label className="port-field">
+        Port
+        <input
+          type="number"
+          min={1}
+          max={65535}
+          value={port}
+          onChange={(e) => onChange(join(ip, e.target.value))}
+        />
+        <small className="field-help">Default 6688. Change only if necessary.</small>
+      </label>
     </>
   );
 }

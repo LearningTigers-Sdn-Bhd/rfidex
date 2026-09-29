@@ -5,6 +5,7 @@ import { appState, errorText, exportDiagnostics, failureOf, inDesktopApp, status
 import type { AppFailure, AppStatus, AppView, StationStatus } from "./api";
 import { Desk } from "./Desk";
 import { Gate } from "./Gate";
+import { Help } from "./Help";
 import { Problems } from "./Problems";
 import { Setup } from "./Setup";
 import { Simulator } from "./Simulator";
@@ -12,7 +13,7 @@ import { Simulator } from "./Simulator";
 /** The status bar refreshes after each answer, never on an overlapping clock. */
 const STATUS_MS = 1000;
 
-type Tab = "station" | "problems";
+type Tab = "station" | "problems" | "help";
 
 export function App() {
   const [view, setView] = useState<AppView | null>(null);
@@ -171,6 +172,14 @@ export function App() {
           >
             Problems ({view.status?.problems ?? 0})
           </button>
+          <button
+            type="button"
+            className={tab === "help" ? "tab is-current" : "tab"}
+            aria-current={tab === "help" ? "page" : undefined}
+            onClick={() => setTab("help")}
+          >
+            Help
+          </button>
         </nav>
         <div className="topbar-actions">
           <button type="button" onClick={() => setShowSetup(true)}>
@@ -186,7 +195,9 @@ export function App() {
       </header>
 
       <main className="workspace">
-        {stations.length === 0 ? (
+        {tab === "help" ? (
+          <Help />
+        ) : stations.length === 0 ? (
           <section className="empty-state">
             <h2>No stations on this computer yet</h2>
             <p>Open Setup and add the desk and gates this PC runs.</p>

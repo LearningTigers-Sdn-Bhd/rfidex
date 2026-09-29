@@ -547,7 +547,12 @@ impl EcrfidGate {
         }
         // 0x01, "independent alarm": the vendor demo's choice, so only the
         // channel the guest walked through sounds.
-        self.reader.library_alarm(0x01)
+        let result = self.reader.library_alarm(0x01);
+        // The alarm command cuts into the 0x02/0x01 record handshake: the gate
+        // then ignores the next ack and serves the same pass again. Start a
+        // fresh fetch so the queue moves on.
+        self.started = false;
+        result
     }
 
     /// Raw library-gate frames for the operator's test. Steps through the

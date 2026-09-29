@@ -45,8 +45,12 @@ pub enum Operation {
         data: Vec<u8>,
     },
     RawRecords,
-    /// Raw library-gate records, for capturing the layout. Read only.
-    LibraryRecords,
+    /// Library (security) gate records. `flag` 0x02 starts a fetch; 0x01
+    /// acknowledges the record returned by the previous call and asks for
+    /// the next, as the vendor demo polls.
+    LibraryRecords {
+        flag: u8,
+    },
     Close,
 }
 

@@ -209,7 +209,7 @@ fn name(operation: &Operation) -> &'static str {
         Operation::Read { .. } => "read",
         Operation::Write { .. } => "write",
         Operation::RawRecords => "raw_records",
-        Operation::LibraryRecords => "library_records",
+        Operation::LibraryRecords { .. } => "library_records",
         Operation::Close => "close",
     }
 }
@@ -225,6 +225,10 @@ fn answer(
     }
     if scenario == "malformed_response" {
         return Err(WireError::BadResponse);
+    }
+    // The fake is not a library gate: gates fall back to live inventory.
+    if matches!(operation, Operation::LibraryRecords { .. }) {
+        return Err(WireError::Unsupported);
     }
     Ok(match operation {
         // A write is answered further down, by the arm that also touches the
@@ -277,7 +281,9 @@ fn answer(
             }
             Response::Unit
         }
-        Operation::RawRecords | Operation::LibraryRecords => Response::Records { raw: Vec::new() },
+        Operation::RawRecords | Operation::LibraryRecords { .. } => {
+            Response::Records { raw: Vec::new() }
+        }
     })
 }
 

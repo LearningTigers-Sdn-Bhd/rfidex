@@ -44,7 +44,7 @@ impl SdkReader {
         Err(WireError::Unsupported)
     }
 
-    pub fn library_records(&self) -> Result<Response, WireError> {
+    pub fn library_records(&self, _flag: u8) -> Result<Response, WireError> {
         Err(WireError::Unsupported)
     }
 

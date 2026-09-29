@@ -9,6 +9,7 @@ pub mod adapters;
 pub mod config;
 pub mod ec;
 pub mod host;
+pub mod library_gate;
 pub mod process;
 pub mod sdk;
 pub mod tcp;

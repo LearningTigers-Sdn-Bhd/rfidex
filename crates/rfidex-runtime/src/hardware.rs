@@ -108,30 +108,31 @@ pub fn from_error(e: &rfidex_core::device::DeviceError) -> HardwareTestView {
     view(false, message.to_string(), Vec::new())
 }
 
-/// Raw records as hex, one line each, for the operator to send back.
+/// A library-gate fetch: the stickers it handed over, then the raw frames so
+/// an unexpected layout can still be sent back.
 pub fn records(raw: &[Vec<u8>]) -> HardwareTestView {
-    if raw.is_empty() {
-        return view(
-            true,
-            "Gate answered. No stored passes. Walk a sticker through the gate, then press again."
-                .to_string(),
-            Vec::new(),
-        );
-    }
-    let lines: Vec<String> = raw
+    let passes: Vec<_> = raw
         .iter()
-        .take(SHOWN_UIDS)
-        .map(|r| rfidex_core::tag::hex_upper(r))
+        .flat_map(|f| rfidex_hardware::library_gate::passes(f))
         .collect();
-    view(
-        true,
-        format!(
-            "Gate answered with {} stored pass{}. Send a screenshot of these lines.",
-            raw.len(),
-            if raw.len() == 1 { "" } else { "es" }
+    let message = match passes.len() {
+        0 => "Gate answered. No sticker pass waiting. Walk a sticker through, then press again."
+            .to_string(),
+        n => format!(
+            "Gate answered. {n} sticker pass{} waiting.",
+            if n == 1 { "" } else { "es" }
         ),
-        lines,
-    )
+    };
+    let lines = passes
+        .iter()
+        .map(|p| format!("Sticker {}", rfidex_core::tag::hex_upper(&p.uid)))
+        .chain(
+            raw.iter()
+                .map(|r| format!("Raw {}", rfidex_core::tag::hex_upper(r))),
+        )
+        .take(SHOWN_UIDS)
+        .collect();
+    view(true, message, lines)
 }
 
 pub fn stopped() -> HardwareTestView {

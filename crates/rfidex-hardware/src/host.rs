@@ -324,8 +324,10 @@ fn dispatch(
             }
             with_reader(device, |reader| reader.raw_records())
         }
-        // Read only (flag 0 never deletes), so any helper may capture these.
-        Operation::LibraryRecords => with_reader(device, |reader| reader.library_records()),
+        // The gate's own record queue: taking records is how a gate is read.
+        Operation::LibraryRecords { flag } => {
+            with_reader(device, |reader| reader.library_records(flag))
+        }
     }
 }
 

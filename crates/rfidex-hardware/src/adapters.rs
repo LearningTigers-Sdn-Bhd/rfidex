@@ -459,17 +459,52 @@ impl TagReaderWriter for EcrfidDesk {
     }
 }
 
-/// A gate reader. Passages come from live inventory, which is the only gate
-/// path this hardware implements; stored records stay raw evidence.
+/// A gate reader. A library (security) gate hands over its own pass records;
+/// any other reader falls back to live inventory.
 pub struct EcrfidGate {
     reader: Reader,
+    /// None until the first records call; Some(false) once a reader has
+    /// refused it without ever answering, so it stays on live inventory.
+    library: Option<bool>,
+    /// False until a fetch was started with flag 0x02.
+    started: bool,
 }
 
 impl EcrfidGate {
     pub fn new(config: HardwareConfig, launcher: HostLauncher) -> DeviceResult<EcrfidGate> {
         Ok(EcrfidGate {
             reader: Reader::new(config, launcher)?,
+            library: None,
+            started: false,
         })
+    }
+
+    fn library_poll(&mut self) -> DeviceResult<Vec<(GateRead, ReleaseHandle)>> {
+        // 0x02 starts a fetch; each 0x01 acknowledges the record returned by
+        // the call before, which by then core has stored.
+        let flag = if self.started { 0x01 } else { 0x02 };
+        let frames = match self.reader.records(Operation::LibraryRecords { flag }) {
+            Ok(frames) => frames,
+            Err(e) => {
+                self.started = false;
+                return Err(e);
+            }
+        };
+        self.started = true;
+        Ok(frames
+            .iter()
+            .flat_map(|frame| crate::library_gate::passes(frame))
+            .map(|pass| {
+                let mut read = GateRead::sighting(pass.uid.to_vec());
+                read.device_direction_raw = Some(pass.direction_raw);
+                read.device_time_raw = Some(pass.time_raw);
+                read.flags_raw = serde_json::json!({
+                    "source": "ecrfid_library_gate",
+                    "alarm_raw": pass.alarm_raw,
+                });
+                (read, ReleaseHandle(0))
+            })
+            .collect())
     }
 
     pub fn stop_control(&self) -> Arc<StopControl> {
@@ -488,9 +523,12 @@ impl EcrfidGate {
         self.reader.probe()
     }
 
-    /// Raw library-gate records for the operator's capture test. Read only.
+    /// Raw library-gate frames for the operator's test. Starts a fresh fetch,
+    /// so the live poll restarts too.
     pub fn library_records(&mut self) -> DeviceResult<Vec<Vec<u8>>> {
-        self.reader.records(Operation::LibraryRecords)
+        self.started = false;
+        self.reader
+            .records(Operation::LibraryRecords { flag: 0x02 })
     }
 }
 
@@ -500,6 +538,16 @@ impl GateSource for EcrfidGate {
     }
 
     fn poll(&mut self) -> DeviceResult<Vec<(GateRead, ReleaseHandle)>> {
+        if self.library != Some(false) {
+            match self.library_poll() {
+                Ok(reads) => {
+                    self.library = Some(true);
+                    return Ok(reads);
+                }
+                Err(e) if self.library == Some(true) => return Err(e),
+                Err(_) => self.library = Some(false),
+            }
+        }
         let tags = self.reader.inventory()?;
         Ok(tags
             .into_iter()

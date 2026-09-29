@@ -400,18 +400,18 @@ impl SdkReader {
     /// bytes, and never asks the reader to delete a batch, initialise its store
     /// or shift anything. Nothing here decodes a record layout.
     pub fn raw_records(&self) -> Result<Response, WireError> {
-        self.records(self.api.take_records)
+        self.records(self.api.take_records, 0)
     }
 
-    /// The same raw fetch from a library (security) gate. The layout is not
-    /// decoded yet: these bytes are captured to learn it.
-    pub fn library_records(&self) -> Result<Response, WireError> {
-        self.records(self.api.library_take_records)
+    /// One library (security) gate fetch, one record at most, as the vendor
+    /// demo (`HelloController.onLibraryGateTakeRecordsButtonClick`) polls.
+    pub fn library_records(&self, flag: u8) -> Result<Response, WireError> {
+        self.records(self.api.library_take_records, flag)
     }
 
-    fn records(&self, take: TakeRecords) -> Result<Response, WireError> {
+    fn records(&self, take: TakeRecords, flag: u8) -> Result<Response, WireError> {
         let mut slots: [*mut u8; RECORD_SLOTS] = [std::ptr::null_mut(); RECORD_SLOTS];
-        let count = unsafe { take(self.context, slots.as_mut_ptr(), 0, 1) };
+        let count = unsafe { take(self.context, slots.as_mut_ptr(), flag, 1) };
         if count < 0 {
             return Err(WireError::Sdk(count));
         }

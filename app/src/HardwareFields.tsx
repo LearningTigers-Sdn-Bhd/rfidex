@@ -15,7 +15,6 @@ import {
   StationConfig,
   StationKind,
   errorText,
-  hardwareAllowNetwork,
   hardwareDiscover,
   hardwareEnumerate,
   hardwareTest,
@@ -344,22 +343,6 @@ function SdkFields({
 
   const [gates, setGates] = useState<{ revision: number; entries: string[] } | null>(null);
 
-  const [notice, setNotice] = useState<string | null>(null);
-
-  const allowNetwork = async () => {
-    if (busy) return;
-    setBusy(true);
-    setFailure(null);
-    setNotice(null);
-    try {
-      setNotice(await hardwareAllowNetwork());
-    } catch (e) {
-      setFailure({ revision: revision.current.number, message: errorText(e) });
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const findGates = async () => {
     if (busy || connection.kind !== "net") return;
     const current = revision.current.number;
@@ -477,15 +460,7 @@ function SdkFields({
             <button type="button" onClick={() => void look()} disabled={busy}>
               Look for network cards
             </button>
-            <button type="button" onClick={() => void allowNetwork()} disabled={busy}>
-              Allow through Windows Firewall
-            </button>
           </div>
-          {notice && (
-            <p className="note" role="status">
-              {notice}
-            </p>
-          )}
         </div>
       )}
 
@@ -535,7 +510,7 @@ function SdkFields({
         <>
           <p className="note" role="status">
             {gates.entries.length === 0
-              ? "No gate answered on this network card. Check the gate is powered and on this cable, that Interface is the Ethernet entry, and press Allow through Windows Firewall once on this computer."
+              ? "No gate answered on this network card. Check the gate is powered and on this cable, and that Interface is the Ethernet entry."
               : `${gates.entries.length} gate${gates.entries.length === 1 ? "" : "s"} found.`}
           </p>
           {gates.entries.length > 0 && connection.kind === "net" && (

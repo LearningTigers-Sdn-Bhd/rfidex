@@ -89,10 +89,6 @@ pub enum Response {
     Records {
         raw: Vec<Vec<u8>>,
     },
-    /// Library-gate passes already decoded by the vendor's managed SDK.
-    Passes {
-        passes: Vec<WirePass>,
-    },
     /// The bounded result of a device enumeration, which is a startup command
     /// of its own rather than an operation on an open reader.
     Strings {
@@ -106,17 +102,6 @@ pub struct WireTag {
     pub uid: [u8; 8],
     pub dsfid: u8,
     pub antenna: Option<u8>,
-}
-
-/// One library-gate pass, fields as the vendor's `LibraryGate_FetchRecords`
-/// returns them.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct WirePass {
-    pub uid: [u8; 8],
-    pub direction: u8,
-    pub alarm: u8,
-    pub time: [u8; 6],
 }
 
 /// A failure the child can name without shipping a vendor error string back
@@ -393,36 +378,6 @@ fn io_error(e: std::io::Error) -> WireError {
 
 #[cfg(test)]
 mod tests {
-    /// The exact bytes the C# gate helper writes (gate-host/Program.cs).
-    #[test]
-    fn the_gate_helper_reply_shapes_parse() {
-        let pass: Reply = serde_json::from_str(
-            r#"{"id":4,"result":{"Ok":{"kind":"passes","passes":[{"uid":[81,120,132,202,80,1,4,224],"direction":0,"alarm":0,"time":[38,1,19,23,53,54]}]}}}"#,
-        )
-        .unwrap();
-        assert_eq!(
-            pass.result,
-            Ok(Response::Passes {
-                passes: vec![WirePass {
-                    uid: [81, 120, 132, 202, 80, 1, 4, 224],
-                    direction: 0,
-                    alarm: 0,
-                    time: [38, 1, 19, 23, 53, 54],
-                }]
-            })
-        );
-        let info: Reply = serde_json::from_str(
-            r#"{"id":2,"result":{"Ok":{"kind":"info","model":"D5300","firmware":null,"raw":[]}}}"#,
-        )
-        .unwrap();
-        assert!(matches!(info.result, Ok(Response::Info { .. })));
-        let sdk: Reply = serde_json::from_str(r#"{"id":3,"result":{"Err":{"sdk":-1}}}"#).unwrap();
-        assert_eq!(sdk.result, Err(WireError::Sdk(-1)));
-        let unsupported: Reply =
-            serde_json::from_str(r#"{"id":5,"result":{"Err":"unsupported"}}"#).unwrap();
-        assert_eq!(unsupported.result, Err(WireError::Unsupported));
-    }
-
     use super::*;
     use std::io::Cursor;
 

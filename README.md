@@ -203,19 +203,6 @@ existing debounce, outbox and sync path. Stored gate records are captured as raw
 bytes and are never decoded, never turned into passages, and never deleted from
 the reader.
 
-### Gate helper (C#, vendor's own SDK)
-
-Gate stations talk to the reader through `rfidex-gate-host.exe`, installed in
-the `gate-host` folder beside RfiDex. It is written in C# on the vendor's
-`rfidclib_reader.dll` (vendor D-tool 1.0.2.2, bundled in the same folder), like
-the vendor's gate demos. Without the helper (developer builds) gates use the
-ECRFID helper.
-If every pass shows as an unknown sticker, start RfiDex with the environment
-variable `RFIDEX_GATE_UID_REVERSE=1` to reverse the UID byte order.
-
-Gate connection blocked by Windows Firewall? In Setup, on the gate, press
-**Allow through Windows Firewall** once and choose Yes on the administrator prompt.
-
 ### The write gate
 
 Writing a sticker needs a profile whose write test has passed. The switch is

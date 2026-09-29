@@ -5,6 +5,3 @@
 /app/node_modules
 /app/dist
 /app/src-tauri/gen
-/gate-host/bin
-/gate-host/obj
-/app/src-tauri/gate-host/*.exe

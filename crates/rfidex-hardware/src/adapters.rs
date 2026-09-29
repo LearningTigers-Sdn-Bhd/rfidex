@@ -22,7 +22,7 @@ use rfidex_core::tag::{Protocol, TagRead};
 use crate::config::HardwareConfig;
 use crate::process::{HardwareClient, HostLauncher, StopControl};
 use crate::tcp::TcpReader;
-use crate::wire::{Operation, Response, WireError, WirePass, WireTag};
+use crate::wire::{Operation, Response, WireError, WireTag};
 
 /// One control that stops the transport that exists now and every transport
 /// that would be built later.
@@ -348,36 +348,6 @@ impl Reader {
         result
     }
 
-    /// Library-gate passes, whichever helper answered: the vendor-language
-    /// helper decodes them itself, the native one hands over raw frames.
-    fn library_passes(&mut self, flag: u8) -> DeviceResult<Vec<WirePass>> {
-        self.ensure_connection()?;
-        let result = match self.connection.as_mut() {
-            Some(Connection::Sdk(client)) => {
-                match client.call(Operation::LibraryRecords { flag }) {
-                    Ok(Response::Passes { passes }) => Ok(passes),
-                    Ok(Response::Records { raw }) => Ok(raw
-                        .iter()
-                        .flat_map(|frame| crate::library_gate::passes(frame))
-                        .map(|p| WirePass {
-                            uid: p.uid,
-                            direction: p.direction_raw,
-                            alarm: p.alarm_raw,
-                            time: p.time_raw,
-                        })
-                        .collect()),
-                    Ok(_) => Err(DeviceError::Other(UNREADABLE.to_string())),
-                    Err(e) => Err(device_error(e)),
-                }
-            }
-            _ => Err(DeviceError::WriteUnsupported),
-        };
-        if result.is_err() {
-            self.forget();
-        }
-        result
-    }
-
     fn records(&mut self, operation: Operation) -> DeviceResult<Vec<Vec<u8>>> {
         self.ensure_connection()?;
         let result = match self.connection.as_mut() {
@@ -536,23 +506,24 @@ impl EcrfidGate {
         // 0x02 starts a fetch; each 0x01 acknowledges the record returned by
         // the call before, which by then core has stored.
         let flag = if self.started { 0x01 } else { 0x02 };
-        let passes = match self.reader.library_passes(flag) {
-            Ok(passes) => passes,
+        let frames = match self.reader.records(Operation::LibraryRecords { flag }) {
+            Ok(frames) => frames,
             Err(e) => {
                 self.started = false;
                 return Err(e);
             }
         };
         self.started = true;
-        Ok(passes
-            .into_iter()
+        Ok(frames
+            .iter()
+            .flat_map(|frame| crate::library_gate::passes(frame))
             .map(|pass| {
                 let mut read = GateRead::sighting(pass.uid.to_vec());
-                read.device_direction_raw = Some(pass.direction);
-                read.device_time_raw = Some(pass.time);
+                read.device_direction_raw = Some(pass.direction_raw);
+                read.device_time_raw = Some(pass.time_raw);
                 read.flags_raw = serde_json::json!({
                     "source": "ecrfid_library_gate",
-                    "alarm_raw": pass.alarm,
+                    "alarm_raw": pass.alarm_raw,
                 });
                 (read, ReleaseHandle(0))
             })

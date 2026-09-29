@@ -90,22 +90,6 @@ impl HostLauncher {
         }
     }
 
-    /// The gate helper written in the vendor's own language (C#, managed
-    /// `rfidclib_reader.dll`), when it is installed beside the app or in its
-    /// `gate-host/` folder. Absent in developer builds and tests, where gates
-    /// keep using the helper the caller passes.
-    pub fn gate_host_installed() -> Option<HostLauncher> {
-        let exe = std::env::current_exe().ok()?;
-        let dir = exe.parent()?;
-        [
-            dir.join("gate-host").join(GATE_HOST_NAME),
-            dir.join(GATE_HOST_NAME),
-        ]
-        .into_iter()
-        .find(|path| path.is_file())
-        .map(HostLauncher::new)
-    }
-
     /// The running program, started again in child mode.
     pub fn current_exe() -> Result<HostLauncher, WireError> {
         std::env::current_exe()
@@ -198,11 +182,6 @@ pub fn kind_from_word(word: &str) -> Option<EnumerationKind> {
         _ => None,
     }
 }
-
-/// The most the opening call may take.
-const OPEN_WINDOW_MS: u32 = 10_000;
-
-pub const GATE_HOST_NAME: &str = "rfidex-gate-host.exe";
 
 /// A live helper: one child process, one open device context, one request at a
 /// time.
@@ -309,14 +288,9 @@ impl HardwareClient {
                 return Err(WireError::Disconnected);
             }
             let mut client = HardwareClient::connect(socket, control.clone(), config.timeout_ms());
-            // The first open loads the vendor library and connects over the
-            // network; give it longer than a routine call.
-            client.timeout_ms = client.timeout_ms.max(OPEN_WINDOW_MS);
-            let opened = client.call(Operation::Open {
+            match client.call(Operation::Open {
                 config: config.clone(),
-            });
-            client.timeout_ms = config.timeout_ms();
-            match opened {
+            }) {
                 Ok(Response::Unit) if !control.is_stopped() => Ok(client),
                 Ok(_) => Err(WireError::Disconnected),
                 Err(e) => Err(e),
@@ -522,7 +496,6 @@ fn answers(operation: &Operation, response: &Response) -> bool {
             | (Operation::Read { .. }, Response::Bytes { .. })
             | (Operation::RawRecords, Response::Records { .. })
             | (Operation::LibraryRecords { .. }, Response::Records { .. })
-            | (Operation::LibraryRecords { .. }, Response::Passes { .. })
             | (Operation::LibraryAlarm { .. }, Response::Unit)
     )
 }

@@ -71,10 +71,10 @@ pub async fn test_connection(url: &str, key: &str) -> ConnectionView {
             "unauthorized",
             "The server did not accept the API key.",
         ),
-        Err(ApiError::Retryable(_)) => view(
+        Err(ApiError::Retryable(why)) => view(
             false,
             "offline",
-            "Cannot reach the server. Check the address and connection.",
+            &format!("Cannot reach the server: {why}. Check the address and connection."),
         ),
         Err(ApiError::BadResponse(_)) => view(
             false,

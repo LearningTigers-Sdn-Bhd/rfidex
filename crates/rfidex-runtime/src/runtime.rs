@@ -719,9 +719,9 @@ fn station_status(
 fn network_message(e: &ApiError) -> String {
     match e {
         ApiError::Unauthorized => UNAUTHORIZED.to_string(),
-        ApiError::Retryable(_) => {
-            "Cannot reach the server. Try again when the connection returns.".to_string()
-        }
+        ApiError::Retryable(why) => format!(
+            "Cannot reach the server: {why}. Saved scans are safe and send by themselves when it returns."
+        ),
         ApiError::BadResponse(_) => {
             "The server sent a reply this app cannot read. Ask for help.".to_string()
         }

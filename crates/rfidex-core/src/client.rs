@@ -10,6 +10,8 @@ use crate::contract::*;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ApiError {
+    /// The text is a plain sentence naming what went wrong (no URL, no key), so
+    /// the operator screen and the saved outbox row can both show it as is.
     #[error("temporary failure: {0}")]
     Retryable(String),
     #[error("api key rejected")]
@@ -21,6 +23,54 @@ pub enum ApiError {
     /// every `Result<_, ApiError>` (and the errors wrapping it) oversized.
     #[error("rejected with {status}: {}", body.message)]
     Rejected { status: u16, body: Box<ErrorBody> },
+}
+
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Why a request never got an answer, in words an operator can act on. Walks
+/// the error's causes because reqwest's own text is only "error sending
+/// request". The URL is never included.
+fn explain_transport(e: &reqwest::Error) -> String {
+    let mut chain = e.to_string();
+    let mut source = std::error::Error::source(e);
+    while let Some(cause) = source {
+        chain.push(' ');
+        chain.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    let chain = chain.to_lowercase();
+    let reason = if e.is_timeout() || chain.contains("timed out") {
+        "the server did not answer in time"
+    } else if chain.contains("dns")
+        || chain.contains("lookup address")
+        || chain.contains("name or service")
+        || chain.contains("no such host")
+        || chain.contains("nodename")
+    {
+        "the server address was not found (check the address and the internet connection)"
+    } else if chain.contains("refused") {
+        "the server refused the connection (it may be down or restarting)"
+    } else if chain.contains("certificate") || chain.contains("tls") || chain.contains("ssl") {
+        "the secure connection failed (check this computer's date and time)"
+    } else if chain.contains("unreachable") || chain.contains("network is down") {
+        "there is no network route to the server (check the cable or Wi-Fi)"
+    } else if e.is_connect() {
+        "could not connect to the server (check the internet connection)"
+    } else {
+        "the connection to the server failed"
+    };
+    reason.to_string()
+}
+
+fn explain_status(status: StatusCode) -> String {
+    match status.as_u16() {
+        429 => "the server is limiting requests from this network (HTTP 429)".to_string(),
+        502..=504 => format!(
+            "the server is restarting or busy (HTTP {})",
+            status.as_u16()
+        ),
+        code => format!("the server had an internal error (HTTP {code})"),
+    }
 }
 
 #[derive(Clone)]
@@ -35,6 +85,9 @@ impl ApiClient {
     pub fn new(base: &str, api_key: &str, station: &str, timeout: Duration) -> ApiClient {
         let http = reqwest::Client::builder()
             .timeout(timeout)
+            // A server that cannot be reached at all fails fast instead of
+            // holding a desk scan for the whole request timeout.
+            .connect_timeout(CONNECT_TIMEOUT.min(timeout))
             .build()
             .expect("reqwest client");
         ApiClient {
@@ -109,7 +162,7 @@ impl ApiClient {
             .header(HEADER_STATION, &self.station)
             .send()
             .await
-            .map_err(|e| ApiError::Retryable(e.to_string()))?;
+            .map_err(|e| ApiError::Retryable(explain_transport(&e)))?;
         let status = resp.status();
         if status.is_success() {
             return resp
@@ -121,7 +174,7 @@ impl ApiClient {
             return Err(ApiError::Unauthorized);
         }
         if status.is_server_error() || status == StatusCode::TOO_MANY_REQUESTS {
-            return Err(ApiError::Retryable(format!("http {status}")));
+            return Err(ApiError::Retryable(explain_status(status)));
         }
         let body = resp
             .json::<ErrorBody>()
@@ -136,5 +189,37 @@ impl ApiClient {
             status: status.as_u16(),
             body: Box::new(body),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_refused_connection_says_so() {
+        let client = ApiClient::new("http://127.0.0.1:1", "key", "st", Duration::from_secs(3));
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        match rt.block_on(client.cache()) {
+            Err(ApiError::Retryable(text)) => {
+                assert!(text.contains("refused"), "{text}");
+                assert!(
+                    !text.contains("127.0.0.1"),
+                    "no address in the text: {text}"
+                );
+            }
+            other => panic!("expected a retryable failure, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn server_statuses_are_named() {
+        assert!(explain_status(StatusCode::SERVICE_UNAVAILABLE).contains("restarting"));
+        assert!(explain_status(StatusCode::BAD_GATEWAY).contains("502"));
+        assert!(explain_status(StatusCode::TOO_MANY_REQUESTS).contains("limiting"));
+        assert!(explain_status(StatusCode::INTERNAL_SERVER_ERROR).contains("500"));
     }
 }

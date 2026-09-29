@@ -209,7 +209,7 @@ export interface UpdateView {
 }
 
 /** The two reader tests an operator may run. Neither writes to a sticker. */
-export type HardwareTestAction = "connect" | "read_tags";
+export type HardwareTestAction = "connect" | "read_tags" | "gate_records";
 
 export interface HardwareTestView {
   ok: boolean;

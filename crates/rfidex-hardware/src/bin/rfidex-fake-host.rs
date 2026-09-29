@@ -209,6 +209,7 @@ fn name(operation: &Operation) -> &'static str {
         Operation::Read { .. } => "read",
         Operation::Write { .. } => "write",
         Operation::RawRecords => "raw_records",
+        Operation::LibraryRecords => "library_records",
         Operation::Close => "close",
     }
 }
@@ -276,7 +277,7 @@ fn answer(
             }
             Response::Unit
         }
-        Operation::RawRecords => Response::Records { raw: Vec::new() },
+        Operation::RawRecords | Operation::LibraryRecords => Response::Records { raw: Vec::new() },
     })
 }
 

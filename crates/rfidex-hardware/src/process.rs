@@ -495,6 +495,7 @@ fn answers(operation: &Operation, response: &Response) -> bool {
             | (Operation::Memory { .. }, Response::Memory { .. })
             | (Operation::Read { .. }, Response::Bytes { .. })
             | (Operation::RawRecords, Response::Records { .. })
+            | (Operation::LibraryRecords, Response::Records { .. })
     )
 }
 

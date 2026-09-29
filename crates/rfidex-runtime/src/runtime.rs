@@ -1038,6 +1038,16 @@ impl Runtime {
                     }
                 }
             },
+            HardwareTestAction::GateRecords => match device {
+                StationDevice::Desk(_) => hardware::failed("Gate records are only for gates."),
+                StationDevice::Gate(g) => {
+                    let mut gate = g.lock().await;
+                    match gate.gate.library_records() {
+                        Ok(raw) => hardware::records(&raw),
+                        Err(e) => hardware::from_error(&e),
+                    }
+                }
+            },
         }
     }
 

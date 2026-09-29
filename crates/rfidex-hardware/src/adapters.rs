@@ -329,9 +329,13 @@ impl Reader {
     }
 
     fn raw_records(&mut self) -> DeviceResult<Vec<Vec<u8>>> {
+        self.records(Operation::RawRecords)
+    }
+
+    fn records(&mut self, operation: Operation) -> DeviceResult<Vec<Vec<u8>>> {
         self.ensure_connection()?;
         let result = match self.connection.as_mut() {
-            Some(Connection::Sdk(client)) => match client.call(Operation::RawRecords) {
+            Some(Connection::Sdk(client)) => match client.call(operation) {
                 Ok(Response::Records { raw }) => Ok(raw),
                 Ok(_) => Err(DeviceError::Other(UNREADABLE.to_string())),
                 Err(e) => Err(device_error(e)),
@@ -482,6 +486,11 @@ impl EcrfidGate {
 
     pub fn probe(&mut self) -> DeviceResult<DeviceInfo> {
         self.reader.probe()
+    }
+
+    /// Raw library-gate records for the operator's capture test. Read only.
+    pub fn library_records(&mut self) -> DeviceResult<Vec<Vec<u8>>> {
+        self.reader.records(Operation::LibraryRecords)
     }
 }
 

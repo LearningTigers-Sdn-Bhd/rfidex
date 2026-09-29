@@ -238,6 +238,11 @@ export default function HardwareFields({ station, dirty, onChange, onSaved }: Pr
             <button type="button" onClick={() => void test("read_tags")} disabled={busy}>
               Read stickers
             </button>
+            {station.kind === "gate" && (
+              <button type="button" onClick={() => void test("gate_records")} disabled={busy}>
+                Read gate records
+              </button>
+            )}
           </div>
         </div>
       )}

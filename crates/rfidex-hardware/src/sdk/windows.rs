@@ -87,6 +87,7 @@ struct Api {
     read_blocks: ReadBlocks,
     write_blocks: WriteBlocks,
     take_records: TakeRecords,
+    library_take_records: TakeRecords,
 }
 
 impl Api {
@@ -134,6 +135,7 @@ impl Api {
             read_blocks: symbol(module, "ISO15693_ReadMultipleBlocks")?,
             write_blocks: symbol(module, "ISO15693_WriteMultipleBlocks")?,
             take_records: symbol(module, "MeetingGateTakeRecords")?,
+            library_take_records: symbol(module, "LibraryGateTakeRecords")?,
         };
         Ok((library, api))
     }
@@ -398,8 +400,18 @@ impl SdkReader {
     /// bytes, and never asks the reader to delete a batch, initialise its store
     /// or shift anything. Nothing here decodes a record layout.
     pub fn raw_records(&self) -> Result<Response, WireError> {
+        self.records(self.api.take_records)
+    }
+
+    /// The same raw fetch from a library (security) gate. The layout is not
+    /// decoded yet: these bytes are captured to learn it.
+    pub fn library_records(&self) -> Result<Response, WireError> {
+        self.records(self.api.library_take_records)
+    }
+
+    fn records(&self, take: TakeRecords) -> Result<Response, WireError> {
         let mut slots: [*mut u8; RECORD_SLOTS] = [std::ptr::null_mut(); RECORD_SLOTS];
-        let count = unsafe { (self.api.take_records)(self.context, slots.as_mut_ptr(), 0, 1) };
+        let count = unsafe { take(self.context, slots.as_mut_ptr(), 0, 1) };
         if count < 0 {
             return Err(WireError::Sdk(count));
         }

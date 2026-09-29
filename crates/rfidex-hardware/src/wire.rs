@@ -45,6 +45,8 @@ pub enum Operation {
         data: Vec<u8>,
     },
     RawRecords,
+    /// Raw library-gate records, for capturing the layout. Read only.
+    LibraryRecords,
     Close,
 }
 

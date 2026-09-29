@@ -18,6 +18,8 @@ use crate::RuntimeError;
 pub enum HardwareTestAction {
     Connect,
     ReadTags,
+    /// Raw library-gate records, shown as hex to learn their layout.
+    GateRecords,
 }
 
 /// The most UIDs the screen shows. The message always carries the true count,
@@ -104,6 +106,32 @@ pub fn from_error(e: &rfidex_core::device::DeviceError) -> HardwareTestView {
         DeviceError::Other(_) => UNREACHABLE,
     };
     view(false, message.to_string(), Vec::new())
+}
+
+/// Raw records as hex, one line each, for the operator to send back.
+pub fn records(raw: &[Vec<u8>]) -> HardwareTestView {
+    if raw.is_empty() {
+        return view(
+            true,
+            "Gate answered. No stored passes. Walk a sticker through the gate, then press again."
+                .to_string(),
+            Vec::new(),
+        );
+    }
+    let lines: Vec<String> = raw
+        .iter()
+        .take(SHOWN_UIDS)
+        .map(|r| rfidex_core::tag::hex_upper(r))
+        .collect();
+    view(
+        true,
+        format!(
+            "Gate answered with {} stored pass{}. Send a screenshot of these lines.",
+            raw.len(),
+            if raw.len() == 1 { "" } else { "es" }
+        ),
+        lines,
+    )
 }
 
 pub fn stopped() -> HardwareTestView {

@@ -197,6 +197,13 @@ impl GateDevice {
     pub fn is_simulated(&self) -> bool {
         matches!(self, GateDevice::Sim(_))
     }
+
+    pub fn library_records(&mut self) -> DeviceResult<Vec<Vec<u8>>> {
+        match self {
+            GateDevice::Sim(_) => Ok(Vec::new()),
+            GateDevice::Ecrfid(g) => g.library_records(),
+        }
+    }
 }
 
 impl GateSource for GateDevice {

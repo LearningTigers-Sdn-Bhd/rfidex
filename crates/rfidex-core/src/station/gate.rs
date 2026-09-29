@@ -23,6 +23,19 @@ pub enum LocalGuess {
 pub struct Captured {
     pub delivery_id: Uuid,
     pub local: LocalGuess,
+    pub tag_key: String,
+}
+
+/// Whether the local cache lets this sticker in: bound to a ticket that is
+/// valid and checked in. Unknown, unbound, revoked (binding removed), invalid
+/// or not-yet-checked-in stickers are not.
+pub fn admitted(store: &Store, tag_key: &str) -> Result<bool, StoreError> {
+    let Some(public_id) = store.binding_holder(tag_key)? else {
+        return Ok(false);
+    };
+    Ok(store
+        .ticket(public_id)?
+        .is_some_and(|t| t.valid && t.checked_in))
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -126,7 +139,11 @@ impl<G: GateSource> GateStation<G> {
             };
             saved.push(handle);
             if let Enqueued::New(_) = enqueued {
-                out.push(Captured { delivery_id, local });
+                out.push(Captured {
+                    delivery_id,
+                    local,
+                    tag_key: key,
+                });
             }
         }
         // Every read above is committed; only now may the device forget them.
@@ -142,5 +159,37 @@ impl<G: GateSource> GateStation<G> {
             Some(e) => Err(e.into()),
             None => Ok(out),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::contract::TicketSummary;
+
+    fn ticket(n: u128, valid: bool, checked_in: bool) -> TicketSummary {
+        TicketSummary {
+            public_id: Uuid::from_u128(n),
+            name: format!("Guest {n}"),
+            ticket_type: "VIP".into(),
+            valid,
+            checked_in,
+        }
+    }
+
+    #[test]
+    fn only_a_bound_valid_checked_in_sticker_is_admitted() {
+        let s = Store::open_in_memory().unwrap();
+        for (n, valid, checked_in) in [(1, true, true), (2, true, false), (3, false, true)] {
+            s.upsert_ticket(&ticket(n, valid, checked_in)).unwrap();
+            s.upsert_binding(&format!("TAG{n}"), Uuid::from_u128(n))
+                .unwrap();
+        }
+        assert!(admitted(&s, "TAG1").unwrap());
+        assert!(!admitted(&s, "TAG2").unwrap(), "not checked in");
+        assert!(!admitted(&s, "TAG3").unwrap(), "invalid ticket");
+        assert!(!admitted(&s, "NOPE").unwrap(), "unknown sticker");
+        s.remove_binding("TAG1").unwrap();
+        assert!(!admitted(&s, "TAG1").unwrap(), "revoked binding");
     }
 }

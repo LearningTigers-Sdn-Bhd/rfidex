@@ -332,6 +332,22 @@ impl Reader {
         self.records(Operation::RawRecords)
     }
 
+    fn library_alarm(&mut self, mode: u8) -> DeviceResult<()> {
+        self.ensure_connection()?;
+        let result = match self.connection.as_mut() {
+            Some(Connection::Sdk(client)) => match client.call(Operation::LibraryAlarm { mode }) {
+                Ok(Response::Unit) => Ok(()),
+                Ok(_) => Err(DeviceError::Other(UNREADABLE.to_string())),
+                Err(e) => Err(device_error(e)),
+            },
+            _ => Err(DeviceError::WriteUnsupported),
+        };
+        if result.is_err() {
+            self.forget();
+        }
+        result
+    }
+
     fn records(&mut self, operation: Operation) -> DeviceResult<Vec<Vec<u8>>> {
         self.ensure_connection()?;
         let result = match self.connection.as_mut() {
@@ -523,12 +539,25 @@ impl EcrfidGate {
         self.reader.probe()
     }
 
-    /// Raw library-gate frames for the operator's test. Starts a fresh fetch,
-    /// so the live poll restarts too.
+    /// Red light and buzzer on a library gate, for a pass that is not let in.
+    /// A gate on live inventory has no alarm this app knows, so nothing sounds.
+    pub fn alarm(&mut self) -> DeviceResult<()> {
+        if self.library != Some(true) {
+            return Ok(());
+        }
+        // 0x01, "independent alarm": the vendor demo's choice, so only the
+        // channel the guest walked through sounds.
+        self.reader.library_alarm(0x01)
+    }
+
+    /// Raw library-gate frames for the operator's test. Steps through the
+    /// queue as the live poll does; restarting it every press would show the
+    /// oldest pass again and again.
     pub fn library_records(&mut self) -> DeviceResult<Vec<Vec<u8>>> {
-        self.started = false;
-        self.reader
-            .records(Operation::LibraryRecords { flag: 0x02 })
+        let flag = if self.started { 0x01 } else { 0x02 };
+        let result = self.reader.records(Operation::LibraryRecords { flag });
+        self.started = result.is_ok();
+        result
     }
 }
 

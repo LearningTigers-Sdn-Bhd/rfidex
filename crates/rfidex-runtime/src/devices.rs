@@ -198,6 +198,13 @@ impl GateDevice {
         matches!(self, GateDevice::Sim(_))
     }
 
+    pub fn alarm(&mut self) -> DeviceResult<()> {
+        match self {
+            GateDevice::Sim(_) => Ok(()),
+            GateDevice::Ecrfid(g) => g.alarm(),
+        }
+    }
+
     pub fn library_records(&mut self) -> DeviceResult<Vec<Vec<u8>>> {
         match self {
             GateDevice::Sim(_) => Ok(Vec::new()),

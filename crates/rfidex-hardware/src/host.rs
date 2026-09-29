@@ -328,6 +328,9 @@ fn dispatch(
         Operation::LibraryRecords { flag } => {
             with_reader(device, |reader| reader.library_records(flag))
         }
+        Operation::LibraryAlarm { mode } => {
+            with_reader(device, |reader| reader.library_alarm(mode))
+        }
     }
 }
 

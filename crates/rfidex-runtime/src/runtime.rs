@@ -449,11 +449,14 @@ impl StationRuntime {
             return;
         };
         match result {
-            Ok(_) => {
-                let mut inner = self.lock();
-                inner.connected = true;
-                inner.connection_checked = true;
-                inner.device_error = None;
+            Ok(captured) => {
+                {
+                    let mut inner = self.lock();
+                    inner.connected = true;
+                    inner.connection_checked = true;
+                    inner.device_error = None;
+                }
+                self.alarm_declined(captured).await;
             }
             Err(GateError::Device(DeviceError::Disconnected)) => {
                 let mut inner = self.lock();
@@ -479,6 +482,46 @@ impl StationRuntime {
                 inner.store_error = Some(store_failure().message);
             }
         }
+    }
+
+    /// Red light and buzzer for passes the local cache does not let in. A pass
+    /// that looks declined is checked once more against a fresh cache, so a
+    /// guest checked in at another desk a moment ago still walks through on
+    /// green. Only declined passes wait for that; admitted ones add nothing.
+    async fn alarm_declined(&self, captured: Vec<rfidex_core::station::gate::Captured>) {
+        let keys: Vec<String> = captured.into_iter().map(|c| c.tag_key).collect();
+        let declined = self.declined(&keys);
+        if declined.is_empty() {
+            return;
+        }
+        // Bounded: offline, or behind a slow sync, the local answer stands.
+        let _ = tokio::time::timeout(Duration::from_millis(1500), async {
+            let _guard = self.sync_lock.lock().await;
+            self.worker.refresh_cache().await
+        })
+        .await;
+        if self.declined(&declined).is_empty() {
+            return;
+        }
+        let StationDevice::Gate(device) = &self.device else {
+            return;
+        };
+        let device = device.clone();
+        // ponytail: a failed alarm is not surfaced; the pass itself is saved.
+        let _ = self
+            .hardware_jobs
+            .run(move || device.blocking_lock().gate.alarm())
+            .await;
+    }
+
+    /// Keys the local cache does not admit. A store error admits, so a disk
+    /// problem never sounds the alarm on a guest.
+    fn declined(&self, keys: &[String]) -> Vec<String> {
+        let store = self.store.lock().unwrap();
+        keys.iter()
+            .filter(|k| !rfidex_core::station::gate::admitted(&store, k).unwrap_or(true))
+            .cloned()
+            .collect()
     }
 
     fn note_store_error(&self) {

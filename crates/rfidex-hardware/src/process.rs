@@ -496,6 +496,7 @@ fn answers(operation: &Operation, response: &Response) -> bool {
             | (Operation::Read { .. }, Response::Bytes { .. })
             | (Operation::RawRecords, Response::Records { .. })
             | (Operation::LibraryRecords { .. }, Response::Records { .. })
+            | (Operation::LibraryAlarm { .. }, Response::Unit)
     )
 }
 

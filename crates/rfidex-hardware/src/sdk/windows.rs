@@ -58,6 +58,7 @@ type ReadBlocks = unsafe extern "system" fn(*mut c_void, *const u8, u8, u8, u8, 
 type WriteBlocks =
     unsafe extern "system" fn(*mut c_void, *const u8, u8, u8, *const u8, *mut u8) -> i32;
 type TakeRecords = unsafe extern "system" fn(*mut c_void, *mut *mut u8, u8, u8) -> i32;
+type LibraryAlarm = unsafe extern "system" fn(*mut c_void, u8, *mut u8) -> i32;
 type NetworkDiscovery =
     unsafe extern "system" fn(*mut *mut u8, *const c_char, *const c_char, i32, i32) -> i32;
 
@@ -88,6 +89,7 @@ struct Api {
     write_blocks: WriteBlocks,
     take_records: TakeRecords,
     library_take_records: TakeRecords,
+    library_alarm: LibraryAlarm,
 }
 
 impl Api {
@@ -136,6 +138,7 @@ impl Api {
             write_blocks: symbol(module, "ISO15693_WriteMultipleBlocks")?,
             take_records: symbol(module, "MeetingGateTakeRecords")?,
             library_take_records: symbol(module, "LibraryGateTakeRecords")?,
+            library_alarm: symbol(module, "LibraryGateAlarm")?,
         };
         Ok((library, api))
     }
@@ -407,6 +410,16 @@ impl SdkReader {
     /// demo (`HelloController.onLibraryGateTakeRecordsButtonClick`) polls.
     pub fn library_records(&self, flag: u8) -> Result<Response, WireError> {
         self.records(self.api.library_take_records, flag)
+    }
+
+    /// The library gate's alarm, as the vendor demo sounds it.
+    pub fn library_alarm(&self, mode: u8) -> Result<Response, WireError> {
+        let mut receive = [0u8; 16];
+        let rc = unsafe { (self.api.library_alarm)(self.context, mode, receive.as_mut_ptr()) };
+        if rc < 0 {
+            return Err(WireError::Sdk(rc));
+        }
+        Ok(Response::Unit)
     }
 
     fn records(&self, take: TakeRecords, flag: u8) -> Result<Response, WireError> {

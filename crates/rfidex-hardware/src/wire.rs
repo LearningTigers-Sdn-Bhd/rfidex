@@ -51,6 +51,11 @@ pub enum Operation {
     LibraryRecords {
         flag: u8,
     },
+    /// Sound the library gate's alarm (red light and buzzer). `mode` 0x00
+    /// alarms every channel, 0x01 only the channel that read the tag.
+    LibraryAlarm {
+        mode: u8,
+    },
     Close,
 }
 

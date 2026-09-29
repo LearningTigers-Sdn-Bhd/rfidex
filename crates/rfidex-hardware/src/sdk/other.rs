@@ -48,6 +48,10 @@ impl SdkReader {
         Err(WireError::Unsupported)
     }
 
+    pub fn library_alarm(&self, _mode: u8) -> Result<Response, WireError> {
+        Err(WireError::Unsupported)
+    }
+
     pub fn close(&mut self) -> Result<(), WireError> {
         Ok(())
     }

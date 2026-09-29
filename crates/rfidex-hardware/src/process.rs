@@ -199,6 +199,9 @@ pub fn kind_from_word(word: &str) -> Option<EnumerationKind> {
     }
 }
 
+/// The most the opening call may take.
+const OPEN_WINDOW_MS: u32 = 10_000;
+
 pub const GATE_HOST_NAME: &str = "rfidex-gate-host.exe";
 
 /// A live helper: one child process, one open device context, one request at a
@@ -306,9 +309,14 @@ impl HardwareClient {
                 return Err(WireError::Disconnected);
             }
             let mut client = HardwareClient::connect(socket, control.clone(), config.timeout_ms());
-            match client.call(Operation::Open {
+            // The first open loads the vendor library and connects over the
+            // network; give it longer than a routine call.
+            client.timeout_ms = client.timeout_ms.max(OPEN_WINDOW_MS);
+            let opened = client.call(Operation::Open {
                 config: config.clone(),
-            }) {
+            });
+            client.timeout_ms = config.timeout_ms();
+            match opened {
                 Ok(Response::Unit) if !control.is_stopped() => Ok(client),
                 Ok(_) => Err(WireError::Disconnected),
                 Err(e) => Err(e),

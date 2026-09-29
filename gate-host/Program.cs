@@ -28,6 +28,22 @@ namespace RfiDex.GateHost
 
         static readonly JavaScriptSerializer Json = new JavaScriptSerializer();
 
+        // %LOCALAPPDATA%\RfiDex\gate-host.log: what the helper saw, for a gate
+        // that will not connect. Never throws.
+        static void Log(string line)
+        {
+            try
+            {
+                string dir = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "RfiDex");
+                Directory.CreateDirectory(dir);
+                string file = Path.Combine(dir, "gate-host.log");
+                if (File.Exists(file) && new FileInfo(file).Length > 200000) File.Delete(file);
+                File.AppendAllText(file, DateTime.Now.ToString("s") + " " + line + Environment.NewLine);
+            }
+            catch (Exception) { }
+        }
+
         static int Main(string[] args)
         {
             if (args.Length != 3 || args[0] != Switch) return 2;
@@ -45,8 +61,9 @@ namespace RfiDex.GateHost
                 }
                 return 0;
             }
-            catch (Exception)
+            catch (Exception e)
             {
+                Log("host failed: " + e);
                 return 3;
             }
         }
@@ -70,11 +87,18 @@ namespace RfiDex.GateHost
                     }
                     catch (SdkError e)
                     {
+                        Log("sdk error " + e.Code + " on " + operation["op"]);
                         result = "{\"Err\":{\"sdk\":" + e.Code + "}}";
                     }
                     catch (WireFailure e)
                     {
+                        Log("refused " + operation["op"] + ": " + e.Name);
                         result = "{\"Err\":\"" + e.Name + "\"}";
+                    }
+                    catch (Exception e)
+                    {
+                        Log("failed " + operation["op"] + ": " + e);
+                        result = "{\"Err\":\"bad_response\"}";
                     }
                     WriteFrame(stream, "{\"id\":" + id + ",\"result\":" + result + "}");
                 }
@@ -190,7 +214,9 @@ namespace RfiDex.GateHost
                 try { reader.Call("CRC16", 0xAA, new byte[] { 0x00 }); } catch (Exception) { }
                 string connstr = "RDType=" + model + ";CommType=NET;RemoteIP=" + ip +
                                  ";RemotePort=" + port;
+                Log("open " + connstr);
                 int rc = (int)reader.Call("RDR_Open", connstr);
+                Log("open returned " + rc);
                 if (rc != 0) throw new SdkError(rc);
                 return reader;
             }
@@ -207,10 +233,12 @@ namespace RfiDex.GateHost
                 candidates.Add(Path.Combine(Path.GetFullPath(Path.Combine(here, "..")), "rfidclib_reader.dll"));
                 foreach (string path in candidates)
                 {
-                    if (!File.Exists(path)) continue;
+                    if (!File.Exists(path)) { Log("no library at " + path); continue; }
+                    Log("loading " + path);
                     var asm = Assembly.LoadFrom(path);
                     return Activator.CreateInstance(asm.GetType("RFIDCLIB.rfidclib_reader", true));
                 }
+                Log("rfidclib_reader.dll not found");
                 throw new WireFailure("disconnected");
             }
 

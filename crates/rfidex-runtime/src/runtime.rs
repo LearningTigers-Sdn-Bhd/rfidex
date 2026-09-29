@@ -174,6 +174,9 @@ struct StationInner {
 /// UUID, its own sync worker, and the device it drives.
 pub struct StationRuntime {
     config: StationConfig,
+    /// A gate's direction can change while it runs, so it lives outside
+    /// `config`; every read of the role goes through `role()`.
+    role: Mutex<Option<Role>>,
     store: Arc<Mutex<Store>>,
     client: ApiClient,
     worker: SyncWorker,
@@ -210,7 +213,7 @@ impl StationRuntime {
     }
 
     pub fn role(&self) -> Option<Role> {
-        self.config.role
+        *self.role.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     pub fn online(&self) -> bool {
@@ -339,7 +342,7 @@ impl StationRuntime {
         let req = HeartbeatReq {
             name: self.config.name.clone(),
             kind: self.config.kind,
-            role: self.config.role,
+            role: self.role(),
             hw_model: info.as_ref().and_then(|i| i.model.clone()),
             firmware: info.as_ref().and_then(|i| i.firmware.clone()),
             app_version: APP_VERSION.to_string(),
@@ -692,7 +695,7 @@ fn station_status(
         id: station.config.id,
         name: station.config.name.clone(),
         kind: station.config.kind,
-        role: station.config.role,
+        role: station.role(),
         simulated: matches!(
             station.config.device,
             DeviceChoice::SimDesk | DeviceChoice::SimGate { .. }
@@ -730,7 +733,7 @@ fn network_message(e: &ApiError) -> String {
 
 pub struct Runtime {
     paths: AppPaths,
-    config: AppConfig,
+    config: Mutex<AppConfig>,
     library: Arc<Mutex<SimLibrary>>,
     stations: Vec<Arc<StationRuntime>>,
     stop: watch::Sender<bool>,
@@ -821,7 +824,7 @@ impl Runtime {
 
         Ok(Runtime {
             paths,
-            config,
+            config: Mutex::new(config),
             library,
             stations,
             stop,
@@ -1020,7 +1023,7 @@ impl Runtime {
                 ));
             }
         }
-        let mut config = self.config.clone();
+        let mut config = self.config();
         for s in config.stations.iter_mut().filter(|s| s.id == station) {
             if let DeviceChoice::EcrfidDesk { hardware } = &mut s.device {
                 hardware.set_write_verified(on);
@@ -1458,7 +1461,7 @@ impl Runtime {
         let StationDevice::Gate(device) = &runtime.device else {
             return Err(wrong_station("walk a sticker past a gate"));
         };
-        let role = runtime.config.role.unwrap_or(Role::Entry);
+        let role = runtime.role().unwrap_or(Role::Entry);
         let mut gate = device.lock().await;
         let mut library = self.library.lock().unwrap_or_else(|e| e.into_inner());
         // Refused before a sequence is allocated: a rejected simulator command
@@ -1500,8 +1503,55 @@ impl Runtime {
         &self.paths
     }
 
-    pub fn config(&self) -> &AppConfig {
-        &self.config
+    pub fn config(&self) -> AppConfig {
+        self.config
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    /// Apply a setup change that only switches gate directions, without
+    /// stopping any station or reconnecting any reader. Returns `false`, doing
+    /// nothing, when `candidate` differs from the running setup in anything
+    /// else: that needs the full restart.
+    pub async fn apply_gate_roles(&self, candidate: &AppConfig) -> Result<bool, RuntimeError> {
+        let mut expected = self.config();
+        for station in &mut expected.stations {
+            if station.kind != StationKind::Gate {
+                continue;
+            }
+            if let Some(new) = candidate.stations.iter().find(|s| s.id == station.id) {
+                station.role = new.role;
+            }
+        }
+        let same = |a: &AppConfig, b: &AppConfig| {
+            serde_json::to_value(a).ok() == serde_json::to_value(b).ok()
+        };
+        if !same(&expected, candidate) {
+            return Ok(false);
+        }
+        for station in &self.stations {
+            let StationDevice::Gate(gate) = &station.device else {
+                continue;
+            };
+            let Some(role) = candidate
+                .stations
+                .iter()
+                .find(|s| s.id == station.config.id)
+                .and_then(|s| s.role)
+            else {
+                continue;
+            };
+            if station.role() == Some(role) {
+                continue;
+            }
+            gate.lock().await.set_role(role);
+            *station.role.lock().unwrap_or_else(|e| e.into_inner()) = Some(role);
+            // Tell the server now, not at the next heartbeat.
+            station.heartbeat_once(Utc::now()).await;
+        }
+        *self.config.lock().unwrap_or_else(|e| e.into_inner()) = candidate.clone();
+        Ok(true)
     }
 
     fn station(&self, id: Uuid) -> Result<&Arc<StationRuntime>, RuntimeError> {
@@ -1693,6 +1743,7 @@ impl StationRuntime {
 
         Ok(StationRuntime {
             config: station.clone(),
+            role: Mutex::new(station.role),
             store,
             client,
             worker,

@@ -76,6 +76,12 @@ impl<G: GateSource> GateStation<G> {
         }
     }
 
+    /// Direction applies to reads captured from now on; reads already saved
+    /// keep the role they were captured under.
+    pub fn set_role(&mut self, role: Role) {
+        self.role = role;
+    }
+
     /// Changing the rule changes which tags count as already seen, so the
     /// debounce memory is dropped with it.
     pub fn set_uid_rule(&mut self, uid_rule: UidRule) {

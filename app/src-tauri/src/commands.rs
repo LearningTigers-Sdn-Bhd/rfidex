@@ -234,6 +234,22 @@ pub async fn setup_save(
         }
     }
 
+    // Switching a gate between entry and exit must not interrupt any reader:
+    // when that is the only change, apply it to the running station.
+    if let (Some(running), Some(old)) = (slot.clone(), &old) {
+        if running.apply_gate_roles(&candidate).await? {
+            if let Err(e) = state.paths.save(&candidate) {
+                let _ = running.apply_gate_roles(old).await;
+                return Err(config_error(e));
+            }
+            let status = running.status().await?;
+            return Ok(AppView {
+                configured: true,
+                status: Some(status),
+            });
+        }
+    }
+
     restart_with(&state, &mut slot, candidate).await
 }
 

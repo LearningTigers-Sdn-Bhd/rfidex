@@ -971,3 +971,42 @@ async fn diagnostics_export_keeps_people_and_raw_uid_out() {
     assert!(path.exists() && second.exists());
     h.stop().await;
 }
+
+#[tokio::test]
+async fn a_gate_switches_direction_live_without_a_restart() {
+    let h = Harness::start(RfidMode::Bind).await;
+    let mut candidate = h.runtime.config();
+    for s in candidate.stations.iter_mut().filter(|s| s.id == entry_id()) {
+        s.role = Some(Role::Exit);
+    }
+
+    assert!(h.runtime.apply_gate_roles(&candidate).await.unwrap());
+
+    let status = h.runtime.status().await.unwrap();
+    let gate = status.stations.iter().find(|s| s.id == entry_id()).unwrap();
+    assert_eq!(gate.role, Some(Role::Exit));
+    assert!(gate.online, "still online, nothing was restarted");
+    assert_eq!(h.runtime.config().stations[1].role, Some(Role::Exit));
+    {
+        let mock = h.server.mock.lock().unwrap();
+        let told = mock.stations.get(&entry_id().to_string()).unwrap();
+        assert_eq!(told.role, Some(Role::Exit), "the server hears it at once");
+    }
+
+    h.runtime.sim_pass(entry_id(), TAG_A).await.unwrap();
+    eventually("the passage to be saved", || async {
+        !h.runtime
+            .gate_recent(entry_id(), 30)
+            .await
+            .unwrap_or_default()
+            .is_empty()
+    })
+    .await;
+    let rows = h.runtime.gate_recent(entry_id(), 30).await.unwrap();
+    assert_eq!(rows[0].role, Role::Exit);
+
+    // Any other change still needs the full restart.
+    let mut other = h.runtime.config();
+    other.stations[0].name = "Renamed desk".into();
+    assert!(!h.runtime.apply_gate_roles(&other).await.unwrap());
+}

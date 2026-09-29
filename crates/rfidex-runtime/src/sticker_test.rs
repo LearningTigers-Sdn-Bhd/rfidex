@@ -451,9 +451,8 @@ fn check_tag<H: Helper>(run: &mut Run<'_, H>, uid: [u8; 8], start_block: u8) -> 
                     "The reader accepted a write to block {count}, past the end of the sticker."
                 )))
             }
-            Err(WireError::Disconnected | WireError::Timeout) => {
-                return Err(Stop::Refuse(HELPER_FAILED.into()))
-            }
+            // A hang-up here is the reader refusing too; blocks 0 to count-1
+            // were already checked and restored above.
             Err(_) => run.note(format!("A write past the end (block {count}) was refused.")),
         }
     }
@@ -593,6 +592,8 @@ mod tests {
         writes: usize,
         /// Reading past the end drops the session, as the real reader does.
         hang_up_past_end: bool,
+        /// Reads past the end fail plainly even when writes hang up.
+        hide_past_end_read: bool,
     }
 
     impl Fake {
@@ -606,6 +607,7 @@ mod tests {
                 tags: 1,
                 writes: 0,
                 hang_up_past_end: false,
+                hide_past_end_read: false,
             }
         }
 
@@ -634,7 +636,7 @@ mod tests {
                 Operation::Read { start, count, .. } => {
                     let (from, to) = (start as usize, start as usize + count as usize);
                     if count as usize > MAX_BLOCKS_PER_CALL || to > self.real_blocks() {
-                        if self.hang_up_past_end {
+                        if self.hang_up_past_end && !self.hide_past_end_read {
                             return Err(WireError::Disconnected);
                         }
                         return Err(WireError::OutOfRange);
@@ -647,6 +649,9 @@ mod tests {
                     self.writes += 1;
                     let from = start as usize * 4;
                     if from + data.len() > self.real_blocks() * 4 {
+                        if self.hang_up_past_end {
+                            return Err(WireError::Disconnected);
+                        }
                         return Err(WireError::Sdk(-1));
                     }
                     if let Some(n) = self.tear_after.take() {
@@ -687,6 +692,16 @@ mod tests {
         assert!(outcome.ok, "{}", outcome.message);
         assert_eq!(outcome.record.unwrap().result, RecordResult::Pass);
         assert_eq!(fake.memory, before);
+    }
+
+    #[test]
+    fn a_reader_that_hangs_up_on_a_write_past_the_end_still_passes() {
+        let mut fake = Fake::new();
+        fake.hang_up_past_end = true;
+        fake.hide_past_end_read = true;
+        let outcome = check(&mut fake, station(), 0);
+        assert!(outcome.ok, "{}", outcome.message);
+        assert_eq!(outcome.record.unwrap().result, RecordResult::Pass);
     }
 
     #[test]

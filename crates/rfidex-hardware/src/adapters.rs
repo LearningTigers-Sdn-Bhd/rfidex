@@ -484,6 +484,8 @@ pub struct EcrfidGate {
     library: Option<bool>,
     /// False until a fetch was started with flag 0x02.
     started: bool,
+    /// Alarm every panel (0x00) instead of only the one that read (0x01).
+    alarm_all_panels: bool,
 }
 
 impl EcrfidGate {
@@ -492,7 +494,12 @@ impl EcrfidGate {
             reader: Reader::new(config, launcher)?,
             library: None,
             started: false,
+            alarm_all_panels: true,
         })
+    }
+
+    pub fn set_alarm_all_panels(&mut self, all: bool) {
+        self.alarm_all_panels = all;
     }
 
     fn library_poll(&mut self) -> DeviceResult<Vec<(GateRead, ReleaseHandle)>> {
@@ -545,9 +552,11 @@ impl EcrfidGate {
         if self.library != Some(true) {
             return Ok(());
         }
-        // 0x01, "independent alarm": the vendor demo's choice, so only the
-        // channel the guest walked through sounds.
-        let result = self.reader.library_alarm(0x01);
+        // 0x00 sounds every panel, 0x01 ("independent alarm", the vendor
+        // demo's choice) only the panel that read the sticker.
+        let result = self
+            .reader
+            .library_alarm(if self.alarm_all_panels { 0x00 } else { 0x01 });
         // The alarm command cuts into the 0x02/0x01 record handshake: the gate
         // then ignores the next ack and serves the same pass again. Start a
         // fresh fetch so the queue moves on.

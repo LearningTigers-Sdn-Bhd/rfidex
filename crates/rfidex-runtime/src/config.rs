@@ -91,6 +91,14 @@ pub struct StationConfig {
     /// migration. Old config files acquire the default and lose nothing.
     #[serde(default = "default_printer_url")]
     pub printer_url: String,
+    /// Library gate alarm: every panel sounds (true) or only the panel that
+    /// read the sticker (false). Old config files get all panels.
+    #[serde(default = "default_alarm_all_panels")]
+    pub alarm_all_panels: bool,
+}
+
+pub fn default_alarm_all_panels() -> bool {
+    true
 }
 
 fn default_debounce() -> u64 {
@@ -356,6 +364,7 @@ mod tests {
             debounce_secs: 5,
             write_start_block: 0,
             printer_url: default_printer_url(),
+            alarm_all_panels: true,
         }
     }
 
@@ -372,6 +381,7 @@ mod tests {
             debounce_secs: 5,
             write_start_block: 0,
             printer_url: default_printer_url(),
+            alarm_all_panels: true,
         }
     }
 

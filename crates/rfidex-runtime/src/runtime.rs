@@ -1654,8 +1654,9 @@ impl StationRuntime {
             }
             (StationKind::Gate, DeviceChoice::EcrfidGate { hardware }) => {
                 let role = station.role.unwrap_or(Role::Entry);
-                let reader = EcrfidGate::new(hardware.clone(), launcher.clone())
+                let mut reader = EcrfidGate::new(hardware.clone(), launcher.clone())
                     .map_err(|_| reader_failed())?;
+                reader.set_alarm_all_panels(station.alarm_all_panels);
                 let control = reader.stop_control();
                 let gate = GateStation::new(
                     GateDevice::Ecrfid(Box::new(reader)),

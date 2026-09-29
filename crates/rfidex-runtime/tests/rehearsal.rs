@@ -137,6 +137,7 @@ fn rehearsal_desk(desk: Uuid) -> StationConfig {
         debounce_secs: 5,
         write_start_block: 0,
         printer_url: rfidex_runtime::default_printer_url(),
+        alarm_all_panels: true,
     }
 }
 

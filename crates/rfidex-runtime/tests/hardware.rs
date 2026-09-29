@@ -80,6 +80,7 @@ fn real_desk(id: u128, name: &str, hardware: HardwareConfig) -> StationConfig {
         debounce_secs: 5,
         write_start_block: 0,
         printer_url: default_printer_url(),
+        alarm_all_panels: true,
     }
 }
 
@@ -93,6 +94,7 @@ fn real_gate(id: u128, name: &str, role: Role, hardware: HardwareConfig) -> Stat
         debounce_secs: 5,
         write_start_block: 0,
         printer_url: default_printer_url(),
+        alarm_all_panels: true,
     }
 }
 

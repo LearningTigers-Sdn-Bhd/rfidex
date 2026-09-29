@@ -171,6 +171,7 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
         debounce_secs: 5,
         write_start_block: 0,
         printer_url: DEFAULT_PRINTER_URL,
+        alarm_all_panels: true,
       },
     ]);
 
@@ -408,6 +409,24 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
                         />
                         <small className="field-help">
                           A tag held near the reader counts once per window. 5 suits most gates.
+                        </small>
+                      </div>
+                    )}
+                    {station.kind === "gate" && station.device.type === "ecrfid_gate" && (
+                      <div className="field">
+                        <label htmlFor={`alarm-${station.id}`}>Alarm</label>
+                        <select
+                          id={`alarm-${station.id}`}
+                          value={station.alarm_all_panels ? "all" : "one"}
+                          onChange={(event) =>
+                            patch(station.id, { alarm_all_panels: event.target.value === "all" })
+                          }
+                        >
+                          <option value="all">All panels sound</option>
+                          <option value="one">Only the panel that read the sticker</option>
+                        </select>
+                        <small className="field-help">
+                          What a declined pass sets off on this gate.
                         </small>
                       </div>
                     )}

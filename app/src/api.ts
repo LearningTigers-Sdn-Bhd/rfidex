@@ -76,6 +76,8 @@ export interface StationConfig {
   write_start_block: number;
   /** The badge printer app on this PC. Only a desk ever prints. */
   printer_url: string;
+  /** Library gate alarm: every panel sounds, or only the panel that read. */
+  alarm_all_panels: boolean;
 }
 
 export interface SetupView {

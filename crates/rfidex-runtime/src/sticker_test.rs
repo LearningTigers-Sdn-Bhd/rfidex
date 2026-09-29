@@ -431,8 +431,17 @@ fn check_tag<H: Helper>(run: &mut Run<'_, H>, uid: [u8; 8], start_block: u8) -> 
                     "Block {count} can be read although the sticker reports {count} blocks. The block count is off by one; ask for help before writing."
                 )))
             }
+            // Real readers end the session on an out-of-range read. The sticker
+            // already has its data back, so that counts as a refusal; the
+            // write probe cannot run on a closed session, and this test's
+            // helper is thrown away afterwards anyway.
             Err(WireError::Disconnected | WireError::Timeout) => {
-                return Err(Stop::Refuse(HELPER_FAILED.into()))
+                run.note(format!(
+                    "A read past the end (block {count}) was refused."
+                ));
+                return Ok(
+                    "This sticker passed. Put the next disposable sticker on the reader.".into(),
+                );
             }
             _ => {}
         }
@@ -582,6 +591,8 @@ mod tests {
         tear_after: Option<usize>,
         tags: usize,
         writes: usize,
+        /// Reading past the end drops the session, as the real reader does.
+        hang_up_past_end: bool,
     }
 
     impl Fake {
@@ -594,6 +605,7 @@ mod tests {
                 tear_after: None,
                 tags: 1,
                 writes: 0,
+                hang_up_past_end: false,
             }
         }
 
@@ -622,6 +634,9 @@ mod tests {
                 Operation::Read { start, count, .. } => {
                     let (from, to) = (start as usize, start as usize + count as usize);
                     if count as usize > MAX_BLOCKS_PER_CALL || to > self.real_blocks() {
+                        if self.hang_up_past_end {
+                            return Err(WireError::Disconnected);
+                        }
                         return Err(WireError::OutOfRange);
                     }
                     Ok(Response::Bytes {
@@ -661,6 +676,17 @@ mod tests {
         assert!(outcome.ok, "{}", outcome.message);
         assert_eq!(outcome.record.unwrap().result, RecordResult::Pass);
         assert_eq!(fake.memory, before, "the sticker is left as it was found");
+    }
+
+    #[test]
+    fn a_reader_that_hangs_up_on_a_read_past_the_end_still_passes() {
+        let mut fake = Fake::new();
+        fake.hang_up_past_end = true;
+        let before = fake.memory.clone();
+        let outcome = check(&mut fake, station(), 0);
+        assert!(outcome.ok, "{}", outcome.message);
+        assert_eq!(outcome.record.unwrap().result, RecordResult::Pass);
+        assert_eq!(fake.memory, before);
     }
 
     #[test]

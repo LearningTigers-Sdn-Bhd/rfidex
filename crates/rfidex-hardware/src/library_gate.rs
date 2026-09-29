@@ -40,7 +40,9 @@ pub fn passes(frame: &[u8]) -> Vec<LibraryPass> {
     }
     let body = &frame[HEADER..frame.len() - CHECKSUM];
     let count = usize::from(frame[15]);
-    body.chunks_exact(RECORD)
+    body.as_chunks::<RECORD>()
+        .0
+        .iter()
         .take(count)
         .map(|r| LibraryPass {
             direction_raw: r[0],

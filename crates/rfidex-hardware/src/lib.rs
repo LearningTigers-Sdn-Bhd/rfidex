@@ -8,6 +8,7 @@
 pub mod adapters;
 pub mod config;
 pub mod ec;
+mod helper;
 pub mod host;
 pub mod library_gate;
 pub mod process;

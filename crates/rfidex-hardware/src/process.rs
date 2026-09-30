@@ -16,12 +16,12 @@
 
 use std::net::{Ipv4Addr, Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use crate::config::HardwareConfig;
+use crate::helper::Helper;
 use crate::host::{CHILD_SWITCH, COMMISSIONING, DISCOVER, ENUMERATE};
 use crate::sdk::EnumerationKind;
 use crate::wire::{
@@ -142,14 +142,11 @@ fn list_from_child(
         .map_err(|_| WireError::Disconnected)?
         .port();
     let token = uuid::Uuid::new_v4().to_string();
-    let child = Command::new(&launcher.executable)
-        .arg(CHILD_SWITCH)
-        .arg(port.to_string())
-        .arg(&token)
-        .args(mode)
-        .stdin(Stdio::null())
-        .spawn()
-        .map_err(|_| WireError::Disconnected)?;
+    let port = port.to_string();
+    let mut args: Vec<&std::ffi::OsStr> =
+        vec![CHILD_SWITCH.as_ref(), port.as_ref(), token.as_ref()];
+    args.extend_from_slice(mode);
+    let child = Helper::spawn(&launcher.executable, &args).map_err(|_| WireError::Disconnected)?;
     let child = Arc::new(Mutex::new(Some(child)));
     let outcome = (|| {
         let deadline = Deadline::started(HANDSHAKE_WINDOW_MS);
@@ -240,15 +237,14 @@ impl HardwareClient {
             .map_err(|_| WireError::Disconnected)?
             .port();
         let token = uuid::Uuid::new_v4().to_string();
-        let mut command = Command::new(&launcher.executable);
-        command.arg(CHILD_SWITCH).arg(port.to_string()).arg(&token);
+        let port = port.to_string();
+        let mut args: Vec<&std::ffi::OsStr> =
+            vec![CHILD_SWITCH.as_ref(), port.as_ref(), token.as_ref()];
         if commissioning {
-            command.arg(COMMISSIONING);
+            args.push(COMMISSIONING.as_ref());
         }
-        let child = command
-            .stdin(Stdio::null())
-            .spawn()
-            .map_err(|_| WireError::Disconnected)?;
+        let child =
+            Helper::spawn(&launcher.executable, &args).map_err(|_| WireError::Disconnected)?;
         let child = Arc::new(Mutex::new(Some(child)));
         let shutdown: Arc<Mutex<Option<TcpStream>>> = Arc::new(Mutex::new(None));
         let child_for_stop = child.clone();
@@ -400,7 +396,7 @@ impl Drop for HardwareClient {
 fn accept_child(
     listener: &TcpListener,
     token: &str,
-    child: &Arc<Mutex<Option<Child>>>,
+    child: &Arc<Mutex<Option<Helper>>>,
     deadline: &Deadline,
     control: Option<&StopControl>,
     shutdown: Option<&Arc<Mutex<Option<TcpStream>>>>,
@@ -458,20 +454,20 @@ fn authenticate(candidate: &mut TcpStream, token: &str, deadline: &Deadline) -> 
     matches!(read_frame::<_, String>(&mut DeadlineSocket::new(candidate, deadline), deadline), Ok(value) if value == token)
 }
 
-fn exited(child: &Arc<Mutex<Option<Child>>>) -> bool {
+fn exited(child: &Arc<Mutex<Option<Helper>>>) -> bool {
     let mut guard = lock(child);
     match guard.as_mut() {
         // Only a real exit ends the wait early. A query that failed says
         // nothing about the child — an interrupted wait is not an exit — and
         // the handshake window still bounds the loop.
-        Some(child) => matches!(child.try_wait(), Ok(Some(_))),
+        Some(child) => matches!(child.exited(), Ok(true)),
         None => true,
     }
 }
 
 /// Kill and wait: a child that is merely killed and never waited for becomes a
 /// zombie, which on Windows means a handle that is never released.
-fn reap(child: &Arc<Mutex<Option<Child>>>) {
+fn reap(child: &Arc<Mutex<Option<Helper>>>) {
     let taken = lock(child).take();
     if let Some(mut child) = taken {
         let _ = child.kill();
@@ -479,7 +475,7 @@ fn reap(child: &Arc<Mutex<Option<Child>>>) {
     }
 }
 
-fn lock(child: &Arc<Mutex<Option<Child>>>) -> MutexGuard<'_, Option<Child>> {
+fn lock(child: &Arc<Mutex<Option<Helper>>>) -> MutexGuard<'_, Option<Helper>> {
     child.lock().unwrap_or_else(|e| e.into_inner())
 }
 

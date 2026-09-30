@@ -321,6 +321,30 @@ fn stopping_a_gate_ends_a_reader_that_is_waiting() {
     handler.join().unwrap();
 }
 
+/// Every helper is a process, and Windows flashes the busy cursor for each one
+/// that starts. A reader that stays down is polled many times a second, so it
+/// must not get a fresh helper on every poll.
+#[cfg(unix)]
+#[test]
+fn a_reader_that_stays_down_does_not_get_a_helper_per_poll() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let log = dir.path().join("spawns");
+    let script = dir.path().join("helper.sh");
+    std::fs::write(
+        &script,
+        format!("#!/bin/sh\necho x >> '{}'\nexit 1\n", log.display()),
+    )
+    .unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let mut desk = EcrfidDesk::new(sdk_config(false), HostLauncher::new(script)).unwrap();
+    for _ in 0..20 {
+        assert!(desk.inventory().is_err());
+    }
+    let spawns = std::fs::read_to_string(&log).unwrap().lines().count();
+    assert!(spawns <= 3, "{spawns} helpers started for 20 polls");
+}
+
 #[cfg(feature = "test-host")]
 mod with_helper {
     use super::*;

@@ -12,6 +12,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use rfidex_core::device::{
     DeskCaps, DeviceError, DeviceInfo, DeviceResult, GateCaps, GateKind, GateRead, GateSource,
@@ -93,7 +94,16 @@ struct Reader {
     generation: u64,
     info: Option<DeviceInfo>,
     connected: bool,
+    /// Sessions lost since the last good exchange. A helper is a process, and
+    /// Windows shows the busy cursor for every one that starts, so a reader
+    /// that stays down must not get a new helper on every poll.
+    failures: u32,
+    retry_at: Option<Instant>,
 }
+
+/// The first retry is immediate; after that the wait doubles up to the cap.
+const RETRY_BASE: Duration = Duration::from_secs(2);
+const RETRY_MAX: Duration = Duration::from_secs(10);
 
 impl Reader {
     fn new(config: HardwareConfig, launcher: HostLauncher) -> DeviceResult<Reader> {
@@ -109,6 +119,8 @@ impl Reader {
             generation: 0,
             info: None,
             connected: false,
+            failures: 0,
+            retry_at: None,
         })
     }
 
@@ -147,11 +159,13 @@ impl Reader {
             self.forget();
             return Err(DeviceError::Disconnected);
         }
+        // The operator asked, so this one is never made to wait.
+        self.retry_at = None;
         let outcome = self.ensure_connection().and_then(|()| self.read_info());
         match outcome {
             Ok(info) => {
                 self.info = Some(info.clone());
-                self.connected = true;
+                self.healthy();
                 Ok(info)
             }
             Err(e) => {
@@ -164,6 +178,32 @@ impl Reader {
     fn forget(&mut self) {
         self.connection = None;
         self.connected = false;
+        self.note_failure();
+    }
+
+    fn note_failure(&mut self) {
+        self.failures = self.failures.saturating_add(1);
+        let wait = match self.failures {
+            0 | 1 => Duration::ZERO,
+            n => RETRY_BASE
+                .saturating_mul(1 << (n - 2).min(4))
+                .min(RETRY_MAX),
+        };
+        self.retry_at = Some(Instant::now() + wait);
+    }
+
+    /// A deliberate hand-back, not a fault: no waiting before the next open.
+    fn release(&mut self) {
+        self.connection = None;
+        self.connected = false;
+        self.failures = 0;
+        self.retry_at = None;
+    }
+
+    fn healthy(&mut self) {
+        self.connected = true;
+        self.failures = 0;
+        self.retry_at = None;
     }
 
     fn ensure_connection(&mut self) -> DeviceResult<()> {
@@ -183,12 +223,21 @@ impl Reader {
             }
             HardwareConfig::EcrfidSdk { .. } => {
                 let launcher = self.launcher.as_ref().ok_or(DeviceError::Disconnected)?;
-                let client = HardwareClient::start_with_stop(launcher, &self.config, |control| {
+                if self.retry_at.is_some_and(|at| Instant::now() < at) {
+                    return Err(DeviceError::Disconnected);
+                }
+                let started = HardwareClient::start_with_stop(launcher, &self.config, |control| {
                     self.stop
                         .adopt(control)
                         .map_err(|_| WireError::Disconnected)
-                })
-                .map_err(device_error)?;
+                });
+                let client = match started {
+                    Ok(client) => client,
+                    Err(e) => {
+                        self.note_failure();
+                        return Err(device_error(e));
+                    }
+                };
                 if self.stop.is_stopped() {
                     return Err(DeviceError::Disconnected);
                 }
@@ -234,7 +283,7 @@ impl Reader {
         };
         match tags {
             Ok(tags) => {
-                self.connected = true;
+                self.healthy();
                 Ok(tags.into_iter().map(tag).collect())
             }
             Err(e) => {
@@ -360,6 +409,8 @@ impl Reader {
         };
         if result.is_err() {
             self.forget();
+        } else {
+            self.healthy();
         }
         result
     }
@@ -437,7 +488,7 @@ impl EcrfidDesk {
     /// Close the helper so another one can open the reader. The next ordinary
     /// call reconnects; a write still refuses until a read reopens it.
     pub fn release(&mut self) {
-        self.reader.forget();
+        self.reader.release();
     }
 
     /// Raw stored records. Only the commissioning host reaches this: the app's

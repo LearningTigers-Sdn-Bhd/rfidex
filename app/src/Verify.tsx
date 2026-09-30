@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { deskVerify, errorText } from "./api";
 import type { StationStatus, VerifyView } from "./api";
+import { isMuted, playVerify, setMuted } from "./sounds";
 
 /** The reader is asked again this long after each answer, never on a clock. */
 const POLL_MS = 350;
@@ -24,6 +25,7 @@ export function Verify({ station }: { station: StationStatus }) {
   const [shown, setShown] = useState<Shown | null>(null);
   const stage = useRef<HTMLElement>(null);
   const [full, setFull] = useState(false);
+  const [muted, setMutedState] = useState(isMuted);
 
   useEffect(() => {
     const sync = () => setFull(document.fullscreenElement === stage.current);
@@ -64,6 +66,7 @@ export function Verify({ station }: { station: StationStatus }) {
       gone = false;
       current = next;
       key += 1;
+      playVerify(next.state);
       setShown({ view: next, key });
     };
 
@@ -85,6 +88,25 @@ export function Verify({ station }: { station: StationStatus }) {
   const state = shown?.view.state ?? "waiting";
   return (
     <section ref={stage} className={`verify verify-${state}`} aria-live="polite">
+      {!full && (
+        <button
+          type="button"
+          className="verify-full verify-mute"
+          aria-label={muted ? "Turn sound on" : "Turn sound off"}
+          title={muted ? "Turn sound on" : "Turn sound off"}
+          aria-pressed={muted}
+          onClick={() => {
+            setMuted(!muted);
+            setMutedState(!muted);
+            if (muted) playVerify("verified");
+          }}
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M4 10v4h4l5 4V6l-5 4z" />
+            {muted ? <path d="M17 9l4 6M21 9l-4 6" /> : <path d="M16.5 9a4 4 0 010 6M19 6.5a8 8 0 010 11" />}
+          </svg>
+        </button>
+      )}
       {!full && (
         <button
           type="button"

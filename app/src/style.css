@@ -376,3 +376,4 @@ dialog .checkbox input { width: 20px; }
 .verify-full { position: absolute; top: 16px; right: 16px; width: 40px; height: 40px; padding: 0; display: grid; place-items: center; background: transparent; color: var(--soft-on); border: 1px solid transparent; border-radius: 8px; opacity: .6; cursor: pointer; transition: opacity 160ms ease, background 160ms ease; }
 .verify-full:hover, .verify-full:focus-visible { opacity: 1; background: color-mix(in srgb, var(--ink-on) 10%, transparent); }
 .verify-full svg { width: 20px; height: 20px; }
+.verify-mute { right: 64px; }

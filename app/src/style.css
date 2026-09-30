@@ -318,12 +318,13 @@ dialog .checkbox input { width: 20px; }
 
 /* Verify: a full-screen stage, built to be read from across a desk. */
 .workspace.is-stage { padding: 0; display: flex; }
-.verify { position: relative; --stage: #f8f5ee; --ink-on: #243e32; --soft-on: #627167; flex: 1; min-height: min-content; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 48px 40px; background: var(--stage); color: var(--ink-on); border-top: 4px solid var(--ink-on); transition: background 240ms ease, color 240ms ease; }
-.verify-verified { --stage: #193f32; --ink-on: #f8f5ee; --soft-on: #c6ddcf; }
-.verify-invalid { --stage: #faeee9; --ink-on: #963f32; --soft-on: #80594f; }
-.verify-unknown { --stage: #f8f0de; --ink-on: #73552c; --soft-on: #786447; }
-.verify-problem { --stage: #f0f1ed; --ink-on: #424e46; --soft-on: #606c63; }
-.verify-card { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; max-width: 1000px; width: 100%; min-width: 0; gap: 28px; }
+.verify { position: relative; --stage: #f8f5ee; --ink-on: #243e32; --soft-on: #627167; --glow: rgba(36, 91, 67, .07); flex: 1; min-height: min-content; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 48px 40px; background: var(--stage); color: var(--ink-on); overflow: hidden; transition: background 320ms ease, color 320ms ease; }
+.verify::before { content: ""; position: absolute; inset: 0; background: radial-gradient(ellipse 70% 60% at 50% 42%, var(--glow), transparent 70%); pointer-events: none; }
+.verify-verified { --stage: #1f8f63; --ink-on: #ffffff; --soft-on: #d9f1e5; --glow: rgba(255, 255, 255, .22); }
+.verify-invalid { --stage: #faeee9; --ink-on: #963f32; --soft-on: #80594f; --glow: rgba(150, 63, 50, .08); }
+.verify-unknown { --stage: #f8f0de; --ink-on: #73552c; --soft-on: #786447; --glow: rgba(115, 85, 44, .09); }
+.verify-problem { --stage: #f0f1ed; --ink-on: #424e46; --soft-on: #606c63; --glow: rgba(66, 78, 70, .06); }
+.verify-card { position: relative; z-index: 1; flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; max-width: 1000px; width: 100%; min-width: 0; gap: 28px; }
 .verify-label { margin: 0; color: var(--soft-on); font-size: 12px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; }
 .verify h1 { margin: 0; font-weight: 600; letter-spacing: -.045em; line-height: 1.12; text-wrap: balance; overflow-wrap: anywhere; }
 .verify-idle h1 { font-size: clamp(32px, 4.6vw, 62px); }
@@ -331,19 +332,45 @@ dialog .checkbox input { width: 20px; }
 .verify-name.plain { font-size: clamp(26px, 3.6vw, 44px); max-width: 30ch; }
 .verify-sub { margin: 0; font-size: clamp(18px, 2vw, 26px); line-height: 1.5; color: var(--soft-on); max-width: 42ch; text-wrap: balance; }
 .verify-offline { margin: 22px 0 0; padding: 10px 16px; background: #fff8e9; border: 1px solid #e0cd9c; color: #7a571c; font-size: 15px; }
-.verify-disc { width: clamp(80px, 10vw, 112px); height: clamp(80px, 10vw, 112px); flex-shrink: 0; }
-.disc-bg { fill: none; stroke: currentColor; stroke-width: 1.5; opacity: .35; }
-.mark { stroke: currentColor; stroke-width: 5; stroke-linecap: round; stroke-linejoin: round; }
+.verify-disc { width: clamp(104px, 14vw, 160px); height: clamp(104px, 14vw, 160px); flex-shrink: 0; overflow: visible; }
+.disc-bg { fill: currentColor; fill-opacity: .14; stroke: currentColor; stroke-width: 2; stroke-opacity: .55; }
+.burst { fill: none; stroke: currentColor; stroke-width: 2; transform-box: fill-box; transform-origin: center; animation: verify-burst 900ms 120ms ease-out both; }
+.burst.late { animation-delay: 300ms; }
+/* "Hmm?": the mark leans one way, then the other, and settles. */
+.wonder { transform-box: fill-box; transform-origin: 50% 100%; animation: verify-wonder 2.6s 400ms ease-in-out infinite; }
+@keyframes verify-wonder { 0%, 100% { transform: rotate(0); } 12% { transform: rotate(-16deg); } 28% { transform: rotate(12deg); } 42% { transform: rotate(-7deg); } 54% { transform: rotate(0); } }
+/* Invalid: a firm "no", shaking side to side. */
+.shake { animation: verify-shake 2.4s 500ms ease-in-out infinite; }
+@keyframes verify-shake { 0%, 30%, 100% { transform: translateX(0); } 4% { transform: translateX(-9px); } 8% { transform: translateX(9px); } 12% { transform: translateX(-7px); } 16% { transform: translateX(7px); } 20% { transform: translateX(-3px); } 24% { transform: translateX(3px); } }
+/* Problem: the mark drops in and bounces, asking for attention. */
+.bounce { transform-box: fill-box; transform-origin: 50% 100%; animation: verify-bounce 2.4s 300ms ease-out infinite; }
+@keyframes verify-bounce { 0% { transform: translateY(-14px); } 10% { transform: translateY(0); } 18% { transform: translateY(-8px); } 26% { transform: translateY(0); } 32% { transform: translateY(-3px); } 38%, 100% { transform: translateY(0); } }
+/* Verified: the disc pops in, sparkles fly off, then the name follows the tick. */
+.verify-verified.verify-verified .verify-reveal .verify-disc { animation: verify-pop 560ms cubic-bezier(.3, 1.6, .5, 1) both; }
+.verify-verified .mark.draw { animation-delay: 300ms; }
+.verify-verified .verify-reveal .verify-name { animation-delay: 480ms; }
+.verify-verified .verify-reveal .verify-sub { animation-delay: 600ms; }
+.spark { fill: currentColor; transform-box: fill-box; transform-origin: center; animation: verify-spark 900ms 260ms ease-out both; }
+@keyframes verify-pop { 0% { transform: scale(.4); opacity: 0; } 60% { opacity: 1; } 100% { transform: scale(1); opacity: 1; } }
+@keyframes verify-spark { from { transform: rotate(var(--a)) translateY(-60px) scale(1); opacity: 1; } to { transform: rotate(var(--a)) translateY(-112px) scale(.2); opacity: 0; } }
+@keyframes verify-burst { from { transform: scale(1); opacity: .6; } to { transform: scale(2.4); opacity: 0; } }
+.mark { stroke: currentColor; stroke-width: 6; fill: none; stroke-linecap: round; stroke-linejoin: round; }
 .mark.draw { stroke-dasharray: 110; stroke-dashoffset: 110; animation: verify-draw 520ms 160ms cubic-bezier(.2, .7, .2, 1) forwards; }
 .verify-reveal :is(.verify-disc, .verify-name, .verify-sub) { animation: verify-rise 300ms ease-out both; }
 @keyframes verify-rise { from { transform: translateY(8px); opacity: 0; } to { transform: none; opacity: 1; } }
 @keyframes verify-draw { to { stroke-dashoffset: 0; } }
-.verify-pulse { width: clamp(160px, 20vw, 220px); }
-.verify-pulse svg { display: block; width: 100%; }
+.verify-pulse { position: relative; width: clamp(180px, 22vw, 250px); }
+.ripple { position: absolute; left: 50%; top: 50%; width: 62%; aspect-ratio: 1; margin: -31% 0 0 -31%; border: 2px solid var(--accent); border-radius: 50%; opacity: 0; animation: verify-ripple 3.6s ease-out infinite; }
+.ripple:nth-child(2) { animation-delay: 1.2s; }
+.ripple:nth-child(3) { animation-delay: 2.4s; }
+@keyframes verify-ripple { 0% { transform: scale(1); opacity: .45; } 100% { transform: scale(2.6); opacity: 0; } }
+.verify-pulse svg { position: relative; display: block; width: 100%; filter: drop-shadow(0 10px 22px rgba(36, 91, 67, .28)); }
 .verify-pulse .core { fill: var(--accent); }
 .verify-pulse .waves { stroke: #f8f5ee; stroke-width: 3.5; }
 .verify-pulse .ring { stroke: var(--accent); stroke-width: 1; opacity: .18; }
-@media (prefers-reduced-motion: reduce) { .verify { transition: none; } .verify *, .verify *::before { animation: none !important; } .mark.draw { stroke-dashoffset: 0; } }
+.verify-pulse .core { animation: verify-breathe 3.6s ease-in-out infinite; transform-box: fill-box; transform-origin: center; }
+@keyframes verify-breathe { 50% { transform: scale(1.05); } }
+@media (prefers-reduced-motion: reduce) { .verify { transition: none; } .verify *, .verify *::before { animation: none !important; } .mark.draw { stroke-dashoffset: 0; } .ripple, .burst, .spark { display: none; } .wonder, .shake, .bounce { animation: none; } }
 @media (max-width: 760px) { .verify { padding: 24px 20px 16px; } }
 
 .verify-full { position: absolute; top: 16px; right: 16px; width: 40px; height: 40px; padding: 0; display: grid; place-items: center; background: transparent; color: var(--soft-on); border: 1px solid transparent; border-radius: 8px; opacity: .6; cursor: pointer; transition: opacity 160ms ease, background 160ms ease; }

@@ -108,6 +108,7 @@ function Idle({ offline }: { offline: boolean }) {
     <div className="verify-card verify-idle">
       <p className="verify-label">Check your tag</p>
       <div className="verify-pulse" aria-hidden="true">
+        <span className="ripple" /><span className="ripple" /><span className="ripple" />
         <svg viewBox="0 0 240 240" fill="none">
           <circle className="ring" cx="120" cy="120" r="76" />
           <circle className="core" cx="120" cy="120" r="56" />
@@ -141,14 +142,38 @@ function Reveal({ view }: { view: VerifyView }) {
   );
 }
 
+/** Directions the sparkles fly off in, evenly round the disc. */
+const SPARKS = [0, 45, 90, 135, 180, 225, 270, 315];
+
 function Disc({ state }: { state: VerifyView["state"] }) {
   return (
     <svg className="verify-disc" viewBox="0 0 120 120" aria-hidden="true" fill="none">
+      {state === "verified" && (
+        <>
+          <circle className="burst" cx="60" cy="60" r="56" />
+          <circle className="burst late" cx="60" cy="60" r="56" />
+          {SPARKS.map((angle) => (
+            <circle key={angle} className="spark" cx="60" cy="60" r="2.6" style={{ "--a": `${angle}deg` } as React.CSSProperties} />
+          ))}
+        </>
+      )}
       <circle className="disc-bg" cx="60" cy="60" r="56" />
       {state === "verified" && <path className="mark draw" d="M36 62l16 16 32-34" />}
-      {state === "invalid" && <path className="mark draw" d="M42 42l36 36M78 42L42 78" />}
-      {state === "unknown" && <path className="mark" d="M60 38v44M38 60h44" />}
-      {state === "problem" && <path className="mark" d="M60 34v32M60 84v.5" />}
+      {state === "invalid" && (
+        <g className="shake">
+          <path className="mark draw" d="M42 42l36 36M78 42L42 78" />
+        </g>
+      )}
+      {state === "unknown" && (
+        <g className="wonder">
+          <path className="mark" d="M47 48c0-9 6-15 13-15s14 5 14 13c0 7-5 10-10 14-3 2-4 5-4 9M60 87v.5" />
+        </g>
+      )}
+      {state === "problem" && (
+        <g className="bounce">
+          <path className="mark" d="M60 34v32M60 84v.5" />
+        </g>
+      )}
     </svg>
   );
 }

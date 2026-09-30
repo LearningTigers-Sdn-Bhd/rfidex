@@ -10,12 +10,13 @@ use rfidex_core::contract::{LookupResp, TicketSummary};
 use rfidex_core::device::DeviceError;
 use rfidex_core::station::desk::DeskError;
 
-pub const WAITING_MESSAGE: &str = "Hold a sticker near the reader.";
-const VERIFIED_MESSAGE: &str = "This sticker belongs to this guest.";
-const INVALID_MESSAGE: &str = "This sticker is linked, but the ticket is not valid.";
-const UNKNOWN_MESSAGE: &str = "This sticker is not linked to any ticket.";
+pub const WAITING_MESSAGE: &str = "Hold your tag near the reader.";
+const VERIFIED_MESSAGE: &str = "Your tag is good to go. Enjoy the event!";
+const INVALID_MESSAGE: &str = "Your tag needs a little attention. Please ask our team for help.";
+const UNKNOWN_MESSAGE: &str =
+    "Your tag isn't linked to a participant yet. Our team can help you get set up.";
 const LOST_TICKET_MESSAGE: &str =
-    "This sticker is linked to a ticket that cannot be found. Ask for help.";
+    "We couldn't find the participant linked to your tag. Please ask our team for help.";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]

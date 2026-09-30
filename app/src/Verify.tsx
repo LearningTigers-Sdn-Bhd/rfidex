@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { deskVerify, errorText } from "./api";
 import type { StationStatus, VerifyView } from "./api";
@@ -22,6 +22,17 @@ interface Shown {
  */
 export function Verify({ station }: { station: StationStatus }) {
   const [shown, setShown] = useState<Shown | null>(null);
+  const stage = useRef<HTMLElement>(null);
+  const [full, setFull] = useState(false);
+
+  useEffect(() => {
+    const sync = () => setFull(document.fullscreenElement === stage.current);
+    document.addEventListener("fullscreenchange", sync);
+    return () => {
+      document.removeEventListener("fullscreenchange", sync);
+      if (document.fullscreenElement === stage.current) void document.exitFullscreen();
+    };
+  }, []);
 
   useEffect(() => {
     let live = true;
@@ -73,9 +84,21 @@ export function Verify({ station }: { station: StationStatus }) {
 
   const state = shown?.view.state ?? "waiting";
   return (
-    <section className={`verify verify-${state}`} aria-live="polite">
+    <section ref={stage} className={`verify verify-${state}`} aria-live="polite">
+      {!full && (
+        <button
+          type="button"
+          className="verify-full"
+          aria-label="Full screen"
+          title="Full screen"
+          onClick={() => void stage.current?.requestFullscreen().catch(() => {})}
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" />
+          </svg>
+        </button>
+      )}
       {shown ? <Reveal key={shown.key} view={shown.view} /> : <Idle offline={!station.online} />}
-      <p className="verify-foot">Checking only. Nothing is linked, printed or checked in.</p>
     </section>
   );
 }
@@ -83,22 +106,18 @@ export function Verify({ station }: { station: StationStatus }) {
 function Idle({ offline }: { offline: boolean }) {
   return (
     <div className="verify-card verify-idle">
+      <p className="verify-label">Check your tag</p>
       <div className="verify-pulse" aria-hidden="true">
         <svg viewBox="0 0 240 240" fill="none">
-          <circle className="ring r1" cx="120" cy="120" r="44" />
-          <circle className="ring r2" cx="120" cy="120" r="44" />
-          <circle className="ring r3" cx="120" cy="120" r="44" />
-          <circle className="core" cx="120" cy="120" r="44" />
-          <g className="waves" strokeLinecap="round">
-            <circle cx="108" cy="120" r="4.5" className="dot" />
-            <path d="M121 107a18 18 0 0 1 0 26" />
-            <path d="M131 98a31 31 0 0 1 0 44" />
-            <path d="M141 90a44 44 0 0 1 0 60" />
+          <circle className="ring" cx="120" cy="120" r="76" />
+          <circle className="core" cx="120" cy="120" r="56" />
+          <g className="waves" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="90" y="96" width="32" height="48" rx="6" />
+            <path d="M101 107h10M133 109q11 11 0 22M142 101q19 19 0 38" />
           </g>
         </svg>
       </div>
-      <h1>Hold a sticker near the reader</h1>
-      <p className="verify-sub">The guest's name appears here.</p>
+      <h1>Hold your tag<br />near the reader</h1>
       {offline && <p className="verify-offline">Offline. Verifying needs a connection to the server.</p>}
     </div>
   );
@@ -108,20 +127,16 @@ function Reveal({ view }: { view: VerifyView }) {
   const holder = view.holder;
   return (
     <div className="verify-card verify-reveal">
+      <p className="verify-label">Tag verification</p>
       <Disc state={view.state} />
       {holder ? (
         <>
           <h1 className="verify-name">{holder.name}</h1>
-          <p className="verify-meta">
-            <span>{holder.ticket_type}</span>
-            <span className={holder.checked_in ? "pill in" : "pill"}>{holder.checked_in ? "Checked in" : "Not checked in yet"}</span>
-          </p>
           <p className="verify-sub">{view.message}</p>
         </>
       ) : (
         <h1 className="verify-name plain">{view.message}</h1>
       )}
-      {view.sticker && <p className="verify-sticker">Sticker {view.sticker}</p>}
     </div>
   );
 }
@@ -132,7 +147,7 @@ function Disc({ state }: { state: VerifyView["state"] }) {
       <circle className="disc-bg" cx="60" cy="60" r="56" />
       {state === "verified" && <path className="mark draw" d="M36 62l16 16 32-34" />}
       {state === "invalid" && <path className="mark draw" d="M42 42l36 36M78 42L42 78" />}
-      {state === "unknown" && <path className="mark" d="M46 47a14 14 0 1 1 20 12c-4 2-6 5-6 10M60 84v.5" />}
+      {state === "unknown" && <path className="mark" d="M60 38v44M38 60h44" />}
       {state === "problem" && <path className="mark" d="M60 34v32M60 84v.5" />}
     </svg>
   );

@@ -1353,10 +1353,12 @@ impl Runtime {
             return Ok(session.badge.clone());
         }
         session.set_badge(match outcome {
+            // "Accepted" is not "paper came out": keep the guest and Reprint
+            // on screen until the next scan replaces them.
             Ok(()) => crate::BadgeView {
                 print_now: false,
-                can_reprint: false,
-                hold: false,
+                can_reprint: true,
+                hold: true,
                 message: Some(crate::desk::PRINTED_MESSAGE.to_string()),
             },
             Err(_) => crate::BadgeView {

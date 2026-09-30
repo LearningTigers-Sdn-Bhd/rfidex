@@ -132,7 +132,7 @@ export function Desk({ station }: Props) {
         void run(() =>
           linked ? deskReset(station.id) : deskLink(station.id, null),
         ).then((next) => {
-          if (next && linked && generation.current === mine && !document.querySelector("dialog[open]")) qrRef.current?.focus();
+          if (next && linked && generation.current === mine && !document.querySelector("dialog[open]")) qrRef.current?.focus({ preventScroll: true });
         });
       },
       linked ? 3000 : 500,
@@ -173,7 +173,7 @@ export function Desk({ station }: Props) {
     setSearchOpen(false);
     setQuery("");
     setFound(null);
-    qrRef.current?.focus();
+    qrRef.current?.focus({ preventScroll: true });
   };
 
   const pick = (publicId: string) => {
@@ -224,7 +224,7 @@ export function Desk({ station }: Props) {
         if (document.querySelector("dialog[open]")) return;
         const active = document.activeElement;
         if (active && searchRef.current?.contains(active)) return;
-        qrRef.current?.focus();
+        qrRef.current?.focus({ preventScroll: true });
       }, 0);
     };
     const observer = new MutationObserver(restore);

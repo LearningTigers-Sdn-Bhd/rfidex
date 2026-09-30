@@ -48,8 +48,8 @@ async fn a_first_check_in_asks_for_one_print_and_nothing_prints_by_itself() {
         .await
         .unwrap();
     assert_eq!(badge.message.as_deref(), Some(SENT));
-    assert!(!badge.hold, "the guest may leave the screen now");
-    assert!(!badge.can_reprint);
+    assert!(badge.hold, "the guest stays until the next scan");
+    assert!(badge.can_reprint, "an accepted job may still come out bad");
     assert!(!badge.print_now);
 
     let requests = h.printer(desk).requests();

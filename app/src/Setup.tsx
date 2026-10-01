@@ -353,18 +353,42 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
             <p className="empty">No stations yet. Add the ones this PC runs.</p>
           )}
           <ul className="station-editor">
-            {stations.map((station) => (
-              <li key={station.id}>
-                <div className="station-identity">
-                  <div className="field grow">
-                    <label htmlFor={`name-${station.id}`}>Name</label>
-                    <input
-                      id={`name-${station.id}`}
-                      value={station.name}
-                      onChange={(event) => patch(station.id, { name: event.target.value })}
-                      autoComplete="off"
-                    />
-                  </div>
+            {stations.map((station) => {
+              const kindLabel = station.kind === "desk" ? "Desk" : station.role === "exit" ? "Exit gate" : "Entry gate";
+              const isReal = station.device.type === "ecrfid_desk" || station.device.type === "ecrfid_gate";
+              return (
+              <li key={station.id} className={`station-card is-${station.kind}`}>
+                <header className="station-card-head">
+                  <span className="station-card-icon" aria-hidden="true">
+                    {station.kind === "desk" ? (
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>
+                    ) : (
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M4 21V8l8-5 8 5v13"/><path d="M9 21v-6h6v6"/></svg>
+                    )}
+                  </span>
+                  <input
+                    className="station-card-name"
+                    aria-label="Station name"
+                    value={station.name}
+                    onChange={(event) => patch(station.id, { name: event.target.value })}
+                    autoComplete="off"
+                    placeholder="Station name"
+                  />
+                  <span className="station-card-chip">{kindLabel}</span>
+                  {isReal && <span className="station-card-real">Real reader</span>}
+                  <button
+                    type="button"
+                    className="station-card-remove"
+                    title="Remove station"
+                    aria-label={`Remove ${station.name}`}
+                    onClick={() => setStations((list) => list.filter((s) => s.id !== station.id))}
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V6h12z"/></svg>
+                  </button>
+                </header>
+
+                <div className="station-card-body">
+                <div className="station-fields">
                   <div className="field">
                     <label htmlFor={`kind-${station.id}`}>Type</label>
                     <select
@@ -383,12 +407,7 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
                       <label htmlFor={`reader-${station.id}`}>Reader</label>
                       <select
                         id={`reader-${station.id}`}
-                        value={
-                          station.device.type === "ecrfid_desk" ||
-                          station.device.type === "ecrfid_gate"
-                            ? "real"
-                            : "sim"
-                        }
+                        value={isReal ? "real" : "sim"}
                         onChange={(event) =>
                           setReaderType(station.id, event.target.value as "sim" | "real")
                         }
@@ -558,13 +577,10 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
                   </div>
                 )}
 
-                <div className="actions end">
-                  <button type="button" className="quiet-danger" onClick={() => setStations((list) => list.filter((s) => s.id !== station.id))}>
-                    Remove station
-                  </button>
                 </div>
               </li>
-            ))}
+              );
+            })}
           </ul>
           <div className="actions">
             <button type="button" onClick={addStation}>

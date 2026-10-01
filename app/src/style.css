@@ -674,20 +674,98 @@ kbd { border: 1px solid var(--line); border-bottom-width: 2px; padding: 1px 6px;
 .checkbox input { width: 19px; min-width: 19px; height: 19px; min-height: 19px; accent-color: var(--accent); margin: 0; }
 
 .station-editor { list-style: none; margin: 0; padding: 0; display: grid; gap: 16px; }
-.station-editor > li {
+.station-card {
   background: var(--surface);
-  padding: 20px 24px;
   border: 1px solid var(--line-soft);
-  border-left: 3px solid var(--accent);
   border-radius: var(--radius-lg);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  overflow: hidden;
   transition: border-color 0.15s;
 }
-.station-editor > li:hover { border-color: var(--line); border-left-color: var(--accent); }
-.station-identity { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
-.station-identity > .field { min-width: 0; }
-.station-identity > .field.grow { grid-column: auto; }
-.station-cluster { display: flex; flex-wrap: wrap; gap: 16px 28px; align-items: flex-start; margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--line-soft); }
+.station-card:hover { border-color: var(--line); }
+
+/* Card head: type icon, editable name, kind chip, remove action. */
+.station-card-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--bg-soft);
+}
+.station-card-icon {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  flex: none;
+  border-radius: 9px;
+  background: var(--accent-dim);
+  color: var(--accent-text);
+}
+.station-card-icon svg { width: 18px; height: 18px; }
+.station-card-name {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  height: auto;
+  padding: 4px 8px;
+  margin: -4px -8px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+.station-card-name:hover { background: var(--surface); border-color: var(--line-soft); }
+.station-card-name:focus { background: var(--surface); border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim); outline: none; }
+.station-card-chip {
+  flex: none;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--accent-dim);
+  color: var(--accent-text);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+.station-card-real {
+  flex: none;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.station-card-remove {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  min-height: 0;
+  flex: none;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.station-card-remove svg { width: 16px; height: 16px; }
+.station-card-remove:hover:not(:disabled) { background: var(--bad-bg); color: var(--bad); border-color: color-mix(in srgb, var(--bad) 30%, transparent); }
+
+/* Card body: the config fields. */
+.station-card-body { padding: 18px; }
+.station-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px 20px; }
+.station-fields .field { min-width: 0; }
+.station-fields .field > label { display: block; margin: 0 0 6px; font-size: 12px; font-weight: 600; color: var(--muted); letter-spacing: 0.02em; }
+.station-fields .field > input, .station-fields .field > select { display: block; width: 100%; }
+.station-cluster { display: flex; flex-wrap: wrap; gap: 16px 28px; align-items: flex-start; margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--line-soft); }
 .station-editor .field { min-width: 0; }
 .station-editor .field > label, .printer-field > label { display: block; margin: 0 0 6px; font-size: 12.5px; font-weight: 600; color: var(--ink-2); }
 .station-editor .field > input, .station-editor .field > select { display: block; width: 100%; }
@@ -746,7 +824,7 @@ dialog .checkbox input { width: 19px; }
   .problems > li { grid-template-columns: 70px minmax(0, 1fr) auto; }
   .problems .where, .problems .message { grid-column: 2 / 3; }
   .problems-head { display: none; }
-  .row, .row.two, .search-line, .station-identity { grid-template-columns: 1fr; }
+  .row, .row.two, .search-line, .station-fields { grid-template-columns: 1fr; }
 }
 @media (max-width: 560px) {
   .rail-nav { overflow-y: auto; }

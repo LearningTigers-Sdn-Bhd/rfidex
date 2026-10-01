@@ -673,16 +673,25 @@ kbd { border: 1px solid var(--line); border-bottom-width: 2px; padding: 1px 6px;
 .checkbox { display: flex; gap: 10px; align-items: center; font-weight: 400; }
 .checkbox input { width: 19px; min-width: 19px; height: 19px; min-height: 19px; accent-color: var(--accent); margin: 0; }
 
-.station-editor { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; }
-.station-editor > li { background: var(--surface); padding: 20px 24px; border: 1px solid var(--line-soft); border-left: 3px solid var(--accent); border-radius: var(--radius); }
-.station-identity { display: grid; grid-template-columns: minmax(0, 1fr) 150px 190px; gap: 16px; align-items: start; }
+.station-editor { list-style: none; margin: 0; padding: 0; display: grid; gap: 16px; }
+.station-editor > li {
+  background: var(--surface);
+  padding: 20px 24px;
+  border: 1px solid var(--line-soft);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  transition: border-color 0.15s;
+}
+.station-editor > li:hover { border-color: var(--line); border-left-color: var(--accent); }
+.station-identity { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
 .station-identity > .field { min-width: 0; }
 .station-identity > .field.grow { grid-column: auto; }
-.station-cluster { display: flex; flex-wrap: wrap; gap: 14px 28px; align-items: flex-start; margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line-soft); }
+.station-cluster { display: flex; flex-wrap: wrap; gap: 16px 28px; align-items: flex-start; margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--line-soft); }
 .station-editor .field { min-width: 0; }
-.station-editor .field > label, .printer-field > label { display: block; margin: 0 0 6px; }
+.station-editor .field > label, .printer-field > label { display: block; margin: 0 0 6px; font-size: 12.5px; font-weight: 600; color: var(--ink-2); }
 .station-editor .field > input, .station-editor .field > select { display: block; width: 100%; }
-.station-cluster > .field { flex: 0 1 190px; }
+.station-cluster > .field { flex: 0 1 200px; }
 .station-cluster > .printer-field { flex: 1 1 380px; }
 .station-cluster .checkbox { margin-top: 30px; }
 .sim-box { border: 1px dashed var(--line); background: var(--bg-soft); border-radius: var(--radius-sm); padding: 0 16px; height: 42px; display: flex; align-items: center; margin-top: 27px; }
@@ -887,11 +896,16 @@ dialog .checkbox input { width: 19px; }
 
 /* ---------------------------------- Setup --------------------------------- */
 
+/* The Setup content pane is a flex column: a fixed head, then a scrolling
+   body, with the save bar pinned to the body's bottom edge. */
+.setup-content { display: flex; flex-direction: column; overflow: hidden; padding: 30px 36px 0; }
 .setup-content > * { max-width: 1120px; }
-.setup-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin: 0 0 8px; }
+.setup-head { flex: none; display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin: 0 0 8px; }
 .setup-head .eyebrow { margin-bottom: 4px; }
 .setup-head h1 { margin: 0; font-size: 26px; font-weight: 700; letter-spacing: -0.02em; }
-.setup-page .hint { max-width: 68ch; margin: 0 0 22px; }
+.setup-page .hint { flex: none; max-width: 68ch; margin: 0 0 22px; }
+
+.setup-body { flex: 1; min-height: 0; overflow-y: auto; padding-bottom: 24px; }
 
 /* Sections show one at a time, driven by the left rail. */
 .setup-section { display: none; }
@@ -899,21 +913,16 @@ dialog .checkbox input { width: 19px; }
 .setup-section-title { margin: 0 0 4px; font-size: 18px; font-weight: 700; letter-spacing: -0.01em; }
 .setup-section-sub { margin: 0 0 22px; font-size: 13.5px; color: var(--muted); }
 
-/* On wide screens, station cards flow two-up so the page uses its width. */
-@media (min-width: 1024px) {
-  .setup-content .station-editor { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
-
-/* Sticky save bar: always reachable, whichever section is open. */
-.setup-page form { padding-bottom: 8px; }
+/* Save bar: a fixed footer below the scrolling body, never overlapping it.
+   It spans the pane edge to edge, so it reads as a real footer. */
 .savebar {
-  position: sticky;
-  bottom: 0;
+  flex: none;
+  max-width: none;
   display: flex;
   align-items: center;
   gap: 12px;
-  margin: 28px 0 0;
-  padding: 14px 0;
+  margin: 0 -36px;
+  padding: 14px 36px;
   background: var(--bg);
   border-top: 1px solid var(--line-soft);
 }

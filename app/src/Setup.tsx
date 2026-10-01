@@ -283,11 +283,6 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
             <p className="eyebrow">RfiDex / Configuration</p>
             <h1>Setup</h1>
           </div>
-          {hasSavedConfig && (
-            <button type="button" className="ghost" onClick={onCancel} disabled={busy}>
-              Close without saving
-            </button>
-          )}
         </header>
 
         <p className="hint">
@@ -296,7 +291,8 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
           authenticates this machine to the server.
         </p>
 
-        <form onSubmit={submit}>
+        <div className="setup-body">
+        <form id="setup-form" onSubmit={submit} className="setup-form">
         <section className={section === "server" ? "setup-section is-active" : "setup-section"}>
           <h2 className="setup-section-title">Event server</h2>
           <p className="setup-section-sub">The deployment this computer reports to, and the key that links it to one event.</p>
@@ -588,10 +584,12 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
             {failure}
           </p>
         )}
+        </form>
+        </div>
 
         {section !== "about" && (
           <div className="savebar">
-            <button className="primary" type="submit" disabled={busy}>
+            <button className="primary" type="submit" form="setup-form" disabled={busy}>
               {busy ? "Saving…" : "Save setup"}
             </button>
             {isDirty ? (
@@ -601,7 +599,6 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
             )}
           </div>
         )}
-      </form>
       </div>
 
       <dialog ref={dialogRef} className="confirm" aria-labelledby="direction-title" onCancel={() => setRoleChange(null)}>

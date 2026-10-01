@@ -81,12 +81,25 @@ function answer(cmd: string): unknown {
           message: "The server sent a reply this app cannot read. Ask for help.",
         },
       ];
-    case "gate_recent":
-      return [
+    case "gate_recent": {
+      const samples = [
         { id: 1, status: "accepted", name: "Ada Lovelace", role: "entry", message: "Welcome", captured_at: minutesAgo(1), anomalies: [] },
         { id: 2, status: "recorded", name: "Alan Turing", role: "exit", message: "Recorded — waiting for the server.", captured_at: minutesAgo(3), anomalies: [] },
         { id: 3, status: "denied", name: null, role: "entry", message: "This sticker has been replaced.", captured_at: minutesAgo(7), anomalies: [] },
       ] satisfies GateView[];
+      if (new URLSearchParams(window.location.search).get("gate-demo") !== "long-names") return samples;
+      const names = [
+        "Alexandria Catherine Elizabeth Montgomery-Wellington",
+        "Muhammad Alexander Iskandar bin Abdullah Rahman",
+        "AlexandriaCatherineElizabethMontgomeryWellingtonWithoutSpaces",
+      ];
+      return Array.from({ length: 30 }, (_, index) => ({
+        ...samples[index % samples.length],
+        id: index + 1,
+        name: index % 3 === 2 ? null : names[Math.floor(index / 3) % names.length],
+        captured_at: minutesAgo(index + 1),
+      }));
+    }
     case "desk_search":
       return { offline: false, message: null, rows: [{ public_id: "DEMO-0012", name: "Ada Lovelace", ticket_type: "VIP", email_hint: "a***@example.com", phone_hint: null, checked_in_message: null }] } satisfies SearchView;
     case "desk_scan":

@@ -134,6 +134,9 @@ function Idle({ offline }: { offline: boolean }) {
     <div className="verify-card verify-idle">
       <p className="verify-label">Check your tag</p>
       <div className="verify-pulse" aria-hidden="true">
+        <span className="ripple" />
+        <span className="ripple" />
+        <span className="ripple" />
         <svg viewBox="0 0 240 240" fill="none">
           <circle className="ring" cx="120" cy="120" r="76" />
           <circle className="core" cx="120" cy="120" r="56" />
@@ -170,6 +173,17 @@ function Reveal({ view }: { view: VerifyView }) {
 function Disc({ state }: { state: VerifyView["state"] }) {
   return (
     <svg className="verify-disc" viewBox="0 0 120 120" aria-hidden="true" fill="none">
+      <circle className="burst" cx="60" cy="60" r="56" />
+      {state === "verified" && (
+        <>
+          <circle className="burst late" cx="60" cy="60" r="56" />
+          {[45, 135, 225, 315].map((angle) => (
+            <g key={angle} transform={`translate(60 60) rotate(${angle})`}>
+              <path className="spark" d="M0-4 1-1 4 0 1 1 0 4-1 1-4 0-1-1Z" />
+            </g>
+          ))}
+        </>
+      )}
       <circle className="disc-bg" cx="60" cy="60" r="56" />
       {state === "verified" && <path className="mark draw" d="M36 62l16 16 32-34" />}
       {state === "invalid" && (

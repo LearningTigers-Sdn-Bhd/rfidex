@@ -168,12 +168,12 @@ export function Desk({ station }: Props) {
     setFound(null);
   };
 
-  const closeSearch = () => {
+  const closeSearch = (restoreFocus = true) => {
     asked.current += 1;
     setSearchOpen(false);
     setQuery("");
     setFound(null);
-    qrRef.current?.focus({ preventScroll: true });
+    if (restoreFocus) qrRef.current?.focus({ preventScroll: true });
   };
 
   const pick = (publicId: string) => {
@@ -223,7 +223,7 @@ export function Desk({ station }: Props) {
       timer = window.setTimeout(() => {
         if (document.querySelector("dialog[open]")) return;
         const active = document.activeElement;
-        if (active && (searchRef.current?.contains(active) || active.closest(".station-switcher"))) return;
+        if (active && (searchRef.current?.contains(active) || active.closest(".station-nav"))) return;
         qrRef.current?.focus({ preventScroll: true });
       }, 0);
     };
@@ -262,26 +262,108 @@ export function Desk({ station }: Props) {
   return (
     <div className="desk-console">
       {/* Scan zone: the command line of the desk. */}
-      <div className="scan-zone">
-        <form className="scan" onSubmit={submitScan}>
-          <label htmlFor="ticket-code">Ticket code</label>
-          <div className="scan-line">
-            <input
-              id="ticket-code"
-              ref={qrRef}
-              value={code}
-              onChange={(event) => setCode(event.target.value)}
-              autoComplete="off"
-              aria-describedby="scan-help"
-              spellCheck={false}
-              placeholder="Scan or type a ticket code"
-            />
-            <button className="primary" type="submit" disabled={busy || code.trim() === ""}>
-              {busy && !readerTestBusy ? "Working…" : "Check in"}
-            </button>
+      <div className="desk-intake">
+        <div className="scan-zone">
+          <form className="scan" onSubmit={submitScan}>
+            <label htmlFor="ticket-code">Scan a ticket</label>
+            <div className="scan-line">
+              <input
+                id="ticket-code"
+                ref={qrRef}
+                value={code}
+                onChange={(event) => setCode(event.target.value)}
+                autoComplete="off"
+                aria-describedby="scan-help"
+                spellCheck={false}
+                placeholder="Scan or type a ticket code"
+              />
+              <button className="primary" type="submit" disabled={busy || code.trim() === ""}>
+                {busy && !readerTestBusy ? "Working…" : "Check in"}
+              </button>
+            </div>
+            <span className="scan-keyboard" id="scan-help"><span className="scan-target-dot" aria-hidden="true" /> USB scanner or ticket code · <kbd>Enter</kbd> to check in</span>
+          </form>
+        </div>
+
+        <section
+          className="desk-search search-panel"
+          ref={searchRef}
+          aria-label="Find a ticket"
+          onBlur={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget)) {
+              closeSearch(!(event.relatedTarget instanceof Element && event.relatedTarget.closest(".station-nav")));
+            }
+          }}
+        >
+          <div className="desk-tool-head">
+            <div>
+              <label htmlFor="ticket-search">Find a guest</label>
+            </div>
+            <div className="search-head-actions">
+              {searchOpen && <button type="button" className="search-close" onClick={() => closeSearch()}>Back to scan ↗</button>}
+              <div className="search-modes" role="group" aria-label="Search by">
+                {MODES.map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    aria-pressed={by === mode}
+                    className={by === mode ? "is-current" : ""}
+                    onClick={() => setBy(mode)}
+                  >
+                    {MODE_LABELS[mode]}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
-          <span className="scan-keyboard" id="scan-help">Scanner types here · <kbd>Enter</kbd> submits · <button type="button" className="scan-alt" onClick={openSearch} disabled={busy || searchOpen}>no QR? find by name</button></span>
-        </form>
+          <div className="search-line">
+            <input
+              id="ticket-search"
+              ref={searchInputRef}
+              value={query}
+              onFocus={() => { if (!searchOpen) openSearch(); }}
+              onChange={(event) => setQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  closeSearch();
+                }
+              }}
+              autoComplete="off"
+              spellCheck={false}
+              placeholder="Name, email address or phone number"
+              aria-label="Find a ticket"
+              aria-controls={searchOpen && found ? "ticket-search-results" : undefined}
+            />
+            {searchOpen && found && (found.message || found.rows.length > 0 || found.offline) && (
+              <div className="search-dropdown" id="ticket-search-results" aria-label="Matching tickets">
+                {found.message && (
+                  <p className="hint" role="status">{found.message}</p>
+                )}
+                {found.rows.length > 0 && (
+                  <ul className="search-rows">
+                    {found.rows.map((row) => (
+                      <li key={row.public_id}>
+                        <button type="button" onClick={() => pick(row.public_id)} disabled={busy}>
+                          <strong>{row.name}</strong>
+                          <span> · {row.ticket_type}</span>
+                          {row.email_hint && <span> · {row.email_hint}</span>}
+                          {row.phone_hint && <span> · {row.phone_hint}</span>}
+                          {row.checked_in_message && <span> · {row.checked_in_message}</span>}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {found.offline && (
+                  <p className="offline-note" role="status">
+                    Searching the tickets saved on this computer.
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+        </section>
       </div>
 
       {/* Answer: the verdict stage, present from the start. */}
@@ -289,22 +371,36 @@ export function Desk({ station }: Props) {
         className={`verdict desk-${step}${view?.offline ? " is-offline" : ""}`}
         aria-live="polite"
       >
-        <p className="eyebrow">{view ? `Mode: ${view.mode === "write" ? "Write" : "Bind"}` : "Awaiting scan"}</p>
-        {view?.ticket ? (
-          <>
-            <h2 className="verdict-name">{view.ticket.name}</h2>
-            <p className="ticket"><span>{view.ticket.ticket_type}</span></p>
-          </>
-        ) : (
-          <h2 className="verdict-name is-empty">{headline(view) === "Ready" ? "Scan a ticket to begin" : headline(view)}</h2>
-        )}
-        {view?.ticket && <p className="status-word">{headline(view)}</p>}
-        <p className="message">{view && view.ticket ? view.message : view && !view.ticket ? view.message : "The guest’s name, ticket and link status appear here the moment a code is scanned."}</p>
-        {badge?.message && (
-          <p className="badge-note" role="status">{badge.message}</p>
-        )}
+        <div className="guest-pass-head">
+          <span className="eyebrow">{view?.ticket ? "Guest pass" : "Guest check-in"}</span>
+          <span className="desk-mode">{(view?.mode ?? station.mode) === "write" ? "Write mode" : "Bind mode"}</span>
+        </div>
+        <div className="guest-pass-body">
+          <div className="guest-identity">
+            <p className="guest-label">{view?.ticket ? "Ticket holder" : "Ready when you are"}</p>
+            <h2 className={`verdict-name${view?.ticket ? "" : " is-empty"}`}>
+              {view?.ticket ? view.ticket.name : headline(view) === "Ready" ? "Every guest.\nA warm welcome." : headline(view)}
+            </h2>
+            {view?.ticket ? (
+              <div className="guest-ticket-details">
+                <span className="guest-ticket-type">{view.ticket.ticket_type}</span>
+                <span className="guest-ticket-code">{view.ticket.public_id}</span>
+              </div>
+            ) : <p className="guest-idle-help">Scan a ticket or find a guest above to get started.</p>}
+          </div>
+          <div className="guest-outcome">
+            <div className="desk-status-icon" aria-hidden="true">
+              <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                {step === "linked" ? <path d="m13 24 8 8 15-16" /> : step === "error" || confirming ? <><path d="M24 13v14" /><circle cx="24" cy="34" r="1" /></> : <><rect x="14" y="9" width="20" height="30" rx="4" /><path d="M20 19h8M20 25h8M22 33h4M7 18v12M41 18v12" /></>}
+              </svg>
+            </div>
+            <p className="status-word">{headline(view)}</p>
+            <p className="message">{view?.message ?? "The guest’s ticket and sticker status will appear here."}</p>
+            {badge?.message && <p className="badge-note" role="status">{badge.message}</p>}
+          </div>
+        </div>
         {hasResult && (
-          <div className="actions">
+          <div className="actions guest-pass-actions">
             <button
               type="button"
               onClick={() => void run(() => deskLink(station.id, null))}
@@ -322,11 +418,12 @@ export function Desk({ station }: Props) {
               </button>
             )}
             <button
+              className="primary guest-next"
               type="button"
               onClick={() => void run(() => deskReset(station.id))}
               disabled={busy || confirming}
             >
-              Start over
+              Next guest ↗
             </button>
           </div>
         )}
@@ -334,86 +431,6 @@ export function Desk({ station }: Props) {
 
       {/* Tools */}
       <div className="desk-tools">
-        {searchOpen ? (
-          <section className="desk-tool search-panel" ref={searchRef} aria-label="Find a ticket">
-            <div className="desk-tool-head">
-              <div>
-                <h3>Find a ticket</h3>
-                <p>Search by name, email or phone instead of scanning.</p>
-              </div>
-              <button type="button" onClick={closeSearch}>
-                Back to QR scan
-              </button>
-            </div>
-            <div className="search-line">
-              <input
-                id="ticket-search"
-                ref={searchInputRef}
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Escape") {
-                    event.preventDefault();
-                    closeSearch();
-                  }
-                }}
-                autoComplete="off"
-                spellCheck={false}
-                placeholder="Name, email address or phone number"
-                aria-label="Find a ticket"
-              />
-              <div className="search-modes" role="group" aria-label="Search by">
-                {MODES.map((mode) => (
-                  <button
-                    key={mode}
-                    type="button"
-                    aria-pressed={by === mode}
-                    className={by === mode ? "is-current" : ""}
-                    onClick={() => setBy(mode)}
-                  >
-                    {MODE_LABELS[mode]}
-                  </button>
-                ))}
-              </div>
-            </div>
-            {found && found.message && (
-              <p className="hint" role="status">{found.message}</p>
-            )}
-            {found && found.rows.length > 0 && (
-              <ul className="search-rows">
-                {found.rows.map((row) => (
-                  <li key={row.public_id}>
-                    <button type="button" onClick={() => pick(row.public_id)} disabled={busy}>
-                      <strong>{row.name}</strong>
-                      <span> · {row.ticket_type}</span>
-                      {row.email_hint && <span> · {row.email_hint}</span>}
-                      {row.phone_hint && <span> · {row.phone_hint}</span>}
-                      {row.checked_in_message && <span> · {row.checked_in_message}</span>}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-            {found?.offline && (
-              <p className="offline-note" role="status">
-                Searching the tickets saved on this computer.
-              </p>
-            )}
-          </section>
-        ) : (
-          <section className="desk-tool search-launch" aria-label="Find a ticket">
-            <div className="desk-tool-head">
-              <div>
-                <h3>Find a ticket</h3>
-                <p>Search by name, email or phone instead of scanning.</p>
-              </div>
-              <button type="button" onClick={openSearch} disabled={busy}>
-                Search
-              </button>
-            </div>
-          </section>
-        )}
-
         {!station.simulated && (
           <section className="desk-tool" aria-label="Test the sticker reader">
             <div className="desk-tool-head">

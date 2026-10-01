@@ -69,7 +69,7 @@ function answer(cmd: string): unknown {
         ],
       } satisfies SetupView;
     case "update_check":
-      return { current: "0.6.23", available: null, notes: null } satisfies UpdateView;
+      return { current: "0.6.24", available: null, notes: null } satisfies UpdateView;
     case "problems":
       return [
         {

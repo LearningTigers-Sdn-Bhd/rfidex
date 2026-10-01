@@ -28,11 +28,15 @@ export function Verify({ station }: { station: StationStatus }) {
   const [muted, setMutedState] = useState(isMuted);
 
   useEffect(() => {
-    const sync = () => setFull(document.fullscreenElement === stage.current);
+    // Capture the mounted element: React clears the ref before cleanup.
+    const element = stage.current;
+    const sync = () => setFull(element !== null && document.fullscreenElement === element);
     document.addEventListener("fullscreenchange", sync);
     return () => {
       document.removeEventListener("fullscreenchange", sync);
-      if (document.fullscreenElement === stage.current) void document.exitFullscreen();
+      if (element && document.fullscreenElement === element) {
+        void document.exitFullscreen().catch(() => {});
+      }
     };
   }, []);
 
@@ -130,7 +134,6 @@ function Idle({ offline }: { offline: boolean }) {
     <div className="verify-card verify-idle">
       <p className="verify-label">Check your tag</p>
       <div className="verify-pulse" aria-hidden="true">
-        <span className="ripple" /><span className="ripple" /><span className="ripple" />
         <svg viewBox="0 0 240 240" fill="none">
           <circle className="ring" cx="120" cy="120" r="76" />
           <circle className="core" cx="120" cy="120" r="56" />
@@ -164,21 +167,9 @@ function Reveal({ view }: { view: VerifyView }) {
   );
 }
 
-/** Directions the sparkles fly off in, evenly round the disc. */
-const SPARKS = [0, 45, 90, 135, 180, 225, 270, 315];
-
 function Disc({ state }: { state: VerifyView["state"] }) {
   return (
     <svg className="verify-disc" viewBox="0 0 120 120" aria-hidden="true" fill="none">
-      {state === "verified" && (
-        <>
-          <circle className="burst" cx="60" cy="60" r="56" />
-          <circle className="burst late" cx="60" cy="60" r="56" />
-          {SPARKS.map((angle) => (
-            <circle key={angle} className="spark" cx="60" cy="60" r="2.6" style={{ "--a": `${angle}deg` } as React.CSSProperties} />
-          ))}
-        </>
-      )}
       <circle className="disc-bg" cx="60" cy="60" r="56" />
       {state === "verified" && <path className="mark draw" d="M36 62l16 16 32-34" />}
       {state === "invalid" && (

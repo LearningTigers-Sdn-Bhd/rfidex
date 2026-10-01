@@ -215,7 +215,7 @@ export function Desk({ station }: Props) {
   }, [confirming]);
 
   // Keep the keyboard-wedge target focused outside native modal dialogs and
-  // outside the search region, which the operator is using deliberately.
+  // outside search or station selection, which staff use deliberately.
   useEffect(() => {
     let timer: number | undefined;
     const restore = () => {
@@ -223,7 +223,7 @@ export function Desk({ station }: Props) {
       timer = window.setTimeout(() => {
         if (document.querySelector("dialog[open]")) return;
         const active = document.activeElement;
-        if (active && searchRef.current?.contains(active)) return;
+        if (active && (searchRef.current?.contains(active) || active.closest(".station-switcher"))) return;
         qrRef.current?.focus({ preventScroll: true });
       }, 0);
     };
@@ -257,55 +257,83 @@ export function Desk({ station }: Props) {
   }, [searchOpen]);
 
   const step = view?.step ?? "ready";
+  const hasResult = step !== "ready";
 
   return (
-    <div className="station-layout desk-layout">
-      <div className="station-main">
+    <div className="desk-console">
+      {/* Scan zone: the command line of the desk. */}
+      <div className="scan-zone">
         <form className="scan" onSubmit={submitScan}>
           <label htmlFor="ticket-code">Ticket code</label>
-          <span className="scan-hint" id="scan-help">Scan a QR code or type a ticket code, then press Enter.</span>
-          <input
-            id="ticket-code"
-            ref={qrRef}
-            value={code}
-            onChange={(event) => setCode(event.target.value)}
-            autoComplete="off"
-            aria-describedby="scan-help"
-            spellCheck={false}
-            placeholder="Scan the ticket QR code"
-          />
-          <button className="primary" type="submit" disabled={busy || code.trim() === ""}>
-            {busy && !readerTestBusy ? "Working…" : "Scan ticket"}
-          </button>
+          <div className="scan-line">
+            <input
+              id="ticket-code"
+              ref={qrRef}
+              value={code}
+              onChange={(event) => setCode(event.target.value)}
+              autoComplete="off"
+              aria-describedby="scan-help"
+              spellCheck={false}
+              placeholder="Scan or type a ticket code"
+            />
+            <button className="primary" type="submit" disabled={busy || code.trim() === ""}>
+              {busy && !readerTestBusy ? "Working…" : "Check in"}
+            </button>
+          </div>
+          <span className="scan-keyboard" id="scan-help">Scanner types here · <kbd>Enter</kbd> submits · <button type="button" className="scan-alt" onClick={openSearch} disabled={busy || searchOpen}>no QR? find by name</button></span>
         </form>
+      </div>
 
-        {!station.simulated && (
-          <section className="desk-tool" aria-label="Test the sticker reader">
-            <div className="desk-tool-head">
-              <div>
-                <h3>Test the sticker reader</h3>
-                <p>Place a sticker on the reader, then check it can be read.</p>
-              </div>
-              <button type="button" onClick={() => void testReader()} disabled={busy || readerTestBusy}>
-                {readerTestBusy ? "Reading stickers…" : "Test sticker reader"}
-              </button>
-            </div>
-            {readerTest && (
-              <div className={readerTest.ok ? "note" : "failure"} role="status">
-                <p>{readerTest.message}</p>
-                {readerTest.uid_raw_hex.length > 0 && (
-                  <ul className="found-readers">
-                    {readerTest.uid_raw_hex.map((uid) => (
-                      <li key={uid}><code>{uid}</code></li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            )}
-            {readerTestFailure && <p className="failure" role="alert">{readerTestFailure}</p>}
-          </section>
+      {/* Answer: the verdict stage, present from the start. */}
+      <section
+        className={`verdict desk-${step}${view?.offline ? " is-offline" : ""}`}
+        aria-live="polite"
+      >
+        <p className="eyebrow">{view ? `Mode: ${view.mode === "write" ? "Write" : "Bind"}` : "Awaiting scan"}</p>
+        {view?.ticket ? (
+          <>
+            <h2 className="verdict-name">{view.ticket.name}</h2>
+            <p className="ticket"><span>{view.ticket.ticket_type}</span></p>
+          </>
+        ) : (
+          <h2 className="verdict-name is-empty">{headline(view) === "Ready" ? "Scan a ticket to begin" : headline(view)}</h2>
         )}
+        {view?.ticket && <p className="status-word">{headline(view)}</p>}
+        <p className="message">{view && view.ticket ? view.message : view && !view.ticket ? view.message : "The guest’s name, ticket and link status appear here the moment a code is scanned."}</p>
+        {badge?.message && (
+          <p className="badge-note" role="status">{badge.message}</p>
+        )}
+        {hasResult && (
+          <div className="actions">
+            <button
+              type="button"
+              onClick={() => void run(() => deskLink(station.id, null))}
+              disabled={busy || !view?.ticket || confirming}
+            >
+              Try the sticker again
+            </button>
+            {badge?.can_reprint && (
+              <button
+                type="button"
+                onClick={() => view && print(view.session_id)}
+                disabled={printing}
+              >
+                {printing ? "Printing…" : "Reprint badge"}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => void run(() => deskReset(station.id))}
+              disabled={busy || confirming}
+            >
+              Start over
+            </button>
+          </div>
+        )}
+      </section>
 
+      {/* Tools */}
+      <div className="desk-tools">
         {searchOpen ? (
           <section className="desk-tool search-panel" ref={searchRef} aria-label="Find a ticket">
             <div className="desk-tool-head">
@@ -386,51 +414,34 @@ export function Desk({ station }: Props) {
           </section>
         )}
 
-        <section
-          className={`result desk-${step}${view?.offline ? " is-offline" : ""}`}
-          aria-live="polite"
-        >
-          <svg className="result-symbol" viewBox="0 0 48 48" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M16 7H7v9M32 7h9v9M7 32v9h9M41 32v9h-9"/><path d={step === "linked" ? "m14 24 7 7 14-14" : step === "error" || step === "needs_confirm" ? "M24 14v13m0 5v2" : "M16 19v10m6-13v16m5-16v16m5-13v10"}/></svg>
-          <p className="eyebrow">
-            {view ? `Mode: ${view.mode === "write" ? "Write" : "Bind"}` : "Mode: —"}
-          </p>
-          <h1>{headline(view)}</h1>
-          {view?.ticket && (
-            <p className="ticket">
-              <strong>{view.ticket.name}</strong>
-              <span> · {view.ticket.ticket_type}</span>
-            </p>
-          )}
-          <p className="message">{view ? view.message : "Scan a ticket to begin."}</p>
-          {badge?.message && (
-            <p className="badge-note" role="status">{badge.message}</p>
-          )}
-          <div className="actions">
-            <button
-              type="button"
-              onClick={() => void run(() => deskLink(station.id, null))}
-              disabled={busy || !view?.ticket || confirming}
-            >
-              Try the sticker again
-            </button>
-            {badge?.can_reprint && (
-              <button
-                type="button"
-                onClick={() => view && print(view.session_id)}
-                disabled={printing}
-              >
-                {printing ? "Printing…" : "Reprint badge"}
+        {!station.simulated && (
+          <section className="desk-tool" aria-label="Test the sticker reader">
+            <div className="desk-tool-head">
+              <div>
+                <h3>Test the sticker reader</h3>
+                <p>Place a sticker on the reader, then check it can be read.</p>
+              </div>
+              <button type="button" onClick={() => void testReader()} disabled={busy || readerTestBusy}>
+                {readerTestBusy ? "Reading stickers…" : "Test sticker reader"}
               </button>
+            </div>
+            {readerTest && (
+              <div className={readerTest.ok ? "note" : "failure"} role="status">
+                <p>{readerTest.message}</p>
+                {readerTest.uid_raw_hex.length > 0 && (
+                  <ul className="found-readers">
+                    {readerTest.uid_raw_hex.map((uid) => (
+                      <li key={uid}><code>{uid}</code></li>
+                    ))}
+                  </ul>
+                )}
+              </div>
             )}
-            <button
-              type="button"
-              onClick={() => void run(() => deskReset(station.id))}
-              disabled={busy || confirming}
-            >
-              Cancel and start over
-            </button>
-          </div>
-        </section>
+            {readerTestFailure && <p className="failure" role="alert">{readerTestFailure}</p>}
+          </section>
+        )}
+
+
 
         {failure && (
           <p className="failure" role="alert">

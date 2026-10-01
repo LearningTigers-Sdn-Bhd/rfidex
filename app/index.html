@@ -3,7 +3,19 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
     <title>RfiDex</title>
+    <script>
+      // Apply the saved theme before first paint so nothing flashes.
+      document.documentElement.dataset.theme = (() => {
+        try {
+          const saved = localStorage.getItem("rfidex-theme");
+          return saved === "light" || saved === "dark" ? saved : "system";
+        } catch {
+          return "system";
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

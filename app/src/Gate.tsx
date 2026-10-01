@@ -39,59 +39,66 @@ export function Gate({ station }: Props) {
 
   const latest = rows[0] ?? null;
   const earlier = rows.slice(1);
+  const accepted = rows.filter((row) => row.status === "accepted").length;
+  const flagged = rows.filter((row) => row.status === "denied" || row.status === "problem").length;
 
   return (
-    <div className="station-layout gate-layout">
-      <div className="station-main">
-        <section
-          className={`result gate-${latest?.status ?? "empty"}`}
-          aria-live="polite"
-        >
-          <p className="eyebrow">
-            {station.role === "exit" ? "Exit direction" : "Entry direction"}
-          </p>
-          <h1>{latest ? latest.name ?? "Unknown sticker" : "Waiting"}</h1>
-          <p className="status-word">{statusWord(latest)}</p>
-          <p className="message">{latest ? latest.message : "No passage yet."}</p>
-          {latest && latest.anomalies.length > 0 && (
-            <ul className="anomalies">
-              {latest.anomalies.map((anomaly) => (
-                <li key={anomaly}>{anomaly}</li>
-              ))}
-            </ul>
-          )}
-          <p className="timestamp">
-            {latest ? `Last passage at ${formatTime(latest.captured_at)}` : "—"}
-          </p>
-        </section>
-
-        {failure && (
-          <p className="failure" role="alert">
-            {failure}
-          </p>
+    <div className="gate-console">
+      <section
+        className={`verdict verdict-stage gate-${latest?.status ?? "empty"}`}
+        aria-live="polite"
+      >
+        <p className="eyebrow">
+          {station.role === "exit" ? "Exit direction" : "Entry direction"}
+        </p>
+        <p className="status-word">{statusWord(latest)}</p>
+        <h1>{latest ? latest.name ?? "Unknown sticker" : "Waiting"}</h1>
+        <p className="message">{latest ? latest.message : "No passage yet."}</p>
+        {latest && latest.anomalies.length > 0 && (
+          <ul className="anomalies">
+            {latest.anomalies.map((anomaly) => (
+              <li key={anomaly}>{anomaly}</li>
+            ))}
+          </ul>
         )}
+        <p className="timestamp">
+          {latest ? `Last passage at ${formatTime(latest.captured_at)}` : "—"}
+        </p>
+      </section>
+
+      <div className="gate-feed">
+        <dl className="gate-stats">
+          <div><dt>Accepted</dt><dd>{accepted}</dd></div>
+          <div><dt>Flagged</dt><dd className={flagged > 0 ? "is-warn" : ""}>{flagged}</dd></div>
+          <div><dt>Total</dt><dd>{rows.length}</dd></div>
+        </dl>
+        <div className="recent" aria-label="Recent passages">
+          <h2>Recent passages</h2>
+          {earlier.length === 0 && <p className="empty">Nothing else yet.</p>}
+          <ul>
+            {earlier.map((row) => (
+              <li key={`${station.id}:${row.id}`} className={`gate-${row.status}`}>
+                <span className="time">{formatTime(row.captured_at)}</span>
+                <span className="who">{row.name ?? "Unknown sticker"}</span>
+                <span className="what">{row.message}</span>
+                {row.anomalies.length > 0 && (
+                  <ul className="anomalies">
+                    {row.anomalies.map((anomaly) => (
+                      <li key={anomaly}>{anomaly}</li>
+                    ))}
+                  </ul>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
       </div>
 
-      <aside className="recent" aria-label="Recent passages">
-        <h2>Recent passages</h2>
-        {earlier.length === 0 && <p className="empty">Nothing else yet.</p>}
-        <ul>
-          {earlier.map((row) => (
-            <li key={`${station.id}:${row.id}`} className={`gate-${row.status}`}>
-              <span className="time">{formatTime(row.captured_at)}</span>
-              <span className="who">{row.name ?? "Unknown sticker"}</span>
-              <span className="what">{row.message}</span>
-              {row.anomalies.length > 0 && (
-                <ul className="anomalies">
-                  {row.anomalies.map((anomaly) => (
-                    <li key={anomaly}>{anomaly}</li>
-                  ))}
-                </ul>
-              )}
-            </li>
-          ))}
-        </ul>
-      </aside>
+      {failure && (
+        <p className="failure" role="alert">
+          {failure}
+        </p>
+      )}
     </div>
   );
 }

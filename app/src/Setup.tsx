@@ -58,6 +58,7 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
     Record<string, { url: string; view: ConnectionView }>
   >({});
   const [roleChange, setRoleChange] = useState<RoleChange[] | null>(null);
+  const [section, setSection] = useState<"server" | "stations" | "about">("server");
   const dialogRef = useRef<HTMLDialogElement>(null);
 
   useEffect(() => {
@@ -247,25 +248,58 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
   };
 
   return (
-    <div className="panel setup">
-      <div className="panel-head">
-        <div><p className="eyebrow">RfiDex / Configuration</p><h1>Setup</h1></div>
-        {hasSavedConfig && (
-          <button type="button" onClick={onCancel} disabled={busy}>
-            Close without saving
-          </button>
-        )}
-      </div>
+    <div className="subpage setup-page">
+      <nav className="subnav" aria-label="Setup sections">
+        <p className="nav-lbl">Setup</p>
+        <button
+          type="button"
+          className={section === "server" ? "subnav-btn is-active" : "subnav-btn"}
+          aria-current={section === "server" ? "page" : undefined}
+          onClick={() => setSection("server")}
+        >
+          Event server
+        </button>
+        <button
+          type="button"
+          className={section === "stations" ? "subnav-btn is-active" : "subnav-btn"}
+          aria-current={section === "stations" ? "page" : undefined}
+          onClick={() => setSection("stations")}
+        >
+          Stations
+        </button>
+        <button
+          type="button"
+          className={section === "about" ? "subnav-btn is-active" : "subnav-btn"}
+          aria-current={section === "about" ? "page" : undefined}
+          onClick={() => setSection("about")}
+        >
+          About &amp; updates
+        </button>
+      </nav>
 
-      <p className="hint">
-        Point this computer at its EventzFlow server and declare the readers
-        plugged into it. The saved API key is never shown again — it only
-        authenticates this machine to the server.
-      </p>
+      <div className="subpage-content setup-content">
+        <header className="setup-head">
+          <div>
+            <p className="eyebrow">RfiDex / Configuration</p>
+            <h1>Setup</h1>
+          </div>
+          {hasSavedConfig && (
+            <button type="button" className="ghost" onClick={onCancel} disabled={busy}>
+              Close without saving
+            </button>
+          )}
+        </header>
 
-      <form onSubmit={submit}>
-        <fieldset>
-          <legend>Event server</legend>
+        <p className="hint">
+          Point this computer at its EventzFlow server and declare the readers
+          plugged into it. The saved API key is never shown again — it only
+          authenticates this machine to the server.
+        </p>
+
+        <form onSubmit={submit}>
+        <section className={section === "server" ? "setup-section is-active" : "setup-section"}>
+          <h2 className="setup-section-title">Event server</h2>
+          <p className="setup-section-sub">The deployment this computer reports to, and the key that links it to one event.</p>
           <div className="row two">
             <div>
               <label htmlFor="server-url">Server URL</label>
@@ -314,15 +348,11 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
             Event mode: <strong>{modeName(mode)}</strong> — read from the server
             on connect; not editable here.
           </p>
-        </fieldset>
+        </section>
 
-        <fieldset>
-          <legend>Stations on this computer</legend>
-          <p className="info">
-            A station is one RFID reader plugged into this computer: a desk
-            that links tickets to tags, or a gate that records guests passing.
-            Add one for each reader.
-          </p>
+        <section className={section === "stations" ? "setup-section is-active" : "setup-section"}>
+          <h2 className="setup-section-title">Stations on this computer</h2>
+          <p className="setup-section-sub">One station per RFID reader plugged into this computer — a desk that links tickets, or a gate that records guests passing.</p>
           {stations.length === 0 && (
             <p className="empty">No stations yet. Add the ones this PC runs.</p>
           )}
@@ -544,12 +574,14 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
             <button type="button" onClick={addStation}>
               Add station
             </button>
-            <button className="primary" type="submit" disabled={busy}>
-              {busy ? "Saving…" : "Save setup"}
-            </button>
-            {isDirty && <span className="unsaved">Unsaved changes</span>}
           </div>
-        </fieldset>
+        </section>
+
+        <section className={section === "about" ? "setup-section is-active" : "setup-section"}>
+          <h2 className="setup-section-title">About &amp; updates</h2>
+          <p className="setup-section-sub">The installed version and any newer release ready to install.</p>
+          <Updates />
+        </section>
 
         {failure && (
           <p className="failure" role="alert">
@@ -557,11 +589,18 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
           </p>
         )}
 
-        <fieldset>
-          <legend>About &amp; updates</legend>
-          <Updates />
-        </fieldset>
+        <div className="savebar">
+          <button className="primary" type="submit" disabled={busy}>
+            {busy ? "Saving…" : "Save setup"}
+          </button>
+          {isDirty ? (
+            <span className="unsaved">Unsaved changes</span>
+          ) : (
+            <span className="savebar-note">Everything is saved</span>
+          )}
+        </div>
       </form>
+      </div>
 
       <dialog ref={dialogRef} className="confirm" aria-labelledby="direction-title" onCancel={() => setRoleChange(null)}>
         <h2 id="direction-title">Change a gate direction?</h2>

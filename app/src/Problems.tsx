@@ -67,16 +67,17 @@ export function Problems({ problemCount }: Props) {
         <p className="empty">Nothing needs attention.</p>
       ) : (
         <ul className="problems">
+          <li className="problems-head" aria-hidden="true">
+            <span>Time</span><span>Guest</span><span>Station</span><span>What happened</span><span />
+          </li>
           {items.map((problem) => (
             <li key={`${problem.station_id}:${problem.id}`}>
-              <p className="who">
-                <strong>{problem.name ?? "Unknown sticker"}</strong>
-                <span> · {problem.station_name}</span>
-                <span className="time"> · {formatTime(problem.captured_at)}</span>
-              </p>
-              <p className="message">{problem.message}</p>
+              <span className="time">{formatTime(problem.captured_at)}</span>
+              <strong className="who">{problem.name ?? "Unknown sticker"}</strong>
+              <span className="where">{problem.station_name}</span>
+              <span className="message">{problem.message}</span>
               <button type="button" onClick={() => setChoosing(problem)} disabled={busy}>
-                Dismiss from this list
+                Dismiss
               </button>
             </li>
           ))}

@@ -704,23 +704,45 @@ kbd { border: 1px solid var(--line); border-bottom-width: 2px; padding: 1px 6px;
   color: var(--accent-text);
 }
 .station-card-icon svg { width: 18px; height: 18px; }
-.station-card-name {
-  flex: 1;
+
+/* Editable name: a field-like pill with a pencil hint, so it never reads as
+   static text. */
+.station-card-namewrap {
+  position: relative;
+  flex: 0 1 auto;
+  min-width: 0;
+  margin-right: auto;
+  display: flex;
+  align-items: center;
+}
+.setup-page input.station-card-name {
+  width: auto;
+  max-width: 100%;
   min-width: 0;
   min-height: 0;
   height: auto;
-  padding: 4px 8px;
-  margin: -4px -8px;
-  border: 1px solid transparent;
+  padding: 5px 30px 5px 10px;
+  border: 1px dashed var(--line);
   border-radius: 7px;
   background: transparent;
   color: var(--ink);
   font-size: 15px;
   font-weight: 650;
   letter-spacing: -0.01em;
+  transition: border-color 0.12s, background 0.12s, box-shadow 0.12s;
 }
-.station-card-name:hover { background: var(--surface); border-color: var(--line-soft); }
-.station-card-name:focus { background: var(--surface); border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-dim); outline: none; }
+.station-card-name:hover { border-color: var(--muted); border-style: solid; background: var(--surface); }
+.station-card-name:focus { border-style: solid; border-color: var(--accent); background: var(--surface); box-shadow: 0 0 0 3px var(--accent-dim); outline: none; }
+.station-card-pen {
+  position: absolute;
+  right: 9px;
+  width: 13px;
+  height: 13px;
+  color: var(--muted);
+  pointer-events: none;
+  transition: color 0.12s;
+}
+.station-card-namewrap:hover .station-card-pen, .station-card-name:focus ~ .station-card-pen { color: var(--accent-text); }
 .station-card-chip {
   flex: none;
   padding: 3px 10px;

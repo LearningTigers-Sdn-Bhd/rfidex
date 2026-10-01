@@ -366,14 +366,21 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M4 21V8l8-5 8 5v13"/><path d="M9 21v-6h6v6"/></svg>
                     )}
                   </span>
-                  <input
-                    className="station-card-name"
-                    aria-label="Station name"
-                    value={station.name}
-                    onChange={(event) => patch(station.id, { name: event.target.value })}
-                    autoComplete="off"
-                    placeholder="Station name"
-                  />
+                  <span className="station-card-namewrap">
+                    <input
+                      className="station-card-name"
+                      aria-label="Station name"
+                      title="Click to rename"
+                      size={Math.max(station.name.length, 10)}
+                      value={station.name}
+                      onChange={(event) => patch(station.id, { name: event.target.value })}
+                      autoComplete="off"
+                      placeholder="Station name"
+                    />
+                    <svg className="station-card-pen" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+                    </svg>
+                  </span>
                   <span className="station-card-chip">{kindLabel}</span>
                   {isReal && <span className="station-card-real">Real reader</span>}
                   <button

@@ -589,16 +589,18 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
           </p>
         )}
 
-        <div className="savebar">
-          <button className="primary" type="submit" disabled={busy}>
-            {busy ? "Saving…" : "Save setup"}
-          </button>
-          {isDirty ? (
-            <span className="unsaved">Unsaved changes</span>
-          ) : (
-            <span className="savebar-note">Everything is saved</span>
-          )}
-        </div>
+        {section !== "about" && (
+          <div className="savebar">
+            <button className="primary" type="submit" disabled={busy}>
+              {busy ? "Saving…" : "Save setup"}
+            </button>
+            {isDirty ? (
+              <span className="unsaved">Unsaved changes</span>
+            ) : (
+              <span className="savebar-note">Everything is saved</span>
+            )}
+          </div>
+        )}
       </form>
       </div>
 

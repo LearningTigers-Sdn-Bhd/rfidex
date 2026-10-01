@@ -332,9 +332,28 @@ export function App() {
         ) : (
           station && (
             <div className="console">
+              <nav className="station-nav" aria-label="Stations">
+                {stations.map((candidate) => {
+                  const connected = candidate.connection_checked && candidate.connected;
+                  const kindLabel = candidate.kind === "desk" ? "Desk" : candidate.role === "exit" ? "Exit" : "Entry";
+                  return (
+                    <button
+                      key={candidate.id}
+                      type="button"
+                      className={candidate.id === station.id ? "station-tab is-active" : "station-tab"}
+                      aria-current={candidate.id === station.id ? "page" : undefined}
+                      onClick={() => setSelected(candidate.id)}
+                    >
+                      <span className={`station-tab-led${connected ? " on" : ""}`} aria-hidden="true" />
+                      <span className="station-tab-name">{candidate.name}</span>
+                      <span className="station-tab-kind">{kindLabel}</span>
+                    </button>
+                  );
+                })}
+              </nav>
+
               <header className="console-head">
                 <div className="console-id">
-                  <h1>{station.name}</h1>
                   <div className="console-meta">
                     <span className="console-kind">{station.kind === "desk" ? "Registration desk" : station.role === "exit" ? "Exit gate" : "Entry gate"}</span>
                     {station.event_name && <span className="console-event">{station.event_name}</span>}
@@ -343,16 +362,6 @@ export function App() {
                     </span>
                     {station.simulated && <span className="simulation-label">Simulated</span>}
                   </div>
-                </div>
-                <div className="station-switcher">
-                  <label htmlFor="active-station">Station</label>
-                  <select id="active-station" value={station.id} onChange={(event) => { setSelected(event.target.value); event.currentTarget.blur(); }}>
-                    {stations.map((candidate) => (
-                      <option key={candidate.id} value={candidate.id}>
-                        {candidate.name} · {candidate.kind === "desk" ? "Desk" : candidate.role === "exit" ? "Exit" : "Entry"}
-                      </option>
-                    ))}
-                  </select>
                 </div>
               </header>
 

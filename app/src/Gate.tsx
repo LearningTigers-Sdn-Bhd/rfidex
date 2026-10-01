@@ -49,7 +49,7 @@ export function Gate({ station }: Props) {
         aria-live="polite"
       >
         <p className="eyebrow">
-          {station.role === "exit" ? "Exit direction" : "Entry direction"}
+          Recording: {station.role === "exit" ? "Exit" : "Entry"}
         </p>
         <p className="status-word">{statusWord(latest)}</p>
         <h1>{latest ? latest.name ?? "Unknown sticker" : "Waiting"}</h1>
@@ -62,7 +62,7 @@ export function Gate({ station }: Props) {
           </ul>
         )}
         <p className="timestamp">
-          {latest ? `Last passage at ${formatTime(latest.captured_at)}` : "—"}
+          {latest ? `${latest.role === "exit" ? "Exit" : "Entry"} · Last passage at ${formatTime(latest.captured_at)}` : "—"}
         </p>
       </section>
 
@@ -78,7 +78,7 @@ export function Gate({ station }: Props) {
           <ul>
             {earlier.map((row) => (
               <li key={`${station.id}:${row.id}`} className={`gate-${row.status}`}>
-                <span className="time">{formatTime(row.captured_at)}</span>
+                <span className="time">{formatTime(row.captured_at)}<span className="passage-direction">{row.role === "exit" ? "Exit" : "Entry"}</span></span>
                 <span className="who">{row.name ?? "Unknown sticker"}</span>
                 <span className="what">{row.message}</span>
                 {row.anomalies.length > 0 && (

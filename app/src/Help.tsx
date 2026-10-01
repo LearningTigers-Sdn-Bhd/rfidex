@@ -163,7 +163,6 @@ const SECTIONS: HelpSection[] = [
             <tr><td>This sticker belongs to another event.</td><td>Wrong event</td><td>Check the guest</td></tr>
             <tr><td>This ticket cannot be used.</td><td>Ticket is cancelled or invalid</td><td>Send to registration</td></tr>
             <tr><td>This attendee has not checked in at registration.</td><td>Warning only: the pass is still recorded</td><td>Note it, no action</td></tr>
-            <tr><td>The reader reported a different direction.</td><td>Warning only: the direction set in Setup was used</td><td>Nothing</td></tr>
           </tbody>
         </table>
         <p>

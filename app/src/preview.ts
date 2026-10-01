@@ -83,9 +83,9 @@ function answer(cmd: string): unknown {
       ];
     case "gate_recent":
       return [
-        { id: 1, status: "accepted", name: "Ada Lovelace", role: "entry", message: "Welcome in", captured_at: minutesAgo(1), anomalies: [] },
-        { id: 2, status: "recorded", name: "Alan Turing", role: "entry", message: "Entry noted while offline", captured_at: minutesAgo(3), anomalies: ["Offline entry — syncs when the server is back"] },
-        { id: 3, status: "denied", name: null, role: "entry", message: "Already checked in", captured_at: minutesAgo(7), anomalies: [] },
+        { id: 1, status: "accepted", name: "Ada Lovelace", role: "entry", message: "Welcome", captured_at: minutesAgo(1), anomalies: [] },
+        { id: 2, status: "recorded", name: "Alan Turing", role: "exit", message: "Recorded — waiting for the server.", captured_at: minutesAgo(3), anomalies: [] },
+        { id: 3, status: "denied", name: null, role: "entry", message: "This sticker has been replaced.", captured_at: minutesAgo(7), anomalies: [] },
       ] satisfies GateView[];
     case "desk_search":
       return { offline: false, message: null, rows: [{ public_id: "DEMO-0012", name: "Ada Lovelace", ticket_type: "VIP", email_hint: "a***@example.com", phone_hint: null, checked_in_message: null }] } satisfies SearchView;

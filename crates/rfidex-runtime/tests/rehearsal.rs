@@ -1528,12 +1528,9 @@ async fn rehearsal_wrong_role() {
     assert_eq!(view[0].status, GateStatus::Accepted);
     assert_eq!(view[0].role, Role::Exit);
     assert_eq!(view[0].message, "Goodbye");
-    assert_eq!(view[0].anomalies.len(), 1);
     assert!(
-        view[0].anomalies[0].contains("different direction")
-            && view[0].anomalies[0].contains("station direction was used"),
-        "the warning is shown in words: {}",
-        view[0].anomalies[0]
+        view[0].anomalies.is_empty(),
+        "the hardware direction mismatch does not distract the operator"
     );
     h.runtime.shutdown().await.unwrap();
     assert_eq!(

@@ -113,11 +113,10 @@ pub fn view(row: &OutboxRow, store: &Store, uid_rule: UidRule) -> GateView {
 fn anomaly_text(anomalies: &[String]) -> Vec<String> {
     anomalies
         .iter()
+        // Staff intentionally switch directions; the saved scan role is authoritative.
+        // Keep the raw server anomaly in storage, without repeating it to operators.
+        .filter(|a| a.as_str() != "role_mismatch")
         .map(|a| match a.as_str() {
-            "role_mismatch" => {
-                "The reader reported a different direction. The station direction was used."
-                    .to_string()
-            }
             "entered_without_check_in" => {
                 "This attendee has not checked in at registration.".to_string()
             }
@@ -218,4 +217,26 @@ pub fn resolve_name(
     payload_id
         .and_then(|pid| store.ticket(pid).ok().flatten())
         .map(|ticket| ticket.name)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn direction_mismatch_is_quiet_but_actionable_warnings_remain() {
+        let warnings = super::anomaly_text(&[
+            "role_mismatch".into(),
+            "entered_without_check_in".into(),
+            "payload_binding_mismatch".into(),
+            "future_warning".into(),
+        ]);
+        assert_eq!(
+            warnings,
+            vec![
+                "This attendee has not checked in at registration.",
+                "The ticket written on this sticker does not match its link.",
+                "The server reported a warning. Ask for help.",
+            ]
+        );
+        assert!(super::anomaly_text(&["role_mismatch".into()]).is_empty());
+    }
 }

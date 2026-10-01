@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 
-import { errorText, setupGet, setupSave, setupTest, setupTestPrinter, updateCheck, updateInstall } from "./api";
+import { errorText, exportDiagnostics, setupGet, setupSave, setupTest, setupTestPrinter, updateCheck, updateInstall } from "./api";
 import type {
   AppStatus,
   AppView,
@@ -50,6 +50,8 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
   const [original, setOriginal] = useState<StationConfig[]>([]);
   const [keyOnFile, setKeyOnFile] = useState(hasSavedConfig);
   const [busy, setBusy] = useState(false);
+  const [exportBusy, setExportBusy] = useState(false);
+  const [exportPath, setExportPath] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   const [tested, setTested] = useState<ConnectionView | null>(null);
   // Keyed by station id, and only shown while the address it tested is still
@@ -58,6 +60,7 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
     Record<string, { url: string; view: ConnectionView }>
   >({});
   const [roleChange, setRoleChange] = useState<RoleChange[] | null>(null);
+  const [section, setSection] = useState<"server" | "stations" | "about">("server");
   const dialogRef = useRef<HTMLDialogElement>(null);
 
   useEffect(() => {
@@ -175,6 +178,19 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
       },
     ]);
 
+  const runExport = async () => {
+    setExportBusy(true);
+    setFailure(null);
+    setExportPath(null);
+    try {
+      setExportPath(await exportDiagnostics());
+    } catch (problem) {
+      setFailure(errorText(problem));
+    } finally {
+      setExportBusy(false);
+    }
+  };
+
   const testConnection = async () => {
     setBusy(true);
     try {
@@ -247,25 +263,54 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
   };
 
   return (
-    <div className="panel setup">
-      <div className="panel-head">
-        <div><p className="eyebrow">RfiDex / Configuration</p><h1>Setup</h1></div>
-        {hasSavedConfig && (
-          <button type="button" onClick={onCancel} disabled={busy}>
-            Close without saving
-          </button>
-        )}
-      </div>
+    <div className="subpage setup-page">
+      <nav className="subnav" aria-label="Setup sections">
+        <p className="nav-lbl">Setup</p>
+        <button
+          type="button"
+          className={section === "server" ? "subnav-btn is-active" : "subnav-btn"}
+          aria-current={section === "server" ? "page" : undefined}
+          onClick={() => setSection("server")}
+        >
+          Event server
+        </button>
+        <button
+          type="button"
+          className={section === "stations" ? "subnav-btn is-active" : "subnav-btn"}
+          aria-current={section === "stations" ? "page" : undefined}
+          onClick={() => setSection("stations")}
+        >
+          Stations
+        </button>
+        <button
+          type="button"
+          className={section === "about" ? "subnav-btn is-active" : "subnav-btn"}
+          aria-current={section === "about" ? "page" : undefined}
+          onClick={() => setSection("about")}
+        >
+          About &amp; updates
+        </button>
+      </nav>
 
-      <p className="hint">
-        Point this computer at its EventzFlow server and declare the readers
-        plugged into it. The saved API key is never shown again — it only
-        authenticates this machine to the server.
-      </p>
+      <div className="subpage-content setup-content">
+        <header className="setup-head">
+          <div>
+            <p className="eyebrow">RfiDex / Configuration</p>
+            <h1>Setup</h1>
+          </div>
+        </header>
 
-      <form onSubmit={submit}>
-        <fieldset>
-          <legend>Event server</legend>
+        <p className="hint">
+          Point this computer at its EventzFlow server and declare the readers
+          plugged into it. The saved API key is never shown again — it only
+          authenticates this machine to the server.
+        </p>
+
+        <div className="setup-body">
+        <form id="setup-form" onSubmit={submit} className="setup-form">
+        <section className={section === "server" ? "setup-section is-active" : "setup-section"}>
+          <h2 className="setup-section-title">Event server</h2>
+          <p className="setup-section-sub">The deployment this computer reports to, and the key that links it to one event.</p>
           <div className="row two">
             <div>
               <label htmlFor="server-url">Server URL</label>
@@ -314,31 +359,58 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
             Event mode: <strong>{modeName(mode)}</strong> — read from the server
             on connect; not editable here.
           </p>
-        </fieldset>
+        </section>
 
-        <fieldset>
-          <legend>Stations on this computer</legend>
-          <p className="info">
-            A station is one RFID reader plugged into this computer: a desk
-            that links tickets to tags, or a gate that records guests passing.
-            Add one for each reader.
-          </p>
+        <section className={section === "stations" ? "setup-section is-active" : "setup-section"}>
+          <h2 className="setup-section-title">Stations on this computer</h2>
+          <p className="setup-section-sub">One station per RFID reader plugged into this computer — a desk that links tickets, or a gate that records guests passing.</p>
           {stations.length === 0 && (
             <p className="empty">No stations yet. Add the ones this PC runs.</p>
           )}
           <ul className="station-editor">
-            {stations.map((station) => (
-              <li key={station.id}>
-                <div className="station-identity">
-                  <div className="field grow">
-                    <label htmlFor={`name-${station.id}`}>Name</label>
+            {stations.map((station) => {
+              const kindLabel = station.kind === "desk" ? "Desk" : station.role === "exit" ? "Exit gate" : "Entry gate";
+              const isReal = station.device.type === "ecrfid_desk" || station.device.type === "ecrfid_gate";
+              return (
+              <li key={station.id} className={`station-card is-${station.kind}`}>
+                <header className="station-card-head">
+                  <span className="station-card-icon" aria-hidden="true">
+                    {station.kind === "desk" ? (
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>
+                    ) : (
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M4 21V3h10v18M14 5h6v16M7 7h4M7 11h4M7 15h4"/><path d={station.role === "exit" ? "M10 12h10m-3-3 3 3-3 3" : "M20 12H10m3-3-3 3 3 3"}/></svg>
+                    )}
+                  </span>
+                  <span className="station-card-namewrap">
                     <input
-                      id={`name-${station.id}`}
+                      className="station-card-name"
+                      aria-label="Station name"
+                      title="Click to rename"
+                      size={Math.max(station.name.length, 10)}
                       value={station.name}
                       onChange={(event) => patch(station.id, { name: event.target.value })}
                       autoComplete="off"
+                      placeholder="Station name"
                     />
-                  </div>
+                    <svg className="station-card-pen" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+                    </svg>
+                  </span>
+                  <span className="station-card-chip">{kindLabel}</span>
+                  {isReal && <span className="station-card-real">Real reader</span>}
+                  <button
+                    type="button"
+                    className="station-card-remove"
+                    title="Remove station"
+                    aria-label={`Remove ${station.name}`}
+                    onClick={() => setStations((list) => list.filter((s) => s.id !== station.id))}
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V6h12z"/></svg>
+                  </button>
+                </header>
+
+                <div className="station-card-body">
+                <div className="station-fields">
                   <div className="field">
                     <label htmlFor={`kind-${station.id}`}>Type</label>
                     <select
@@ -357,12 +429,7 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
                       <label htmlFor={`reader-${station.id}`}>Reader</label>
                       <select
                         id={`reader-${station.id}`}
-                        value={
-                          station.device.type === "ecrfid_desk" ||
-                          station.device.type === "ecrfid_gate"
-                            ? "real"
-                            : "sim"
-                        }
+                        value={isReal ? "real" : "sim"}
                         onChange={(event) =>
                           setReaderType(station.id, event.target.value as "sim" | "real")
                         }
@@ -532,36 +599,55 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
                   </div>
                 )}
 
-                <div className="actions end">
-                  <button type="button" className="quiet-danger" onClick={() => setStations((list) => list.filter((s) => s.id !== station.id))}>
-                    Remove station
-                  </button>
                 </div>
               </li>
-            ))}
+              );
+            })}
           </ul>
           <div className="actions">
             <button type="button" onClick={addStation}>
               Add station
             </button>
-            <button className="primary" type="submit" disabled={busy}>
-              {busy ? "Saving…" : "Save setup"}
-            </button>
-            {isDirty && <span className="unsaved">Unsaved changes</span>}
           </div>
-        </fieldset>
+        </section>
+
+        <section className={section === "about" ? "setup-section is-active" : "setup-section"}>
+          <h2 className="setup-section-title">About &amp; updates</h2>
+          <p className="setup-section-sub">The installed version and any newer release ready to install.</p>
+          <Updates />
+          <h2 className="setup-section-title troubleshooting-title">Troubleshooting</h2>
+          <p className="setup-section-sub">Save a CSV report of scan and sync records for support. Guest names and your API key are excluded.</p>
+          <button type="button" onClick={() => void runExport()} disabled={exportBusy}>
+            {exportBusy ? "Exporting report…" : "Export troubleshooting report"}
+          </button>
+          {exportPath && (
+            <p className="note" role="status">
+              Troubleshooting report saved to <code className="path">{exportPath}</code>
+            </p>
+          )}
+        </section>
 
         {failure && (
           <p className="failure" role="alert">
             {failure}
           </p>
         )}
+        </form>
+        </div>
 
-        <fieldset>
-          <legend>About &amp; updates</legend>
-          <Updates />
-        </fieldset>
-      </form>
+        {section !== "about" && (
+          <div className="savebar">
+            <button className="primary" type="submit" form="setup-form" disabled={busy}>
+              {busy ? "Saving…" : "Save setup"}
+            </button>
+            {isDirty ? (
+              <span className="unsaved">Unsaved changes</span>
+            ) : (
+              <span className="savebar-note">Everything is saved</span>
+            )}
+          </div>
+        )}
+      </div>
 
       <dialog ref={dialogRef} className="confirm" aria-labelledby="direction-title" onCancel={() => setRoleChange(null)}>
         <h2 id="direction-title">Change a gate direction?</h2>

@@ -78,7 +78,7 @@ function answer(cmd: string): unknown {
           id: 12,
           captured_at: minutesAgo(5),
           name: "Ada Lovelace",
-          message: "Ticket already used at Hall B entrance.",
+          message: "The server sent a reply this app cannot read. Ask for help.",
         },
       ];
     case "gate_recent":
@@ -108,7 +108,7 @@ function answer(cmd: string): unknown {
     case "sync_now":
       return null;
     case "export_diagnostics":
-      return "/tmp/rfidex-diagnostics.zip";
+      return "/tmp/rfidex-diagnostics.csv";
     default:
       throw new Error(`preview: no demo answer for ${cmd}`);
   }

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 
-import { appState, errorText, exportDiagnostics, failureOf, inDesktopApp, status, syncNow } from "./api";
+import { appState, errorText, failureOf, inDesktopApp, status, syncNow } from "./api";
 import type { AppFailure, AppStatus, AppView, StationStatus } from "./api";
 import { Desk } from "./Desk";
 import { Gate } from "./Gate";
@@ -68,23 +68,19 @@ function Icon({ d, paths }: { d?: string; paths?: readonly string[] }) {
 
 const ICONS = {
   stations: [
-    "M5 12.5a7 7 0 0 1 14 0",
-    "M8.2 12.5a3.8 3.8 0 0 1 7.6 0",
-    "M12 15.8h.01",
-    "M3 20h18",
+    "M3 4h18v13H3Z",
+    "M8 21h8M12 17v4",
+    "M6 8h5M6 12h3M15 8h3M13 12h5",
   ],
   verify: [
-    "M4 7V5.5A1.5 1.5 0 0 1 5.5 4H7",
-    "M17 4h1.5A1.5 1.5 0 0 1 20 5.5V7",
-    "M20 17v1.5a1.5 1.5 0 0 1-1.5 1.5H17",
-    "M7 20H5.5A1.5 1.5 0 0 1 4 18.5V17",
-    "m8.6 12.2 2.3 2.3 4.5-4.8",
+    "M3 8V4h4M17 4h4v4M21 16v4h-4M7 20H3v-4",
+    "M7 9h5v6H7Z",
+    "m15 12 2 2 4-4",
   ],
   problems: "M12 8.2v5M12 16.8h.01M10.2 3.9 2.8 17a2 2 0 0 0 1.7 3h15a2 2 0 0 0 1.7-3L13.8 3.9a2 2 0 0 0-3.6 0Z",
   help: "M9.2 9a2.9 2.9 0 0 1 5.6 1c0 1.9-2.6 2.4-2.6 3.9M12 17.2h.01M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z",
   gear: "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM19 12a7 7 0 0 0-.14-1.4l2-1.55-2-3.46-2.36.95a7 7 0 0 0-2.42-1.4L13.7 2.6h-3.4l-.38 2.54a7 7 0 0 0-2.42 1.4l-2.36-.95-2 3.46 2 1.55A7 7 0 0 0 5 12c0 .48.05.94.14 1.4l-2 1.55 2 3.46 2.36-.95a7 7 0 0 0 2.42 1.4l.38 2.54h3.4l.38-2.54a7 7 0 0 0 2.42-1.4l2.36.95 2-3.46-2-1.55c.09-.46.14-.92.14-1.4Z",
   sync: "M20 11a8 8 0 0 0-14.9-3M4 13a8 8 0 0 0 14.9 3M4 4v4h4M20 20v-4h-4",
-  export: "M12 15V3M7 8l5-5 5 5M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4",
 
 } as const;
 
@@ -95,7 +91,6 @@ export function App() {
   const [selected, setSelected] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
-  const [exportPath, setExportPath] = useState<string | null>(null);
   const [theme, setTheme] = useState<Theme>(initialTheme);
 
   // Own the <html> attribute so the toggle, the bootstrap script and
@@ -228,19 +223,6 @@ export function App() {
     }
   };
 
-  const runExport = async () => {
-    setBusy(true);
-    setNotice(null);
-    setExportPath(null);
-    try {
-      setExportPath(await exportDiagnostics());
-    } catch (problem) {
-      setNotice(errorText(problem));
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const problemsCount = view.status?.problems ?? 0;
 
   const navItems: { id: Tab; label: string; icon: string | readonly string[]; badge?: number }[] = [
@@ -255,14 +237,7 @@ export function App() {
     <div className="app">
       <aside className="rail">
         <div className="rail-mark" aria-hidden="true" title="RfiDex">
-          <svg viewBox="0 0 1024 1024" focusable="false">
-            <g fill="none" stroke="currentColor" strokeWidth="84" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M 168 740 L 168 316 L 388 316 L 388 524 L 168 524" />
-              <path d="M 300 524 L 404 740" />
-              <path d="M 560 316 L 864 740" />
-              <path d="M 864 316 L 560 740" />
-            </g>
-          </svg>
+          r.
         </div>
         <nav className="rail-nav" aria-label="Sections">
           {navItems.map((item) => (
@@ -291,13 +266,9 @@ export function App() {
           <span className="topbar-title">RfiDex</span>
           <span className="topbar-crumb">Event operations</span>
           <div className="topbar-actions">
-            <button type="button" className="topbar-btn" onClick={() => void runSync()} disabled={busy}>
+            <button type="button" className="topbar-btn" aria-label={busy ? "Sync in progress" : "Sync"} title="Sync queued records" onClick={() => void runSync()} disabled={busy}>
               <Icon d={ICONS.sync} />
               <span>{busy ? "Working…" : "Sync"}</span>
-            </button>
-            <button type="button" className="topbar-btn" onClick={() => void runExport()} disabled={busy}>
-              <Icon d={ICONS.export} />
-              <span>Diagnostics</span>
             </button>
           </div>
         </header>
@@ -405,11 +376,6 @@ export function App() {
         )}
 
         {notice && <p className="note">{notice}</p>}
-        {exportPath && (
-          <p className="note">
-            Diagnostics written to <code className="path">{exportPath}</code>
-          </p>
-        )}
       </main>
       </div>
     </div>
@@ -486,14 +452,7 @@ function StartupProblem({
       <main className="startup-problem" role="alert">
         <div className="brand-lockup">
           <span className="brand-mark" aria-hidden="true">
-            <svg viewBox="0 0 1024 1024" focusable="false">
-              <g fill="none" stroke="currentColor" strokeWidth="84" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M 168 740 L 168 316 L 388 316 L 388 524 L 168 524" />
-                <path d="M 300 524 L 404 740" />
-                <path d="M 560 316 L 864 740" />
-                <path d="M 864 316 L 560 740" />
-              </g>
-            </svg>
+            r.
           </span>
           <p className="brand">RfiDex</p>
         </div>
@@ -509,12 +468,7 @@ function StartupProblem({
               <circle cx="209" cy="62" r="3" fill="var(--muted)" />
               <path d="M220 62h17" stroke="var(--muted)" strokeWidth="2" strokeLinecap="round" />
               <rect x="235" y="100" width="66" height="66" rx="13" fill="var(--accent)" />
-              <g transform="translate(235 100) scale(0.0645)" fill="none" stroke="#fff" strokeWidth="84" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M 168 740 L 168 316 L 388 316 L 388 524 L 168 524" />
-                <path d="M 300 524 L 404 740" />
-                <path d="M 560 316 L 864 740" />
-                <path d="M 864 316 L 560 740" />
-              </g>
+              <text x="252" y="147" fill="white" fontSize="48" fontWeight="700" fontFamily="system-ui, sans-serif">r.</text>
               <path d="M248 187h39" stroke="var(--muted)" strokeWidth="5" strokeLinecap="round" />
             </g>
             <g transform="rotate(-7 159 205)">

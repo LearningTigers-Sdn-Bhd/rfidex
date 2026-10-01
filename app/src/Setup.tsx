@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 
-import { errorText, setupGet, setupSave, setupTest, setupTestPrinter, updateCheck, updateInstall } from "./api";
+import { errorText, exportDiagnostics, setupGet, setupSave, setupTest, setupTestPrinter, updateCheck, updateInstall } from "./api";
 import type {
   AppStatus,
   AppView,
@@ -50,6 +50,8 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
   const [original, setOriginal] = useState<StationConfig[]>([]);
   const [keyOnFile, setKeyOnFile] = useState(hasSavedConfig);
   const [busy, setBusy] = useState(false);
+  const [exportBusy, setExportBusy] = useState(false);
+  const [exportPath, setExportPath] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   const [tested, setTested] = useState<ConnectionView | null>(null);
   // Keyed by station id, and only shown while the address it tested is still
@@ -175,6 +177,19 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
         alarm_all_panels: true,
       },
     ]);
+
+  const runExport = async () => {
+    setExportBusy(true);
+    setFailure(null);
+    setExportPath(null);
+    try {
+      setExportPath(await exportDiagnostics());
+    } catch (problem) {
+      setFailure(errorText(problem));
+    } finally {
+      setExportBusy(false);
+    }
+  };
 
   const testConnection = async () => {
     setBusy(true);
@@ -363,7 +378,7 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
                     {station.kind === "desk" ? (
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>
                     ) : (
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M4 21V8l8-5 8 5v13"/><path d="M9 21v-6h6v6"/></svg>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M4 21V3h10v18M14 5h6v16M7 7h4M7 11h4M7 15h4"/><path d={station.role === "exit" ? "M10 12h10m-3-3 3 3-3 3" : "M20 12H10m3-3-3 3 3 3"}/></svg>
                     )}
                   </span>
                   <span className="station-card-namewrap">
@@ -600,6 +615,16 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
           <h2 className="setup-section-title">About &amp; updates</h2>
           <p className="setup-section-sub">The installed version and any newer release ready to install.</p>
           <Updates />
+          <h2 className="setup-section-title troubleshooting-title">Troubleshooting</h2>
+          <p className="setup-section-sub">Save a CSV report of scan and sync records for support. Guest names and your API key are excluded.</p>
+          <button type="button" onClick={() => void runExport()} disabled={exportBusy}>
+            {exportBusy ? "Exporting report…" : "Export troubleshooting report"}
+          </button>
+          {exportPath && (
+            <p className="note" role="status">
+              Troubleshooting report saved to <code className="path">{exportPath}</code>
+            </p>
+          )}
         </section>
 
         {failure && (

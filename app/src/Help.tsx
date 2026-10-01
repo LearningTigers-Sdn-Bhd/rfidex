@@ -166,8 +166,10 @@ const SECTIONS: HelpSection[] = [
           </tbody>
         </table>
         <p>
-          A red light and buzzer on the gate means a declined pass (sticker not recognised, replaced,
-          not checked in, or ticket invalid). Read the message on screen before letting the guest through.
+          A red light and buzzer on the gate means the server confirmed a declined pass (sticker not
+          linked to a ticket, or ticket invalid). A guest who shows as a pass on the Verify screen never
+          sets it off. If the server cannot be reached in time, the gate stays silent and the pass is
+          still recorded, so watch the Problems tab. Read the message on screen before letting the guest through.
         </p>
       </>
     ),

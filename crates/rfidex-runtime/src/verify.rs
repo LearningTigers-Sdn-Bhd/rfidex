@@ -95,6 +95,19 @@ pub fn answer(sticker: &str, reply: LookupResp) -> VerifyView {
     }
 }
 
+/// Whether the server's answer is a firm "no" for a gate: nobody holds the
+/// sticker, or its ticket is invalid. The same facts `answer` turns into
+/// Unknown and Invalid, so a guest who verifies as a pass never alarms. A
+/// sticker bound to a ticket the server cannot find is a data problem, not a
+/// reason to sound the alarm on a guest.
+pub fn gate_declines(reply: &LookupResp) -> bool {
+    match (&reply.binding, &reply.holder) {
+        (None, _) => true,
+        (Some(_), Some(holder)) => !holder.valid,
+        (Some(_), None) => false,
+    }
+}
+
 /// Why the server could not answer, in words for the operator.
 pub fn server_problem(e: &ApiError) -> VerifyView {
     match e {
@@ -161,6 +174,19 @@ mod tests {
             valid,
             checked_in: true,
         }
+    }
+
+    #[test]
+    fn the_gate_declines_only_what_verify_would_not_pass() {
+        let reply = |binding, holder| LookupResp { binding, holder };
+        assert!(gate_declines(&reply(None, None)));
+        assert!(gate_declines(&reply(Some(binding()), Some(holder(false)))));
+        assert!(!gate_declines(&reply(Some(binding()), Some(holder(true)))));
+        assert!(!gate_declines(&reply(Some(binding()), None)));
+        // Whatever verify passes, the gate never declines.
+        let passed = reply(Some(binding()), Some(holder(true)));
+        assert_eq!(answer("AA", passed.clone()).state, VerifyState::Verified);
+        assert!(!gate_declines(&passed));
     }
 
     #[test]

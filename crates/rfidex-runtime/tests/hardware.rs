@@ -81,6 +81,7 @@ fn real_desk(id: u128, name: &str, hardware: HardwareConfig) -> StationConfig {
         write_start_block: 0,
         printer_url: default_printer_url(),
         alarm_all_panels: true,
+        alarm_wait_ms: 1500,
     }
 }
 
@@ -95,6 +96,7 @@ fn real_gate(id: u128, name: &str, role: Role, hardware: HardwareConfig) -> Stat
         write_start_block: 0,
         printer_url: default_printer_url(),
         alarm_all_panels: true,
+        alarm_wait_ms: 1500,
     }
 }
 

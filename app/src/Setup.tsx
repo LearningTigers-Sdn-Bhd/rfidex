@@ -175,6 +175,7 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
         write_start_block: 0,
         printer_url: DEFAULT_PRINTER_URL,
         alarm_all_panels: true,
+        alarm_wait_ms: 1500,
       },
     ]);
 
@@ -494,6 +495,25 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
                         </select>
                         <small className="field-help">
                           What a declined pass sets off on this gate.
+                        </small>
+                      </div>
+                    )}
+                    {station.kind === "gate" && station.device.type === "ecrfid_gate" && (
+                      <div className="field">
+                        <label htmlFor={`alarm-wait-${station.id}`}>Alarm check wait (ms)</label>
+                        <input
+                          id={`alarm-wait-${station.id}`}
+                          type="number"
+                          min={0}
+                          max={5000}
+                          value={station.alarm_wait_ms}
+                          onChange={(event) =>
+                            patch(station.id, { alarm_wait_ms: Number(event.target.value) })
+                          }
+                        />
+                        <small className="field-help">
+                          Before sounding the alarm, the gate asks the server whether the pass is really
+                          declined. If the server does not answer in this time, no alarm sounds. 1500 suits most venues.
                         </small>
                       </div>
                     )}

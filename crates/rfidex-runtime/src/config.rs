@@ -95,10 +95,18 @@ pub struct StationConfig {
     /// read the sticker (false). Old config files get all panels.
     #[serde(default = "default_alarm_all_panels")]
     pub alarm_all_panels: bool,
+    /// Gate: longest wait, in milliseconds, for the server to confirm that a
+    /// declined pass is really not allowed in. No answer in time means no alarm.
+    #[serde(default = "default_alarm_wait_ms")]
+    pub alarm_wait_ms: u64,
 }
 
 pub fn default_alarm_all_panels() -> bool {
     true
+}
+
+pub fn default_alarm_wait_ms() -> u64 {
+    1500
 }
 
 fn default_debounce() -> u64 {
@@ -300,6 +308,11 @@ fn validate_stations(stations: &[StationConfig]) -> Result<(), ConfigError> {
                 "The wait between repeats must be between 1 and 60 seconds.".into(),
             ));
         }
+        if station.alarm_wait_ms > 5000 {
+            return Err(ConfigError::Invalid(
+                "The alarm wait must be between 0 and 5000 milliseconds.".into(),
+            ));
+        }
         match (station.kind, station.role, &station.device) {
             (StationKind::Desk, None, DeviceChoice::SimDesk) => {}
             (StationKind::Desk, None, DeviceChoice::EcrfidDesk { hardware }) => {
@@ -365,6 +378,7 @@ mod tests {
             write_start_block: 0,
             printer_url: default_printer_url(),
             alarm_all_panels: true,
+            alarm_wait_ms: default_alarm_wait_ms(),
         }
     }
 
@@ -382,6 +396,7 @@ mod tests {
             write_start_block: 0,
             printer_url: default_printer_url(),
             alarm_all_panels: true,
+            alarm_wait_ms: default_alarm_wait_ms(),
         }
     }
 
@@ -555,6 +570,24 @@ mod tests {
         .unwrap();
         assert_eq!(omitted.debounce_secs, 5);
         assert_eq!(omitted.write_start_block, 0);
+    }
+
+    #[test]
+    fn alarm_wait_default_and_bound() {
+        let omitted: StationConfig = serde_json::from_str(
+            r#"{"id":"00000000-0000-0000-0000-000000000001","name":"Desk",
+                "kind":"desk","role":null,"device":{"type":"sim_desk"}}"#,
+        )
+        .unwrap();
+        assert_eq!(omitted.alarm_wait_ms, 1500);
+
+        let mut c = config("https://example.test", KEY, vec![gate(1, "Gate")]);
+        c.stations[0].alarm_wait_ms = 5001;
+        assert!(rejected(&c).contains("5000"));
+        for ok in [0, 5000] {
+            c.stations[0].alarm_wait_ms = ok;
+            assert!(c.validate().is_ok());
+        }
     }
 
     #[test]

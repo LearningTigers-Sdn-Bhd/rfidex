@@ -78,6 +78,8 @@ export interface StationConfig {
   printer_url: string;
   /** Library gate alarm: every panel sounds, or only the panel that read. */
   alarm_all_panels: boolean;
+  /** Gate: longest wait (ms) for the server to confirm a declined pass before the alarm sounds. */
+  alarm_wait_ms: number;
 }
 
 export interface SetupView {

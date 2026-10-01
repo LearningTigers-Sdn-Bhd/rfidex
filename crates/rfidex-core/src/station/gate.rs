@@ -24,18 +24,18 @@ pub struct Captured {
     pub delivery_id: Uuid,
     pub local: LocalGuess,
     pub tag_key: String,
+    pub uid_raw_hex: String,
 }
 
 /// Whether the local cache lets this sticker in: bound to a ticket that is
-/// valid and checked in. Unknown, unbound, revoked (binding removed), invalid
-/// or not-yet-checked-in stickers are not.
+/// valid. This is the verification screen's rule, so a guest it passes never
+/// looks declined at the gate. Unknown, unbound, revoked (binding removed) or
+/// invalid stickers are not.
 pub fn admitted(store: &Store, tag_key: &str) -> Result<bool, StoreError> {
     let Some(public_id) = store.binding_holder(tag_key)? else {
         return Ok(false);
     };
-    Ok(store
-        .ticket(public_id)?
-        .is_some_and(|t| t.valid && t.checked_in))
+    Ok(store.ticket(public_id)?.is_some_and(|t| t.valid))
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -149,6 +149,7 @@ impl<G: GateSource> GateStation<G> {
                     delivery_id,
                     local,
                     tag_key: key,
+                    uid_raw_hex: item.uid_raw_hex,
                 });
             }
         }
@@ -184,7 +185,7 @@ mod tests {
     }
 
     #[test]
-    fn only_a_bound_valid_checked_in_sticker_is_admitted() {
+    fn only_a_bound_valid_sticker_is_admitted() {
         let s = Store::open_in_memory().unwrap();
         for (n, valid, checked_in) in [(1, true, true), (2, true, false), (3, false, true)] {
             s.upsert_ticket(&ticket(n, valid, checked_in)).unwrap();
@@ -192,7 +193,7 @@ mod tests {
                 .unwrap();
         }
         assert!(admitted(&s, "TAG1").unwrap());
-        assert!(!admitted(&s, "TAG2").unwrap(), "not checked in");
+        assert!(admitted(&s, "TAG2").unwrap(), "check-in does not matter");
         assert!(!admitted(&s, "TAG3").unwrap(), "invalid ticket");
         assert!(!admitted(&s, "NOPE").unwrap(), "unknown sticker");
         s.remove_binding("TAG1").unwrap();

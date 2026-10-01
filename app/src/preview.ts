@@ -64,8 +64,8 @@ function answer(cmd: string): unknown {
       return {
         server_url: "https://events.example.com", has_api_key: true,
         stations: [
-          { id: "desk-1", name: "Front desk", kind: "desk", role: null, device: { type: "sim_desk" }, debounce_secs: 5, write_start_block: 0, printer_url: "http://127.0.0.1:8000", alarm_all_panels: true },
-          { id: "gate-1", name: "Hall A entrance", kind: "gate", role: "entry", device: { type: "sim_gate", gate_kind: "records", release_verified: false }, debounce_secs: 5, write_start_block: 0, printer_url: "", alarm_all_panels: true },
+          { id: "desk-1", name: "Front desk", kind: "desk", role: null, device: { type: "sim_desk" }, debounce_secs: 5, write_start_block: 0, printer_url: "http://127.0.0.1:8000", alarm_all_panels: true, alarm_wait_ms: 1500 },
+          { id: "gate-1", name: "Hall A entrance", kind: "gate", role: "entry", device: { type: "sim_gate", gate_kind: "records", release_verified: false }, debounce_secs: 5, write_start_block: 0, printer_url: "", alarm_all_panels: true, alarm_wait_ms: 1500 },
         ],
       } satisfies SetupView;
     case "update_check":

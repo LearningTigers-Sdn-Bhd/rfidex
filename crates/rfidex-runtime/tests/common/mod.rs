@@ -94,6 +94,7 @@ pub fn desk_station() -> StationConfig {
         write_start_block: 0,
         printer_url: rfidex_runtime::default_printer_url(),
         alarm_all_panels: true,
+        alarm_wait_ms: 1500,
     }
 }
 
@@ -111,6 +112,7 @@ pub fn gate_station(id: Uuid, name: &str, role: Role) -> StationConfig {
         write_start_block: 0,
         printer_url: rfidex_runtime::default_printer_url(),
         alarm_all_panels: true,
+        alarm_wait_ms: 1500,
     }
 }
 

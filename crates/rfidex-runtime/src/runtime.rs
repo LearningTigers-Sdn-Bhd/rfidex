@@ -487,23 +487,39 @@ impl StationRuntime {
         }
     }
 
-    /// Red light and buzzer for passes the local cache does not let in. A pass
-    /// that looks declined is checked once more against a fresh cache, so a
-    /// guest checked in at another desk a moment ago still walks through on
-    /// green. Only declined passes wait for that; admitted ones add nothing.
+    /// Red light and buzzer, but only for a pass the server itself says is not
+    /// allowed in. A pass the local cache does not admit is looked up on the
+    /// server with the verification screen's own rule (bound to a valid
+    /// ticket), so a guest who verifies as a pass never alarms. If the server
+    /// cannot answer within `alarm_wait_ms`, nothing sounds: the pass is still
+    /// saved and shows in the panel.
     async fn alarm_declined(&self, captured: Vec<rfidex_core::station::gate::Captured>) {
-        let keys: Vec<String> = captured.into_iter().map(|c| c.tag_key).collect();
+        let keys: Vec<String> = captured.iter().map(|c| c.tag_key.clone()).collect();
         let declined = self.declined(&keys);
-        if declined.is_empty() {
+        let to_check: Vec<String> = captured
+            .into_iter()
+            .filter(|c| declined.contains(&c.tag_key))
+            .map(|c| c.uid_raw_hex)
+            .collect();
+        if to_check.is_empty() {
             return;
         }
-        // Bounded: offline, or behind a slow sync, the local answer stands.
-        let _ = tokio::time::timeout(Duration::from_millis(1500), async {
-            let _guard = self.sync_lock.lock().await;
-            self.worker.refresh_cache().await
-        })
-        .await;
-        if self.declined(&declined).is_empty() {
+        // ponytail: one lookup per declined pass, in order; a crowd of
+        // declined passes at once shares the one wait.
+        let confirmed =
+            tokio::time::timeout(Duration::from_millis(self.config.alarm_wait_ms), async {
+                for hex in &to_check {
+                    if let Ok(reply) = self.client.lookup(hex).await {
+                        if crate::verify::gate_declines(&reply) {
+                            return true;
+                        }
+                    }
+                }
+                false
+            })
+            .await
+            .unwrap_or(false);
+        if !confirmed {
             return;
         }
         let StationDevice::Gate(device) = &self.device else {

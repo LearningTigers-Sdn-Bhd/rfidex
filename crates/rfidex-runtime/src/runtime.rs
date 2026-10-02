@@ -420,14 +420,16 @@ impl StationRuntime {
     /// until the job comes back: the stop flag is read again inside the worker,
     /// so a station that was reconfigured or removed while the poll ran cannot
     /// show its result on the new screen.
-    async fn gate_tick_once(&self, now: DateTime<Utc>) {
+    /// One poll. `true` when it captured at least one pass, so the loop can
+    /// poll again at once instead of waiting out the tick.
+    async fn gate_tick_once(self: &Arc<Self>, now: DateTime<Utc>) -> bool {
         let StationDevice::Gate(device) = &self.device else {
-            return;
+            return false;
         };
         if self.lock().settings.is_none() {
             // The UID rule is not known yet, so a read could not be keyed
             // correctly. Leave it in the device rather than consuming it.
-            return;
+            return false;
         }
         let device = device.clone();
         let mut stop = self.stop.clone();
@@ -449,17 +451,29 @@ impl StationRuntime {
             })
             .await;
         let Ok(Some(result)) = outcome else {
-            return;
+            return false;
         };
+        let mut captured_any = false;
         match result {
             Ok(captured) => {
+                captured_any = !captured.is_empty();
                 {
                     let mut inner = self.lock();
                     inner.connected = true;
                     inner.connection_checked = true;
                     inner.device_error = None;
                 }
-                self.alarm_declined(captured).await;
+                // The server lookup and the alarm must not hold up the next
+                // poll. The alarm still takes the device lock, so it can never
+                // run in the middle of a fetch; it restarts the fetch itself.
+                let station = self.clone();
+                let mut stop = self.stop.clone();
+                tokio::spawn(async move {
+                    tokio::select! {
+                        _ = station.alarm_declined(captured) => {}
+                        _ = stop.changed() => {}
+                    }
+                });
             }
             Err(GateError::Device(DeviceError::Disconnected)) => {
                 let mut inner = self.lock();
@@ -485,6 +499,7 @@ impl StationRuntime {
                 inner.store_error = Some(store_failure().message);
             }
         }
+        captured_any
     }
 
     /// Red light and buzzer, but only for a pass the server itself says is not
@@ -1969,10 +1984,22 @@ async fn gate_loop(station: Arc<StationRuntime>, opts: RuntimeOptions) {
             _ = ticker.tick() => {}
             _ = stop.changed() => return,
         }
-        let now = Utc::now();
-        tokio::select! {
-            _ = station.gate_tick_once(now) => {}
-            _ = stop.changed() => return,
+        // A library gate hands over one pass per fetch: keep fetching until it
+        // is empty, so a crowd is not limited to one pass per tick. Each pass
+        // is stored before the next fetch acks it, as before.
+        for _ in 0..MAX_DRAIN {
+            let now = Utc::now();
+            let more = tokio::select! {
+                more = station.gate_tick_once(now) => more,
+                _ = stop.changed() => return,
+            };
+            if !more {
+                break;
+            }
         }
     }
 }
+
+/// Most polls in a row without resting, so a gate that keeps answering cannot
+/// starve the rest of the app.
+const MAX_DRAIN: u32 = 50;

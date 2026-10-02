@@ -181,6 +181,7 @@ button:disabled { color: var(--muted); background: var(--bg-soft); border-color:
 button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 button.primary:hover:not(:disabled) { background: var(--accent-strong); border-color: var(--accent-strong); color: var(--accent-ink); }
 button.primary:disabled { background: var(--bg-soft); border-color: var(--line-soft); color: var(--muted); }
+button.danger { border-color: var(--warn-line); background: var(--warn-bg); }
 
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-radius: 4px; }
 

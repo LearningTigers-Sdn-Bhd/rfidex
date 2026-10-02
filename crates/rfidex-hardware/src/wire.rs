@@ -56,6 +56,9 @@ pub enum Operation {
     LibraryAlarm {
         mode: u8,
     },
+    /// Wipe the pass records stored on the gate (`GateClearRecords`).
+    /// Irreversible; only the operator's Setup button sends it.
+    GateClearRecords,
     Close,
 }
 

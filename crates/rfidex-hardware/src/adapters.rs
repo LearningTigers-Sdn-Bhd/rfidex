@@ -397,6 +397,22 @@ impl Reader {
         result
     }
 
+    fn clear_gate_records(&mut self) -> DeviceResult<()> {
+        self.ensure_connection()?;
+        let result = match self.connection.as_mut() {
+            Some(Connection::Sdk(client)) => match client.call(Operation::GateClearRecords) {
+                Ok(Response::Unit) => Ok(()),
+                Ok(_) => Err(DeviceError::Other(UNREADABLE.to_string())),
+                Err(e) => Err(device_error(e)),
+            },
+            _ => Err(DeviceError::WriteUnsupported),
+        };
+        if result.is_err() {
+            self.forget();
+        }
+        result
+    }
+
     fn records(&mut self, operation: Operation) -> DeviceResult<Vec<Vec<u8>>> {
         self.ensure_connection()?;
         let result = match self.connection.as_mut() {
@@ -613,6 +629,13 @@ impl EcrfidGate {
         // fresh fetch so the queue moves on.
         self.started = false;
         result
+    }
+
+    /// Wipe the pass records stored on the gate. The next poll starts a fresh
+    /// 0x02 fetch, as after an alarm.
+    pub fn clear_records(&mut self) -> DeviceResult<()> {
+        self.started = false;
+        self.reader.clear_gate_records()
     }
 
     /// Raw library-gate frames for the operator's test. Steps through the

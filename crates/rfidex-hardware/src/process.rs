@@ -493,6 +493,7 @@ fn answers(operation: &Operation, response: &Response) -> bool {
             | (Operation::RawRecords, Response::Records { .. })
             | (Operation::LibraryRecords { .. }, Response::Records { .. })
             | (Operation::LibraryAlarm { .. }, Response::Unit)
+            | (Operation::GateClearRecords, Response::Unit)
     )
 }
 

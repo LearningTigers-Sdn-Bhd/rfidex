@@ -20,6 +20,8 @@ pub enum HardwareTestAction {
     ReadTags,
     /// Raw library-gate records, shown as hex to learn their layout.
     GateRecords,
+    /// Wipe the pass records stored on the gate. Irreversible.
+    ClearGateRecords,
 }
 
 /// The most UIDs the screen shows. The message always carries the true count,
@@ -133,6 +135,14 @@ pub fn records(raw: &[Vec<u8>]) -> HardwareTestView {
         .take(SHOWN_UIDS)
         .collect();
     view(true, message, lines)
+}
+
+pub fn cleared() -> HardwareTestView {
+    view(
+        true,
+        "Gate records cleared. Passes still waiting on the gate are gone.".to_string(),
+        Vec::new(),
+    )
 }
 
 pub fn stopped() -> HardwareTestView {

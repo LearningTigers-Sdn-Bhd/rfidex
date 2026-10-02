@@ -3,7 +3,7 @@
 // Everything here is a control: Rust validates what is saved and writes every
 // outcome message. Nothing in this file decides whether a reader works, and a
 // successful test never claims a reader is verified.
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import StickerTest from "./StickerTest";
 import {
   AppView,
@@ -102,6 +102,14 @@ export default function HardwareFields({ station, dirty, onChange, onSaved }: Pr
     { revision: number; action: HardwareTestAction; view: HardwareTestView } | null
   >(null);
   const [busy, setBusy] = useState(false);
+  const [confirmingClear, setConfirmingClear] = useState(false);
+  const clearDialog = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    const dialog = clearDialog.current;
+    if (!dialog) return;
+    if (confirmingClear && !dialog.open) dialog.showModal();
+    else if (!confirmingClear && dialog.open) dialog.close();
+  }, [confirmingClear]);
   const [failure, setFailure] = useState<{ revision: number; message: string } | null>(null);
 
   const device = station.device;
@@ -243,11 +251,17 @@ export default function HardwareFields({ station, dirty, onChange, onSaved }: Pr
                 Read gate records
               </button>
             )}
+            {station.kind === "gate" && (
+              <button type="button" onClick={() => setConfirmingClear(true)} disabled={busy}>
+                Clear gate records
+              </button>
+            )}
           </div>
           {station.kind === "gate" && (
             <small className="field-help">
               Read gate records takes the next pass off the gate and does not save it. Use it for
-              setup only, never while guests are passing.
+              setup only, never while guests are passing. Clear gate records wipes the passes stored on the
+              gate for good.
             </small>
           )}
         </div>
@@ -271,6 +285,35 @@ export default function HardwareFields({ station, dirty, onChange, onSaved }: Pr
           {failure.message}
         </p>
       )}
+
+      <dialog
+        ref={clearDialog}
+        className="confirm"
+        aria-labelledby="clear-records-title"
+        onCancel={() => setConfirmingClear(false)}
+      >
+        <h2 id="clear-records-title">Clear all gate records?</h2>
+        <p>
+          This wipes every pass stored on {station.name || "this gate"}. Passes the gate has not
+          handed over yet are lost for good. This cannot be undone.
+        </p>
+        <div className="dialog-actions">
+          <button type="button" onClick={() => setConfirmingClear(false)}>
+            Cancel — keep the records
+          </button>
+          <button
+            type="button"
+            className="danger"
+            onClick={() => {
+              setConfirmingClear(false);
+              void test("clear_gate_records");
+            }}
+            disabled={busy}
+          >
+            Clear them for good
+          </button>
+        </div>
+      </dialog>
 
       {device.type === "ecrfid_desk" && hardware.transport === "ecrfid_sdk" && !dirty && (
         <StickerTest stationId={station.id} onSaved={onSaved} />

@@ -1110,6 +1110,16 @@ impl Runtime {
                     }
                 }
             },
+            HardwareTestAction::ClearGateRecords => match device {
+                StationDevice::Desk(_) => hardware::failed("Gate records are only for gates."),
+                StationDevice::Gate(g) => {
+                    let mut gate = g.lock().await;
+                    match gate.gate.clear_records() {
+                        Ok(()) => hardware::cleared(),
+                        Err(e) => hardware::from_error(&e),
+                    }
+                }
+            },
         }
     }
 
@@ -1629,16 +1639,6 @@ impl Runtime {
         Ok(true)
     }
 
-    fn station(&self, id: Uuid) -> Result<&Arc<StationRuntime>, RuntimeError> {
-        self.stations
-            .iter()
-            .find(|s| s.config.id == id)
-            .ok_or_else(|| RuntimeError::new("station_not_found", "There is no such station."))
-    }
-}
-
-const TEST_READER_BUSY: &str = "The test could not open the reader. Check that it is connected and no other program is using it.";
-
     /// The Gate screen's quick switch: set one gate's direction and save it,
     /// with no restart. Same path as a role-only Setup save.
     pub async fn set_gate_role(&self, station: Uuid, role: Role) -> Result<(), RuntimeError> {
@@ -1662,6 +1662,16 @@ const TEST_READER_BUSY: &str = "The test could not open the reader. Check that i
         }
         Ok(())
     }
+
+    fn station(&self, id: Uuid) -> Result<&Arc<StationRuntime>, RuntimeError> {
+        self.stations
+            .iter()
+            .find(|s| s.config.id == id)
+            .ok_or_else(|| RuntimeError::new("station_not_found", "There is no such station."))
+    }
+}
+
+const TEST_READER_BUSY: &str = "The test could not open the reader. Check that it is connected and no other program is using it.";
 
 fn sdk_desk_hardware(
     station: &StationConfig,

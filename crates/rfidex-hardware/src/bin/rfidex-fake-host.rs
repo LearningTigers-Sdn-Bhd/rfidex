@@ -211,6 +211,7 @@ fn name(operation: &Operation) -> &'static str {
         Operation::RawRecords => "raw_records",
         Operation::LibraryRecords { .. } => "library_records",
         Operation::LibraryAlarm { .. } => "library_alarm",
+        Operation::GateClearRecords => "gate_clear_records",
         Operation::Close => "close",
     }
 }
@@ -234,9 +235,10 @@ fn answer(
     Ok(match operation {
         // A write is answered further down, by the arm that also touches the
         // sticker's memory.
-        Operation::Open { .. } | Operation::Close | Operation::LibraryAlarm { .. } => {
-            Response::Unit
-        }
+        Operation::Open { .. }
+        | Operation::Close
+        | Operation::LibraryAlarm { .. }
+        | Operation::GateClearRecords => Response::Unit,
         Operation::Info => Response::Info {
             model: model.map(str::to_string),
             firmware: None,

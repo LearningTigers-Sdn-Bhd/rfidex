@@ -331,6 +331,7 @@ fn dispatch(
         Operation::LibraryAlarm { mode } => {
             with_reader(device, |reader| reader.library_alarm(mode))
         }
+        Operation::GateClearRecords => with_reader(device, |reader| reader.clear_records()),
     }
 }
 

@@ -205,6 +205,13 @@ impl GateDevice {
         }
     }
 
+    pub fn clear_records(&mut self) -> DeviceResult<()> {
+        match self {
+            GateDevice::Sim(_) => Ok(()),
+            GateDevice::Ecrfid(g) => g.clear_records(),
+        }
+    }
+
     pub fn library_records(&mut self) -> DeviceResult<Vec<Vec<u8>>> {
         match self {
             GateDevice::Sim(_) => Ok(Vec::new()),

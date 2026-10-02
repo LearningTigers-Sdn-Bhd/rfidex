@@ -973,6 +973,29 @@ async fn diagnostics_export_keeps_people_and_raw_uid_out() {
 }
 
 #[tokio::test]
+async fn set_gate_role_switches_and_saves_one_gate() {
+    let mut h = Harness::start(RfidMode::Bind).await;
+    h.runtime
+        .set_gate_role(entry_id(), Role::Exit)
+        .await
+        .unwrap();
+    let status = h.runtime.status().await.unwrap();
+    let gate = status.stations.iter().find(|s| s.id == entry_id()).unwrap();
+    assert_eq!(gate.role, Some(Role::Exit));
+    assert_eq!(
+        h.runtime.paths().load().unwrap().unwrap().stations[1].role,
+        Some(Role::Exit)
+    );
+    // A desk is not a gate.
+    assert!(h
+        .runtime
+        .set_gate_role(h.runtime.config().stations[0].id, Role::Exit)
+        .await
+        .is_err());
+    h.stop().await;
+}
+
+#[tokio::test]
 async fn a_gate_switches_direction_live_without_a_restart() {
     let h = Harness::start(RfidMode::Bind).await;
     let mut candidate = h.runtime.config();

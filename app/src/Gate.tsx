@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
-import { errorText, formatTime, gateRecent } from "./api";
+import { errorText, formatTime, gateRecent, gateSetRole } from "./api";
 import type { GateView, StationStatus } from "./api";
 
 interface Props {
@@ -14,6 +14,30 @@ const POLL_MS = 500;
 export function Gate({ station }: Props) {
   const [rows, setRows] = useState<GateView[]>([]);
   const [failure, setFailure] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  const [switching, setSwitching] = useState(false);
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const wanted = station.role === "exit" ? "entry" : "exit";
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    if (confirming && !dialog.open) dialog.showModal();
+    else if (!confirming && dialog.open) dialog.close();
+  }, [confirming]);
+
+  const switchDirection = async () => {
+    setSwitching(true);
+    try {
+      await gateSetRole(station.id, wanted);
+      setFailure(null);
+    } catch (problem) {
+      setFailure(errorText(problem));
+    } finally {
+      setSwitching(false);
+      setConfirming(false);
+    }
+  };
 
   useEffect(() => {
     let live = true;
@@ -63,6 +87,9 @@ export function Gate({ station }: Props) {
         <div className="gate-passage-head">
           <span className="eyebrow">Latest passage</span>
           <span className="gate-role">Recording {station.role === "exit" ? "exit" : "entry"} ↗</span>
+          <button type="button" onClick={() => setConfirming(true)} disabled={switching}>
+            Switch to {wanted}
+          </button>
         </div>
         <div className="gate-passage-body">
           <div className="gate-outcome">
@@ -118,6 +145,22 @@ export function Gate({ station }: Props) {
           ))}
         </ul>
       </section>
+
+      <dialog ref={dialogRef} className="confirm" aria-labelledby="gate-direction-title" onCancel={() => setConfirming(false)}>
+        <h2 id="gate-direction-title">Switch this gate to {wanted}?</h2>
+        <p>
+          Passages from now on are recorded as {wanted}. Everybody using this computer will see
+          the new direction.
+        </p>
+        <div className="dialog-actions">
+          <button type="button" onClick={() => setConfirming(false)}>
+            Cancel — keep {station.role === "exit" ? "exit" : "entry"}
+          </button>
+          <button type="button" onClick={() => void switchDirection()} disabled={switching}>
+            Switch to {wanted}
+          </button>
+        </div>
+      </dialog>
 
       {failure && (
         <p className="failure" role="alert">

@@ -255,6 +255,8 @@ export const deskPrint = (station: string, sessionId: string) =>
 export const deskVerify = (station: string) => invoke<VerifyView>("desk_verify", { station });
 export const gateRecent = (station: string, limit = 30) =>
   invoke<GateView[]>("gate_recent", { station, limit });
+export const gateSetRole = (station: string, role: Role) =>
+  invoke<void>("gate_set_role", { station, role });
 export const problems = () => invoke<ProblemView[]>("problems");
 export const dismissProblem = (station: string, id: number) =>
   invoke<boolean>("dismiss_problem", { station, id });

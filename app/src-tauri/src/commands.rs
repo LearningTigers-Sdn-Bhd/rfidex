@@ -374,6 +374,16 @@ pub async fn gate_recent(
 }
 
 #[tauri::command]
+pub async fn gate_set_role(
+    state: tauri::State<'_, AppState>,
+    station: Uuid,
+    role: rfidex_core::contract::Role,
+) -> Result<(), RuntimeError> {
+    let slot = current(&state).await?;
+    runtime(&slot).set_gate_role(station, role).await
+}
+
+#[tauri::command]
 pub async fn problems(state: tauri::State<'_, AppState>) -> Result<Vec<ProblemView>, RuntimeError> {
     let slot = current(&state).await?;
     runtime(&slot).problems().await

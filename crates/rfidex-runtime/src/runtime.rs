@@ -1639,6 +1639,30 @@ impl Runtime {
 
 const TEST_READER_BUSY: &str = "The test could not open the reader. Check that it is connected and no other program is using it.";
 
+    /// The Gate screen's quick switch: set one gate's direction and save it,
+    /// with no restart. Same path as a role-only Setup save.
+    pub async fn set_gate_role(&self, station: Uuid, role: Role) -> Result<(), RuntimeError> {
+        let old = self.config();
+        let mut candidate = old.clone();
+        let gate = candidate
+            .stations
+            .iter_mut()
+            .find(|s| s.id == station && s.kind == StationKind::Gate)
+            .ok_or_else(|| wrong_station("switch direction"))?;
+        gate.role = Some(role);
+        if !self.apply_gate_roles(&candidate).await? {
+            return Err(wrong_station("switch direction"));
+        }
+        if self.paths.save(&candidate).is_err() {
+            let _ = self.apply_gate_roles(&old).await;
+            return Err(RuntimeError::new(
+                "config_unwritable",
+                "The new direction could not be saved. Nothing was changed.",
+            ));
+        }
+        Ok(())
+    }
+
 fn sdk_desk_hardware(
     station: &StationConfig,
 ) -> Result<rfidex_hardware::HardwareConfig, RuntimeError> {

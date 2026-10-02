@@ -60,6 +60,7 @@ pub fn run() {
             commands::desk_print,
             commands::desk_verify,
             commands::gate_recent,
+            commands::gate_set_role,
             commands::problems,
             commands::dismiss_problem,
             commands::sync_now,

@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/rfidex-badge",
     "crates/rfidex-core",
     "crates/rfidex-hardware",
     "crates/rfidex-mock",
@@ -9,7 +10,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.6.26"
+version = "0.7.0"
 edition = "2021"
 publish = false
 

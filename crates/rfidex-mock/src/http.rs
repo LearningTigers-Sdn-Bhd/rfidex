@@ -2,7 +2,7 @@ use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use axum::extract::{Query, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{header::AUTHORIZATION, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -26,6 +26,8 @@ pub struct Faults {
 pub struct AppState {
     pub mock: Mutex<MockState>,
     pub faults: Mutex<Faults>,
+    pub public_requests: Mutex<Vec<(bool, bool)>>,
+    pub public_delay_ms: std::sync::atomic::AtomicU64,
 }
 
 impl AppState {
@@ -33,6 +35,8 @@ impl AppState {
         AppState {
             mock: Mutex::new(mock),
             faults: Mutex::new(Faults::default()),
+            public_requests: Mutex::new(Vec::new()),
+            public_delay_ms: std::sync::atomic::AtomicU64::new(0),
         }
     }
 }
@@ -134,6 +138,35 @@ async fn heartbeat(
     let resp = s.mock.lock().unwrap().heartbeat(&station, req);
     post_commit(&s).await;
     Json(resp).into_response()
+}
+
+async fn badge_ticket(
+    State(s): State<Arc<AppState>>,
+    Path((event_id, id)): Path<(i64, uuid::Uuid)>,
+    headers: HeaderMap,
+) -> Response {
+    s.public_requests.lock().unwrap().push((
+        headers.contains_key(AUTHORIZATION),
+        headers.contains_key(HEADER_STATION),
+    ));
+    let delay = s.public_delay_ms.load(std::sync::atomic::Ordering::SeqCst);
+    if delay > 0 {
+        tokio::time::sleep(Duration::from_millis(delay)).await;
+    }
+    {
+        let mut faults = s.faults.lock().unwrap();
+        if faults.down {
+            return error(503, ErrorCode::Malformed, "mock is down");
+        }
+        if faults.bad_body > 0 {
+            faults.bad_body -= 1;
+            return Json(serde_json::json!({"unexpected":true})).into_response();
+        }
+    }
+    match s.mock.lock().unwrap().badge_ticket(event_id, id) {
+        Some(data) => Json(serde_json::json!({"success":true,"data":data})).into_response(),
+        None => error(404, ErrorCode::TicketNotFound, "Ticket not found"),
+    }
 }
 
 async fn cache(State(s): State<Arc<AppState>>, headers: HeaderMap) -> Response {
@@ -257,6 +290,10 @@ async fn set_faults(State(s): State<Arc<AppState>>, Json(f): Json<Faults>) -> St
 
 pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
+        .route(
+            "/v1/public/events/{event_id}/tickets/{public_id}",
+            get(badge_ticket),
+        )
         .route(paths::HEARTBEAT, post(heartbeat))
         .route(paths::CACHE, get(cache))
         .route(paths::DESK_SCANS, post(desk_scans))

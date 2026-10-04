@@ -207,6 +207,7 @@ export interface StationStatus {
 }
 
 export interface AppStatus {
+  print_provider: string;
   stations: StationStatus[];
   pending: number;
   problems: number;
@@ -358,3 +359,41 @@ export function formatTime(value: string | null): string {
     second: "2-digit",
   });
 }
+
+export type BadgeLayout = {
+  paper: { width_mm: number; height_mm: number };
+  elements: string[];
+  custom_fields: Record<string, { label: string; backend_key: string }>;
+  element_scales: Record<string, number>;
+  element_bolds: Record<string, boolean>;
+  element_offsets: Record<string, { dx_mm: number; dy_mm: number }>;
+  vertical_offset_mm: number;
+};
+export type BadgeSettings = {
+  native_print_enabled: boolean;
+  layout: BadgeLayout;
+  presets: Record<string, BadgeLayout>;
+  active_preset: string | null;
+  thermal: boolean;
+  printer: string;
+  badge_types: string[];
+};
+export type BadgeTicket = {
+  ticket_id: string; name: string; company: string; title: string;
+  country: string; table_no: string; ticket_type: string; role: string;
+  custom: Record<string, string>;
+};
+export type BadgeSettingsView = {
+  settings: BadgeSettings;
+  printers: { names: string[]; default: string | null; supported: boolean };
+  warning: string | null;
+  provider: string;
+};
+export const badgeGet = () => invoke<BadgeSettingsView>("badge_get");
+export const badgeSave = (settings: BadgeSettings) => invoke<BadgeSettingsView>("badge_save", { settings });
+export const badgeSetEnabled = (enabled: boolean) => invoke<{native_print_enabled: boolean; provider: string}>("badge_set_enabled", { enabled });
+export const badgePreview = (layout: BadgeLayout, ticket: BadgeTicket) => invoke<string>("badge_preview", { layout, ticket });
+export const badgeTestPrint = () => invoke<string>("badge_test_print");
+export const badgeTicketTypes = () => invoke<string[]>("badge_ticket_types");
+export const badgePrint = (ticket: BadgeTicket) => invoke<string>("badge_print", { ticket });
+export const badgeImport = () => invoke<BadgeSettingsView>("badge_import");

@@ -9,6 +9,7 @@ name = "rfidex-mock"
 path = "src/main.rs"
 
 [dependencies]
+rfidex-badge = { path = "../rfidex-badge" }
 rfidex-core = { path = "../rfidex-core" }
 serde.workspace = true
 serde_json.workspace = true

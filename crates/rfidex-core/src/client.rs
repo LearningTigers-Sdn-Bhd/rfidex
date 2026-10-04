@@ -79,6 +79,7 @@ pub struct ApiClient {
     base: String,
     api_key: String,
     station: String,
+    timeout: Duration,
 }
 
 impl ApiClient {
@@ -95,6 +96,7 @@ impl ApiClient {
             base: base.trim_end_matches('/').to_string(),
             api_key: api_key.to_string(),
             station: station.to_string(),
+            timeout,
         }
     }
 
@@ -156,10 +158,40 @@ impl ApiClient {
             .await
     }
 
+    /// Public badge details never carry the event key or station header.
+    pub async fn badge_ticket(
+        &self,
+        event_id: i64,
+        public_id: uuid::Uuid,
+    ) -> Result<serde_json::Value, ApiError> {
+        let public_http = reqwest::Client::builder()
+            .timeout(self.timeout)
+            .connect_timeout(CONNECT_TIMEOUT.min(self.timeout))
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .map_err(|_| ApiError::BadResponse("Could not open the badge connection".into()))?;
+        let body: serde_json::Value = self
+            .send_plain(
+                public_http
+                    .get(self.url(&format!("/v1/public/events/{event_id}/tickets/{public_id}"))),
+            )
+            .await?;
+        body.get("data")
+            .filter(|data| data.is_object())
+            .cloned()
+            .ok_or_else(|| ApiError::BadResponse("The badge details are unreadable".into()))
+    }
+
     async fn send<T: DeserializeOwned>(&self, rb: RequestBuilder) -> Result<T, ApiError> {
+        self.send_plain(
+            rb.header(AUTHORIZATION, &self.api_key)
+                .header(HEADER_STATION, &self.station),
+        )
+        .await
+    }
+
+    async fn send_plain<T: DeserializeOwned>(&self, rb: RequestBuilder) -> Result<T, ApiError> {
         let resp = rb
-            .header(AUTHORIZATION, &self.api_key)
-            .header(HEADER_STATION, &self.station)
             .send()
             .await
             .map_err(|e| ApiError::Retryable(explain_transport(&e)))?;

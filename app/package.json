@@ -1,12 +1,12 @@
 {
   "name": "rfidex-app",
-  "version": "0.6.26",
+  "version": "0.7.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 1420 --strictPort",
     "build": "tsc --noEmit && vite build",
-    "test": "node --experimental-strip-types tests/problem-list.test.mjs",
+    "test": "node --experimental-strip-types tests/problem-list.test.mjs && node --experimental-strip-types tests/badge-layout.test.mjs",
     "preview": "vite preview",
     "tauri": "tauri"
   },

@@ -3,3 +3,5 @@
 pub mod http;
 pub mod printer;
 pub mod state;
+
+pub mod badge;

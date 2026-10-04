@@ -670,6 +670,7 @@ pub struct StationStatus {
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct AppStatus {
+    pub print_provider: String,
     pub stations: Vec<StationStatus>,
     pub pending: u64,
     pub problems: u64,
@@ -764,6 +765,7 @@ fn network_message(e: &ApiError) -> String {
 
 pub struct Runtime {
     paths: AppPaths,
+    badge: crate::BadgeService,
     config: Mutex<AppConfig>,
     library: Arc<Mutex<SimLibrary>>,
     stations: Vec<Arc<StationRuntime>>,
@@ -776,6 +778,13 @@ pub struct Runtime {
 }
 
 impl Runtime {
+    pub fn with_badge(mut self, badge: crate::BadgeService) -> Self {
+        self.badge = badge;
+        self
+    }
+    pub fn badge(&self) -> &crate::BadgeService {
+        &self.badge
+    }
     /// Start over this executable: a real reader station starts the desktop
     /// binary again in its helper mode.
     pub async fn start(
@@ -854,6 +863,7 @@ impl Runtime {
         }
 
         Ok(Runtime {
+            badge: crate::BadgeService::system(paths.clone()),
             paths,
             config: Mutex::new(config),
             library,
@@ -873,6 +883,7 @@ impl Runtime {
     /// the join open. Cancelling never takes the lock the stuck call holds, so
     /// this works even while a station's session is busy.
     pub async fn shutdown(&self) -> Result<(), RuntimeError> {
+        self.badge.cancel_pending();
         let _ = self.stop.send(true);
         self.cancel_hardware();
         // The work already started comes back as soon as its reader is
@@ -1342,6 +1353,7 @@ impl Runtime {
             return Err(wrong_station("print a badge"));
         };
         let printer_url = runtime.config.printer_url.clone();
+        let selection = self.badge.selection();
 
         let prepared = {
             let mut session = device.lock().await;
@@ -1381,9 +1393,52 @@ impl Runtime {
             (ticket.public_id, session.printing.clone())
         };
 
-        let outcome = match crate::PrinterClient::new(&printer_url) {
-            Ok(client) => client.reprint(prepared.0).await,
-            Err(e) => Err(e),
+        let outcome = if let Some(selection) = selection {
+            let native = async {
+                let event_id = runtime
+                    .settings()
+                    .map(|s| s.event.event_id)
+                    .ok_or_else(|| {
+                        RuntimeError::new("print_failed", crate::desk::OFFLINE_PRINT_MESSAGE)
+                    })?;
+                let data = runtime
+                    .client
+                    .badge_ticket(event_id, prepared.0)
+                    .await
+                    .map_err(|_| {
+                        RuntimeError::new("print_failed", crate::desk::PRINT_FAILED_MESSAGE)
+                    })?;
+                {
+                    let session = device.lock().await;
+                    if session.session_id != session_id {
+                        return Err(RuntimeError::new("stale_session","That badge belongs to a guest who is no longer on screen. Scan the ticket again."));
+                    }
+                }
+                let ticket =
+                    rfidex_badge::backend::ticket_from_backend(&data, &selection.settings.layout)
+                        .ok_or_else(|| {
+                        RuntimeError::new("print_failed", crate::desk::PRINT_FAILED_MESSAGE)
+                    })?;
+                let badge = self.badge.clone();
+                tokio::task::spawn_blocking(move || {
+                    badge.print_selected(&selection, &ticket, &prepared.0.to_string())
+                })
+                .await
+                .map_err(|_| RuntimeError::new("print_failed", crate::desk::PRINT_FAILED_MESSAGE))?
+            };
+            tokio::time::timeout(Duration::from_secs(15), native)
+                .await
+                .unwrap_or_else(|_| {
+                    Err(RuntimeError::new(
+                        "print_failed",
+                        crate::desk::PRINT_FAILED_MESSAGE,
+                    ))
+                })
+        } else {
+            match crate::PrinterClient::new(&printer_url) {
+                Ok(client) => client.reprint(prepared.0).await,
+                Err(e) => Err(e),
+            }
         };
 
         let mut session = device.lock().await;
@@ -1402,11 +1457,11 @@ impl Runtime {
                 hold: true,
                 message: Some(crate::desk::PRINTED_MESSAGE.to_string()),
             },
-            Err(_) => crate::BadgeView {
+            Err(error) => crate::BadgeView {
                 print_now: false,
                 can_reprint: true,
                 hold: true,
-                message: Some(crate::desk::PRINT_FAILED_MESSAGE.to_string()),
+                message: Some(error.message),
             },
         });
         Ok(session.badge.clone())
@@ -1521,6 +1576,7 @@ impl Runtime {
             stations.push(status);
         }
         Ok(AppStatus {
+            print_provider: self.badge.provider(),
             stations,
             pending,
             problems,
@@ -1593,6 +1649,21 @@ impl Runtime {
         inner.connected = connected;
         inner.connection_checked = true;
         Ok(())
+    }
+
+    /// The ticket types of this event, from the stations' local ticket cache.
+    pub fn ticket_types(&self) -> Vec<String> {
+        let mut types: Vec<String> = Vec::new();
+        for station in &self.stations {
+            let store = station.store.lock().unwrap_or_else(|e| e.into_inner());
+            for name in store.ticket_types().unwrap_or_default() {
+                if !types.iter().any(|t| t.eq_ignore_ascii_case(&name)) {
+                    types.push(name);
+                }
+            }
+        }
+        types.sort_by_key(|t| t.to_lowercase());
+        types
     }
 
     pub fn stations(&self) -> &[Arc<StationRuntime>] {

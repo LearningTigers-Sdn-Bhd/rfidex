@@ -454,6 +454,15 @@ impl Store {
         Ok(())
     }
 
+    /// Every ticket type in the cache, once each, for pick lists.
+    pub fn ticket_types(&self) -> StoreResult<Vec<String>> {
+        let mut statement = self.conn.prepare(
+            "SELECT DISTINCT ticket_type FROM tickets ORDER BY ticket_type COLLATE NOCASE",
+        )?;
+        let rows = statement.query_map([], |r| r.get::<_, String>(0))?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
     /// The offline half of desk search: name only, because the cache holds no
     /// email or phone by design. The same minimum and the same `%q%` rule as the
     /// server apply, on the stored normalised name. The cache holds no creation

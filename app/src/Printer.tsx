@@ -19,11 +19,12 @@ const sample: BadgeTicket = {
   custom: {},
 };
 
-type Section = "printer" | "fields" | "layouts" | "manual" | "import";
+type Section = "printer" | "fields" | "types" | "layouts" | "manual" | "import";
 
 const SECTIONS: readonly (readonly [Section, string])[] = [
   ["printer", "Printer & paper"],
   ["fields", "Badge fields"],
+  ["types", "Badge types"],
   ["layouts", "Saved layouts"],
   ["manual", "Manual print"],
   ["import", "Import"],
@@ -57,7 +58,7 @@ function TicketTypeField({ id, label, value, types, onChange }: {
         <option value={OTHER}>Other…</option>
       </select>
       {typed && <input aria-label={`${label}, typed`} className="printer-other" value={value} placeholder="Type the ticket type" onChange={(e) => onChange(e.target.value)} />}
-      <small className="field-help">{types.length > 0 ? "The event's ticket types and the ones you added under Badge types." : "Common types. The event's own types appear once this PC has loaded its tickets. Add your own under Badge types."}</small>
+      <small className="field-help">{types.length > 0 ? "The event's ticket types and the ones you added in Badge types." : "Common types. The event's own types appear once this PC has loaded its tickets. Add your own in Badge types."}</small>
     </div>
   );
 }
@@ -444,6 +445,38 @@ export function Printer() {
                 </div>
               </section>
 
+              <section className={sectionClass("types")}>
+                <h2 className="setup-section-title">Badge types</h2>
+                <p className="setup-section-sub">Add your own ticket types, such as Sponsor or Press, so you can pick them each time in Manual print.</p>
+                <div className="station-card">
+                  <CardHead icon={ICON.layers} title="Badge types" chip={`${settings.badge_types.length} added`} />
+                  <div className="station-card-body">
+                    <p className="printer-explain">Ticket types you add here are offered every time in the guest's Ticket type list, next to the event's own, so you can pick one for a badge.</p>
+                    {settings.badge_types.length > 0 && (
+                      <ul className="type-chips">
+                        {settings.badge_types.map((name) => (
+                          <li key={name}>
+                            <span>{name}</span>
+                            <button type="button" aria-label={`Remove ${name}`} disabled={busy} onClick={() => change({ badge_types: settings.badge_types.filter((t) => t !== name) })}>×</button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    <div className="inline-test">
+                      <input aria-label="New ticket type" maxLength={40} placeholder="e.g. Sponsor" value={newType} disabled={busy} onChange={(e) => setNewType(e.target.value)} />
+                      <button
+                        type="button"
+                        disabled={busy || !newType.trim() || settings.badge_types.length >= 30 || settings.badge_types.some((t) => t.toLowerCase() === newType.trim().toLowerCase())}
+                        onClick={() => { change({ badge_types: [...settings.badge_types, newType.trim()] }); setNewType(""); }}
+                      >
+                        Add type
+                      </button>
+                    </div>
+                    <small className="field-help">Types are kept on this PC when you press Save printer settings or print a badge.</small>
+                  </div>
+                </div>
+              </section>
+
               <section className={sectionClass("layouts")}>
                 <h2 className="setup-section-title">Saved layouts</h2>
                 <p className="setup-section-sub">Keep a layout for each kind of stock, and switch between them here.</p>
@@ -502,33 +535,6 @@ export function Printer() {
                   <div className="station-card-body">
                     <p className={printerStatus.ok ? "note" : "failure"} role="status">{printerStatus.text}</p>
                     <small className="field-help">Works with either printing method and never changes a desk. It uses the printer, paper and layout set in this page, and saves any changes first.</small>
-                  </div>
-                </div>
-                <div className="station-card">
-                  <CardHead icon={ICON.layers} title="Badge types" chip={`${settings.badge_types.length} added`} />
-                  <div className="station-card-body">
-                    <p className="printer-explain">Ticket types you add here are offered every time in the guest's Ticket type list, next to the event's own, so you can pick one for a badge.</p>
-                    {settings.badge_types.length > 0 && (
-                      <ul className="type-chips">
-                        {settings.badge_types.map((name) => (
-                          <li key={name}>
-                            <span>{name}</span>
-                            <button type="button" aria-label={`Remove ${name}`} disabled={busy} onClick={() => change({ badge_types: settings.badge_types.filter((t) => t !== name) })}>×</button>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                    <div className="inline-test">
-                      <input aria-label="New ticket type" maxLength={40} placeholder="e.g. Sponsor" value={newType} disabled={busy} onChange={(e) => setNewType(e.target.value)} />
-                      <button
-                        type="button"
-                        disabled={busy || !newType.trim() || settings.badge_types.length >= 30 || settings.badge_types.some((t) => t.toLowerCase() === newType.trim().toLowerCase())}
-                        onClick={() => { change({ badge_types: [...settings.badge_types, newType.trim()] }); setNewType(""); }}
-                      >
-                        Add type
-                      </button>
-                    </div>
-                    <small className="field-help">Types are kept on this PC when you press Save printer settings or print a badge.</small>
                   </div>
                 </div>
                 <div className="station-card printer-guest-card">

@@ -5,6 +5,7 @@
 
 use std::fmt;
 
+pub mod badge;
 pub mod config;
 pub mod desk;
 pub mod devices;
@@ -59,3 +60,7 @@ impl fmt::Display for RuntimeError {
 }
 
 impl std::error::Error for RuntimeError {}
+
+pub use badge::{BadgeService, BadgeSettingsView, PrintersView};
+pub use rfidex_badge::layout::{Layout as BadgeLayout, Ticket as BadgeTicket};
+pub use rfidex_badge::settings::Settings as BadgeSettings;

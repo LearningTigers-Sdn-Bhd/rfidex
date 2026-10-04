@@ -26,6 +26,9 @@ pub struct AppPaths {
 }
 
 impl AppPaths {
+    pub fn badge_file(&self) -> PathBuf {
+        self.root.join("badge.json")
+    }
     pub fn new(root: PathBuf) -> Self {
         AppPaths {
             config_file: root.join("config.json"),

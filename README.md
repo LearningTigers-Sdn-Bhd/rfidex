@@ -377,38 +377,40 @@ Online check-in times are the original server timestamps formatted in the PC's l
 
 ## Badge printing
 
-RfiDex delegates layout and physical printing to **event-printing**, running on the same PC. Rust sends one ticket public ID; the printer app fetches the guest and applies its configured badge layout. RfiDex does not duplicate badge-field mapping.
+RfiDex can print badges two ways, chosen per PC (shared by every desk) under **Setup → Badge printing → Badge printing method**: the separate **event-printing app** (the current method, selected by default, including after an upgrade) or **Built-in** printing, where RfiDex draws and prints the badge itself. Choosing the event-printing app keeps each desk's **event-printing address** and its Setup test button. No reader restart is needed to switch.
 
-### Configuration
+### Built-in printing (Windows)
 
-1. Install and start event-printing on the desk PC.
-2. Configure **direct mode**, backend URL and event slug in that app.
-3. Set each RfiDex desk's **Printer address** in Setup. Default: `http://127.0.0.1:8000`.
-4. Select **Test printer** to request health and show its configured printer name.
+1. Open **Printer**, pick the printer (or Windows default) and set the paper size.
+2. Review the live preview. Select, reorder and adjust fields, add up to six custom fields, and save layouts for different stock. The thin-stroke fix thickens output for direct-thermal stock.
+3. Optionally **Import from event-printing**, then confirm. Only layout/preset/thermal settings import; the printer choice and the printing method are kept. Connection details and API keys never import.
+4. Save, then press **Test print**; it works with either method and does not touch live desks. Validate the physical badge, size, QR and non-Latin names on this Windows PC, then choose **Built-in** under Setup → Badge printing. Choosing it checks that the chosen printer is installed.
+5. **Manual print** (Printer tab) prints one badge from details you type, with a large preview. Use it to check the printer is connected and the layout is right, or to print for a guest who is not in EventzFlow. It works with either method and never changes a desk.
+6. If built-in printing has trouble, choose the **event-printing app** again and keep it running with its prior settings. Badges already submitted to the Windows queue may still print; check the paper before requesting another badge.
 
-Only loopback addresses are accepted. A printer app on another PC is not supported. Health verifies that the app responds, not that a physical printer has produced a badge.
+Layouts and the switch are saved atomically in `badge.json`, apart from station settings and API credentials in `config.json`. Missing or unreadable badge settings leave the event-printing app selected. Editing, importing and previewing never change the method or print. Preview works on macOS; paper output uses Windows GDI with Arial and system font fallback/shaping.
 
-| Scan/print outcome | Desk behavior |
+Built-in printing fetches badge fields from `GET /v1/public/events/{event_id}/tickets/{public_id}`, using the heartbeat event ID. No API key or station header is sent; redirects are refused. It renders a bitmap directly, applies the stock adjustments and submits one Windows spooler job. No PDF or second application is required when Built-in is selected.
+
+### event-printing app (separate program)
+
+1. Install and start event-printing on this PC in direct mode with the backend URL and event slug.
+2. Keep each desk's **event-printing address** in Setup → Stations (default `http://127.0.0.1:8000`), then press **Test event-printing**.
+
+Only loopback addresses are accepted. The retained client uses `GET /health` and `POST /scan/{public_id}/reprint`, never the check-in endpoint. It sends no key or station header, disables redirects and environment proxies, and preserves the existing 10-second timeout. Health confirms the app responds, not that paper came out.
+
+| Scan/print outcome | Desk behaviour |
 | :-- | :-- |
-| **New online check-in** | One automatic print attempt; sticker work proceeds independently |
-| **Already checked in** | No automatic print; `Already checked in at HH:MM` and **Reprint badge** |
-| **Offline scan queued** | No print; `Offline — press Reprint when back online` |
-| **Submission failure or timeout** | `Badge not printed — press Reprint`; no automatic retry |
-| **Manual Reprint** | Explicit print request without another check-in |
+| New online check-in | One attempt through the selected method; sticker work continues independently |
+| Already checked in | No automatic print; Reprint remains available |
+| Offline scan queued | No print; press Reprint when back online |
+| Failure or timeout | Rust explains the failure; no automatic retry or provider fallback |
+| Manual Reprint | Explicit print request without another check-in |
 
-The timeout is **10 seconds**. A timeout may mean the job printed but the response was lost, so retry is an operator decision. Successful HTTP submission does not prove physical delivery. Printing never blocks sticker processing, but sticker validation/write failures remain independent errors.
-
-```http
-GET /health
-POST /scan/{public_id}/reprint
-```
-
-These requests originate in Rust, not the webview. No EventzFlow API key or station-auth header is sent. The printer client disables redirects and environment proxies. It never calls the printer's check-in endpoint.
-
-Queue drain, cache refresh, heartbeat and restart do **not** trigger printing. Offline work does not produce a badge automatically after reconnecting.
+Built-in printing has a 15-second timeout. A timeout or a method switch cannot recall a job already submitted; staff decide whether another badge is needed. Switching back to the event-printing app invalidates pending built-in fetch/render jobs before submission, even if Built-in is selected again. Switching methods, syncing, reconnecting or restarting never replays prints. Built-in failures do not stop check-in, sticker linking, gates or sync. A switch cannot contain a process crash inside a native printer driver; test on the real desk PC.
 
 > [!WARNING]
-> **Keep the SalesCatalyst print workflow OFF for RfiDex events.** EventzFlow's `ticket.scanned` webhook also fires on RfiDex check-ins and does not identify the initiating app. Both print paths can produce duplicate badges. Keep the workflow as backup only; enable it when staff stop using RfiDex printing.
+> **Keep the SalesCatalyst print workflow OFF for RfiDex events**, regardless of provider. The check-in webhook also fires for RfiDex guests and can cause duplicate badges. Keep it as a backup only when staff stop using RfiDex printing.
 
 <a id="architecture"></a>
 
@@ -429,7 +431,9 @@ flowchart TB
     SYNC --> DB
     SYNC --> API[EventzFlow device API]
     CORE --> API
-    DESK -. Credential-free HTTP .-> PRINT[Loopback event-printing]
+    DESK --> BADGE[rfidex-badge: built-in method]
+    BADGE --> WIN[Windows printer]
+    DESK -. event-printing method: credential-free HTTP .-> PRINT[Loopback event-printing]
     MOCK[rfidex-mock] -. Implements during development .-> API
     classDef runtime fill:#12384a,stroke:#38cbb0,color:#fff
     classDef storage fill:#253253,stroke:#90acff,color:#fff
@@ -439,18 +443,19 @@ flowchart TB
 
 | Path | Responsibility |
 | :-- | :-- |
+| [`crates/rfidex-badge`](crates/rfidex-badge) | Badge layout, system font shaping, raster rendering, field mapping and guarded Windows GDI printing |
 | [`crates/rfidex-core`](crates/rfidex-core) | Wire contracts, tag identity, payload codec, device traits, SQLite, API client, sync and station logic |
 | [`crates/rfidex-runtime`](crates/rfidex-runtime) | Station ownership/lifecycle, desk sessions, search, print requests, operator outcomes, problems and diagnostics |
 | [`crates/rfidex-mock`](crates/rfidex-mock) | In-memory device API, fictional seeds, fault injection and fake printer support for tests |
 | [`app/src-tauri`](app/src-tauri) | Native lifecycle, command forwarding, packaging and updater integration |
-| [`app/src`](app/src) | Setup, Desk, Gate, Problems and Simulator presentation |
+| [`app/src`](app/src) | Setup, Printer, Desk, Gate, Problems and Simulator presentation |
 
 ### Contract boundaries
 
 - **Event server:** raw `Authorization: <key>` plus `X-RfiDex-Station: <uuid>` on device requests. One station's client is not reused as another station's identity.
 - **Desk check-in:** response distinguishes `checked_in` / `already_checked_in` and includes the first check-in timestamp. Idempotent operation replay returns its original response.
 - **Bindings:** explicit replacement confirmation and reason; written payload readback must succeed before binding.
-- **Printer:** loopback-only, separate client, no event credential and no badge-layout logic.
+- **Printer:** the built-in method uses the per-PC badge service and guarded GDI submission; the event-printing method retains the loopback-only client. Both paths send no event credential.
 - **Cache:** normalized names for offline search, no full email/phone records; existing databases migrate in place.
 
 Wire definitions live in [`contract.rs`](crates/rfidex-core/src/contract.rs), with [JSON fixtures](crates/rfidex-core/tests/fixtures) and [mock integration tests](crates/rfidex-mock/tests). Installed dependency versions are recorded in [Cargo.toml](Cargo.toml), [app/package.json](app/package.json) and their lockfiles.

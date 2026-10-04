@@ -103,6 +103,7 @@ pub struct MockState {
     pub received_order: Vec<Uuid>,
     pub stations: HashMap<String, HeartbeatReq>,
     tickets: HashMap<Uuid, MockTicket>,
+    badge_fields: HashMap<Uuid, serde_json::Value>,
     bindings: Vec<MockBinding>,
     desk_ops: HashMap<Uuid, DeskScanResp>,
     bind_ops: HashMap<Uuid, BindingResp>,
@@ -119,6 +120,22 @@ fn key_of(uid_raw_hex: &str) -> Option<String> {
 }
 
 impl MockState {
+    pub fn set_badge_fields(&mut self, id: Uuid, fields: serde_json::Value) {
+        self.badge_fields.insert(id, fields);
+    }
+
+    pub fn badge_ticket(&self, event_id: i64, id: Uuid) -> Option<serde_json::Value> {
+        if event_id != self.event.event_id {
+            return None;
+        }
+        let ticket = self.tickets.get(&id)?;
+        Some(serde_json::json!({
+            "public_id": id, "attendee_name": ticket.summary.name,
+            "ticket_type": ticket.summary.ticket_type, "role": null,
+            "custom_fields_data": self.badge_fields.get(&id).cloned().unwrap_or(serde_json::json!({}))
+        }))
+    }
+
     pub fn new(api_key: String, event: EventSettings, seeds: Vec<SeedTicket>) -> MockState {
         let tickets = seeds
             .into_iter()
@@ -167,6 +184,7 @@ impl MockState {
             received_order: Vec::new(),
             stations: HashMap::new(),
             tickets,
+            badge_fields: HashMap::new(),
             bindings: Vec::new(),
             desk_ops: HashMap::new(),
             bind_ops: HashMap::new(),

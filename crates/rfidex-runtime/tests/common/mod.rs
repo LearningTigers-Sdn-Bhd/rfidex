@@ -126,6 +126,7 @@ pub fn three_stations() -> Vec<StationConfig> {
 
 pub struct Harness {
     pub runtime: Runtime,
+    pub printing: Arc<rfidex_mock::badge::FakePrinting>,
     pub server: Arc<AppState>,
     pub paths: AppPaths,
     pub base: String,
@@ -282,6 +283,8 @@ impl Harness {
             stations,
         };
         paths.save(&config).unwrap();
+        let printing = Arc::new(rfidex_mock::badge::FakePrinting::default());
+        let badge = rfidex_runtime::BadgeService::with_printing(paths.clone(), printing.clone());
         let runtime = match &launcher {
             Some(executable) => Runtime::start_with_launcher(
                 paths.clone(),
@@ -294,9 +297,11 @@ impl Harness {
             None => Runtime::start(paths.clone(), config, opts.clone())
                 .await
                 .unwrap(),
-        };
+        }
+        .with_badge(badge);
         Harness {
             runtime,
+            printing,
             server: state,
             paths,
             base,
@@ -325,7 +330,11 @@ impl Harness {
             HostLauncher::new(launcher),
         )
         .await
-        .unwrap();
+        .unwrap()
+        .with_badge(rfidex_runtime::BadgeService::with_printing(
+            self.paths.clone(),
+            self.printing.clone(),
+        ));
     }
 
     /// The same restart, while the server is unreachable, so the test can check
@@ -335,7 +344,11 @@ impl Harness {
         let config = self.runtime.config().clone();
         self.runtime = Runtime::start(self.paths.clone(), config, self.opts.clone())
             .await
-            .unwrap();
+            .unwrap()
+            .with_badge(rfidex_runtime::BadgeService::with_printing(
+                self.paths.clone(),
+                self.printing.clone(),
+            ));
     }
 
     /// A station is operational when every station is online, and the desk has

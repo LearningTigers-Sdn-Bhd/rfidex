@@ -3,7 +3,7 @@
 // screens render with believable data, no Rust side needed. Never shipped:
 // preview mode is dev-only, and Vite removes this module from production builds.
 
-import type { AppView, DeskView, GateView, SearchView, SetupView, StationStatus, UpdateView, VerifyView } from "./api";
+import type { BadgeSettings, BadgeSettingsView, AppView, DeskView, GateView, SearchView, SetupView, StationStatus, UpdateView, VerifyView } from "./api";
 
 const minutesAgo = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
 
@@ -51,11 +51,47 @@ const gate: StationStatus = {
 
 const appView: AppView = {
   configured: true,
-  status: { stations: [desk, gate], pending: 3, problems: 1, alarm: null },
+  status: { print_provider: "Badge printing: event-printing app", stations: [desk, gate], pending: 3, problems: 1, alarm: null },
 };
 
-function answer(cmd: string): unknown {
+let badgeSettings: BadgeSettings = {
+  native_print_enabled: false, printer: "Zebra ZD421", thermal: false, badge_types: ["Sponsor"], presets: {}, active_preset: null,
+  layout: {paper:{width_mm:100,height_mm:80},elements:["name","role","company","qr"],custom_fields:{},element_scales:{},element_bolds:{},element_offsets:{},vertical_offset_mm:0},
+};
+const provider = () => badgeSettings.native_print_enabled ? "Badge printing: built-in" : "Badge printing: event-printing app";
+const badgeView = (): BadgeSettingsView => ({ settings: structuredClone(badgeSettings), printers: {names:["Zebra ZD421","Card printer"],default:"Zebra ZD421",supported:true}, warning:null,provider:provider() });
+
+function answer(cmd: string, args: Record<string, unknown> = {}): unknown {
   switch (cmd) {
+    case "badge_get": return badgeView();
+    case "badge_save": {
+      const enabled = badgeSettings.native_print_enabled;
+      badgeSettings = structuredClone(args.settings as BadgeSettings);
+      badgeSettings.native_print_enabled = enabled;
+      return badgeView();
+    }
+    case "badge_set_enabled": {
+      badgeSettings.native_print_enabled = args.enabled === true;
+      if (appView.status) appView.status.print_provider = provider();
+      return {native_print_enabled:badgeSettings.native_print_enabled,provider:provider()};
+    }
+    case "badge_ticket_types":
+      return ["Delegate", "Speaker", "VIP", "Visitor"];
+    case "badge_test_print":
+    case "badge_print":
+      return "Preview only. No badge was printed.";
+    case "badge_import": {
+      badgeSettings.layout.paper = {width_mm:104,height_mm:155};
+      badgeSettings.presets.Card = structuredClone(badgeSettings.layout);
+      badgeSettings.active_preset = "Card";
+      return badgeView();
+    }
+    case "badge_preview": {
+      const ticket = args.ticket as {name:string;company:string};
+      const escape = (value:string) => value.replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;");
+      const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="500" height="400"><rect width="500" height="400" fill="white"/><text x="250" y="100" text-anchor="middle" font-family="Arial,sans-serif" font-size="30">${escape(ticket.name)}</text><text x="250" y="150" text-anchor="middle" font-family="Arial,sans-serif" font-size="20">${escape(ticket.company)}</text><text x="250" y="290" text-anchor="middle" font-family="sans-serif" font-size="16">UI preview only</text></svg>`;
+      return `data:image/svg+xml,${encodeURIComponent(svg)}`;
+    }
     case "app_state":
       return appView;
     case "status":
@@ -69,7 +105,7 @@ function answer(cmd: string): unknown {
         ],
       } satisfies SetupView;
     case "update_check":
-      return { current: "0.6.26", available: null, notes: null } satisfies UpdateView;
+      return { current: "0.7.0", available: null, notes: null } satisfies UpdateView;
     case "problems":
       return [
         {
@@ -129,12 +165,12 @@ function answer(cmd: string): unknown {
 
 declare global {
   interface Window {
-    __TAURI_INTERNALS__?: { invoke: (cmd: string) => Promise<unknown> };
+    __TAURI_INTERNALS__?: { invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown> };
   }
 }
 
 export function installPreviewBridge() {
   window.__TAURI_INTERNALS__ = {
-    invoke: (cmd: string) => Promise.resolve(answer(cmd)),
+    invoke: (cmd: string, args?: Record<string, unknown>) => Promise.resolve().then(() => answer(cmd,args)),
   };
 }

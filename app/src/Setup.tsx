@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 
-import { errorText, exportDiagnostics, setupGet, setupSave, setupTest, setupTestPrinter, updateCheck, updateInstall } from "./api";
+import { badgeGet, badgeSetEnabled, errorText, exportDiagnostics, setupGet, setupSave, setupTest, setupTestPrinter, updateCheck, updateInstall } from "./api";
 import type {
   AppStatus,
   AppView,
@@ -60,8 +60,45 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
     Record<string, { url: string; view: ConnectionView }>
   >({});
   const [roleChange, setRoleChange] = useState<RoleChange[] | null>(null);
-  const [section, setSection] = useState<"server" | "stations" | "about">("server");
+  const [section, setSection] = useState<"server" | "stations" | "printing" | "about">("server");
   const dialogRef = useRef<HTMLDialogElement>(null);
+  // The badge printing method applies at once and is not part of Save below.
+  const [method, setMethod] = useState<{ enabled: boolean; supported: boolean } | null>(null);
+  const [methodBusy, setMethodBusy] = useState(false);
+  const [methodResult, setMethodResult] = useState<{ ok: boolean; text: string } | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    badgeGet()
+      .then((next) => {
+        if (live) setMethod({ enabled: next.settings.native_print_enabled, supported: next.printers.supported });
+      })
+      .catch((problem) => {
+        if (live) setMethodResult({ ok: false, text: errorText(problem) });
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  const chooseMethod = async (builtIn: boolean) => {
+    setMethodBusy(true);
+    setMethodResult(null);
+    try {
+      const next = await badgeSetEnabled(builtIn);
+      setMethod((current) => (current ? { ...current, enabled: next.native_print_enabled } : current));
+      setMethodResult({
+        ok: true,
+        text: next.native_print_enabled
+          ? "Built-in printing is now selected."
+          : "The event-printing app is now selected.",
+      });
+    } catch (problem) {
+      setMethodResult({ ok: false, text: errorText(problem) });
+    } finally {
+      setMethodBusy(false);
+    }
+  };
 
   useEffect(() => {
     let live = true;
@@ -282,6 +319,14 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
           onClick={() => setSection("stations")}
         >
           Stations
+        </button>
+        <button
+          type="button"
+          className={section === "printing" ? "subnav-btn is-active" : "subnav-btn"}
+          aria-current={section === "printing" ? "page" : undefined}
+          onClick={() => setSection("printing")}
+        >
+          Badge printing
         </button>
         <button
           type="button"
@@ -537,7 +582,7 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
                     )}
                     {station.kind === "desk" && (
                       <div className="printer-field">
-                        <label htmlFor={`printer-${station.id}`}>Printer address</label>
+                        <label htmlFor={`printer-${station.id}`}>event-printing address</label>
                         <div className="inline-test">
                           <input
                             id={`printer-${station.id}`}
@@ -554,12 +599,13 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
                             onClick={() => void testPrinter(station)}
                             disabled={busy}
                           >
-                            Test printer
+                            Test event-printing
                           </button>
                         </div>
                         <small className="field-help">
-                          Local badge-printer bridge, not the EventzFlow server.
-                          Default http://127.0.0.1:8000 — start the bridge, then test.
+                          Used only when the badge printing method is the event-printing app.
+                          It is the separate event-printing program on this PC (default
+                          http://127.0.0.1:8000), not the EventzFlow server.
                         </small>
                         {printerTests[station.id]?.url === station.printer_url.trim() && (
                           <p
@@ -629,6 +675,57 @@ export function Setup({ hasSavedConfig, status, onSaved, onCancel }: Props) {
               Add station
             </button>
           </div>
+        </section>
+
+        <section className={section === "printing" ? "setup-section is-active" : "setup-section"}>
+          <h2 className="setup-section-title">Badge printing</h2>
+          <p className="setup-section-sub">How this computer prints guest badges. Your choice applies at once; you do not need to press Save.</p>
+          <fieldset className="print-method" disabled={method === null || methodBusy}>
+            <legend>Badge printing method</legend>
+            <label className="print-method-option">
+              <input
+                type="radio"
+                name="print-method"
+                checked={method !== null && !method.enabled}
+                onChange={() => void chooseMethod(false)}
+              />
+              <span>
+                <strong>event-printing app</strong> (separate program) — the current method
+                <small className="field-help">
+                  RfiDex asks the event-printing app on this PC to print each badge. Keep that app
+                  running and set each desk's event-printing address under Stations.
+                </small>
+              </span>
+            </label>
+            <label className="print-method-option">
+              <input
+                type="radio"
+                name="print-method"
+                checked={method !== null && method.enabled}
+                disabled={method !== null && !method.supported}
+                onChange={() => void chooseMethod(true)}
+              />
+              <span>
+                <strong>Built-in</strong> (RfiDex prints the badge itself)
+                <small className="field-help">
+                  Uses the printer and layout chosen in the Printer tab, with no other app. Press
+                  Test print in the Printer tab and check the badge before choosing this.
+                </small>
+              </span>
+            </label>
+          </fieldset>
+          {method !== null && !method.supported && (
+            <p className="note">Built-in printing works on Windows only.</p>
+          )}
+          {methodResult && (
+            <p className={methodResult.ok ? "note" : "failure"} role="status">
+              {methodResult.text}
+            </p>
+          )}
+          <p className="field-help">
+            Switching never restarts the readers. A badge already sent to the Windows print queue
+            may still print after you switch.
+          </p>
         </section>
 
         <section className={section === "about" ? "setup-section is-active" : "setup-section"}>

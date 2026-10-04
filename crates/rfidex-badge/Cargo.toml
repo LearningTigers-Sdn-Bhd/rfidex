@@ -1,0 +1,16 @@
+[package]
+name = "rfidex-badge"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+cosmic-text = { version = "0.19", default-features = false, features = ["std", "swash"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
+qrcode = { version = "0.14", default-features = false }
+serde.workspace = true
+serde_json.workspace = true
+unicode-segmentation = "1"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Graphics_Printing", "Win32_Storage_Xps"] }

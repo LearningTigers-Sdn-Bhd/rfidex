@@ -25,8 +25,10 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(move |app| {
             let root = app.path().app_local_data_dir()?;
+            let paths = AppPaths::new(root);
             app.manage(AppState {
-                paths: AppPaths::new(root),
+                badge: rfidex_runtime::BadgeService::system(paths.clone()),
+                paths,
                 runtime: tokio::sync::RwLock::new(None),
             });
             Ok(())
@@ -52,6 +54,14 @@ pub fn run() {
             commands::setup_save,
             commands::setup_test,
             commands::setup_test_printer,
+            commands::badge_get,
+            commands::badge_save,
+            commands::badge_set_enabled,
+            commands::badge_preview,
+            commands::badge_test_print,
+            commands::badge_print,
+            commands::badge_ticket_types,
+            commands::badge_import,
             commands::status,
             commands::desk_scan,
             commands::desk_link,

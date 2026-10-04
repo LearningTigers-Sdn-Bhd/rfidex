@@ -18,6 +18,7 @@ use uuid::Uuid;
 
 pub struct AppState {
     pub paths: AppPaths,
+    pub badge: rfidex_runtime::BadgeService,
     /// `None` until the first `app_state` call starts the stations, and `None`
     /// again after a save that could not start them.
     pub runtime: RwLock<Option<Arc<Runtime>>>,
@@ -80,7 +81,7 @@ async fn try_restore(state: &AppState, slot: &mut Option<Arc<Runtime>>) {
     match state.paths.load() {
         Ok(Some(config)) => {
             match Runtime::start(state.paths.clone(), config, RuntimeOptions::default()).await {
-                Ok(runtime) => *slot = Some(Arc::new(runtime)),
+                Ok(runtime) => *slot = Some(Arc::new(runtime.with_badge(state.badge.clone()))),
                 Err(_) => *slot = None,
             }
         }
@@ -138,7 +139,9 @@ pub async fn app_state(state: tauri::State<'_, AppState>) -> Result<AppView, Run
             })
         }
     };
-    let runtime = Runtime::start(state.paths.clone(), config, RuntimeOptions::default()).await?;
+    let runtime = Runtime::start(state.paths.clone(), config, RuntimeOptions::default())
+        .await?
+        .with_badge(state.badge.clone());
     let status = runtime.status().await?;
     *slot = Some(Arc::new(runtime));
     Ok(AppView {
@@ -273,23 +276,26 @@ async fn restart_with(
     )
     .await
     {
-        Ok(runtime) => match state.paths.save(&candidate) {
-            Ok(()) => {
-                let status = runtime.status().await?;
-                *slot = Some(Arc::new(runtime));
-                Ok(AppView {
-                    configured: true,
-                    status: Some(status),
-                })
+        Ok(runtime) => {
+            let runtime = runtime.with_badge(state.badge.clone());
+            match state.paths.save(&candidate) {
+                Ok(()) => {
+                    let status = runtime.status().await?;
+                    *slot = Some(Arc::new(runtime));
+                    Ok(AppView {
+                        configured: true,
+                        status: Some(status),
+                    })
+                }
+                Err(e) => {
+                    // Nothing was saved, so the old setup is still the truth.
+                    drop(runtime);
+                    let error = config_error(e);
+                    try_restore(state, slot).await;
+                    Err(error)
+                }
             }
-            Err(e) => {
-                // Nothing was saved, so the old setup is still the truth.
-                drop(runtime);
-                let error = config_error(e);
-                try_restore(state, slot).await;
-                Err(error)
-            }
-        },
+        }
         Err(e) => {
             try_restore(state, slot).await;
             Err(e)
@@ -588,4 +594,101 @@ pub async fn update_install(
         ));
     }
     Ok(())
+}
+
+async fn badge_work<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, RuntimeError> + Send + 'static,
+) -> Result<T, RuntimeError> {
+    tokio::task::spawn_blocking(work).await.map_err(|_| RuntimeError::new("badge_task_failed", "The badge operation stopped. RFID stations are still running. Open Printer and try again."))?
+}
+
+#[derive(Serialize)]
+pub struct BadgeModeView {
+    native_print_enabled: bool,
+    provider: String,
+}
+
+#[tauri::command]
+pub async fn badge_get(
+    state: tauri::State<'_, AppState>,
+) -> Result<rfidex_runtime::BadgeSettingsView, RuntimeError> {
+    let badge = state.badge.clone();
+    badge_work(move || Ok(badge.view())).await
+}
+#[tauri::command]
+pub async fn badge_save(
+    state: tauri::State<'_, AppState>,
+    settings: rfidex_runtime::BadgeSettings,
+) -> Result<rfidex_runtime::BadgeSettingsView, RuntimeError> {
+    let badge = state.badge.clone();
+    badge_work(move || {
+        badge.save(settings)?;
+        Ok(badge.view())
+    })
+    .await
+}
+#[tauri::command]
+pub async fn badge_set_enabled(
+    state: tauri::State<'_, AppState>,
+    enabled: bool,
+) -> Result<BadgeModeView, RuntimeError> {
+    let badge = state.badge.clone();
+    badge_work(move || {
+        badge.set_enabled(enabled)?;
+        Ok(BadgeModeView {
+            native_print_enabled: badge.selection().is_some(),
+            provider: badge.provider(),
+        })
+    })
+    .await
+}
+#[tauri::command]
+pub async fn badge_preview(
+    state: tauri::State<'_, AppState>,
+    layout: Option<rfidex_runtime::BadgeLayout>,
+    ticket: rfidex_runtime::BadgeTicket,
+) -> Result<String, RuntimeError> {
+    let badge = state.badge.clone();
+    badge_work(move || badge.preview(layout, &ticket)).await
+}
+#[tauri::command]
+pub async fn badge_test_print(state: tauri::State<'_, AppState>) -> Result<String, RuntimeError> {
+    let badge = state.badge.clone();
+    badge_work(move || {
+        badge.test_print()?;
+        Ok("Test badge sent to the printer. Check the paper.".into())
+    })
+    .await
+}
+/// The event's ticket types for the Manual print pick list. Empty until a
+/// station has loaded its cache, and when nothing is set up yet.
+#[tauri::command]
+pub async fn badge_ticket_types(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<String>, RuntimeError> {
+    let running = state.runtime.read().await.clone();
+    Ok(running.map(|r| r.ticket_types()).unwrap_or_default())
+}
+#[tauri::command]
+pub async fn badge_print(
+    state: tauri::State<'_, AppState>,
+    ticket: rfidex_runtime::BadgeTicket,
+) -> Result<String, RuntimeError> {
+    let badge = state.badge.clone();
+    badge_work(move || {
+        badge.print_ticket(&ticket, "manual")?;
+        Ok("Badge sent to the printer. Check the paper.".into())
+    })
+    .await
+}
+#[tauri::command]
+pub async fn badge_import(
+    state: tauri::State<'_, AppState>,
+) -> Result<rfidex_runtime::BadgeSettingsView, RuntimeError> {
+    let badge = state.badge.clone();
+    badge_work(move || {
+        badge.import_from(None)?;
+        Ok(badge.view())
+    })
+    .await
 }

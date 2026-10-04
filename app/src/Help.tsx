@@ -79,7 +79,7 @@ const SECTIONS: HelpSection[] = [
           <dt>Sticker did not link</dt>
           <dd>Press <strong>Try the sticker again</strong>. Check the sticker sits flat on the reader.</dd>
           <dt>Badge did not print</dt>
-          <dd>Press <strong>Reprint badge</strong>. If it still fails, check the badge printer app is running on this PC.</dd>
+          <dd>Open <strong>Printer</strong>, check the printer name and press <strong>Test print</strong>. If Setup → <strong>Badge printing</strong> is set to the event-printing app, check that app is running. Press <strong>Reprint badge</strong> only if a badge is still needed.</dd>
           <dt>Wrong ticket scanned</dt>
           <dd>Press <strong>Cancel and start over</strong>.</dd>
           <dt>Guest lost or damaged the sticker</dt>
@@ -252,7 +252,8 @@ const SECTIONS: HelpSection[] = [
     body: (
       <ol>
         <li>Add a station with Type <em>Desk</em> and choose the Reader (leave the DLL path empty if <code>ECRFID.dll</code> is in the RfiDex folder).</li>
-        <li>Set the <strong>Printer address</strong> only if the badge printer app is on this PC, then use its test button.</li>
+        <li>Badge printing starts on the <strong>event-printing app</strong> (the current method). Keep that app running and its <strong>event-printing address</strong> under Stations for rollback.</li>
+        <li>To use built-in printing, open <strong>Printer</strong>, choose the printer and badge layout, press <strong>Test print</strong> and check the badge, then pick <strong>Built-in</strong> under Setup → <strong>Badge printing</strong>. Switching back is instant and never restarts the readers; a badge already sent to the Windows print queue may still print.</li>
         <li>Writing stickers is off until the <em>Sticker write test</em> passes with a spare sticker.</li>
       </ol>
     ),

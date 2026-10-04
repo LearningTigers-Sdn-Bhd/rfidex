@@ -6,6 +6,7 @@ import type { AppFailure, AppStatus, AppView, StationStatus } from "./api";
 import { Desk } from "./Desk";
 import { Gate } from "./Gate";
 import { Help } from "./Help";
+import { Printer } from "./Printer";
 import { Problems } from "./Problems";
 import { Setup } from "./Setup";
 import { Simulator } from "./Simulator";
@@ -14,7 +15,7 @@ import { Verify } from "./Verify";
 /** The status bar refreshes after each answer, never on an overlapping clock. */
 const STATUS_MS = 1000;
 
-type Tab = "station" | "verify" | "problems" | "help" | "setup";
+type Tab = "printer" | "station" | "verify" | "problems" | "help" | "setup";
 
 type Theme = "light" | "dark" | "system";
 const THEME_ORDER: Theme[] = ["system", "light", "dark"];
@@ -77,6 +78,7 @@ const ICONS = {
     "M7 9h5v6H7Z",
     "m15 12 2 2 4-4",
   ],
+  printer: ["M6 9V3h12v6", "M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2", "M6 14h12v7H6z"],
   problems: "M12 8.2v5M12 16.8h.01M10.2 3.9 2.8 17a2 2 0 0 0 1.7 3h15a2 2 0 0 0 1.7-3L13.8 3.9a2 2 0 0 0-3.6 0Z",
   help: "M9.2 9a2.9 2.9 0 0 1 5.6 1c0 1.9-2.6 2.4-2.6 3.9M12 17.2h.01M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z",
   gear: "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM19 12a7 7 0 0 0-.14-1.4l2-1.55-2-3.46-2.36.95a7 7 0 0 0-2.42-1.4L13.7 2.6h-3.4l-.38 2.54a7 7 0 0 0-2.42 1.4l-2.36-.95-2 3.46 2 1.55A7 7 0 0 0 5 12c0 .48.05.94.14 1.4l-2 1.55 2 3.46 2.36-.95a7 7 0 0 0 2.42 1.4l.38 2.54h3.4l.38-2.54a7 7 0 0 0 2.42-1.4l2.36.95 2-3.46-2-1.55c.09-.46.14-.92.14-1.4Z",
@@ -186,7 +188,8 @@ export function App() {
     return (
       <div className="app">
         <main className="workspace">
-          <Setup
+          <nav className="actions" aria-label="Setup sections"><button type="button" onClick={() => setTab("setup")}>Setup</button><button type="button" onClick={() => setTab("printer")}>Printer</button></nav>
+          {tab === "printer" ? <Printer /> : <Setup
             hasSavedConfig={view.configured}
             status={view.status}
             onSaved={(saved) => {
@@ -194,7 +197,7 @@ export function App() {
               setNotice("Setup saved.");
             }}
             onCancel={() => setTab("station")}
-          />
+          />}
         </main>
       </div>
     );
@@ -228,6 +231,7 @@ export function App() {
   const navItems: { id: Tab; label: string; icon: string | readonly string[]; badge?: number }[] = [
     { id: "station", label: "Console", icon: ICONS.stations },
     ...(verifyDesk ? [{ id: "verify" as Tab, label: "Verify", icon: ICONS.verify as string | readonly string[] }] : []),
+    { id: "printer", label: "Printer", icon: ICONS.printer },
     { id: "problems", label: "Problems", icon: ICONS.problems, badge: problemsCount },
     { id: "help", label: "Help", icon: ICONS.help },
     { id: "setup", label: "Setup", icon: ICONS.gear },
@@ -274,7 +278,9 @@ export function App() {
         </header>
 
         <main className={onVerify ? "workspace is-stage" : "workspace"}>
-        {tab === "help" ? (
+        {tab === "printer" ? (
+          <Printer />
+        ) : tab === "help" ? (
           <Help />
         ) : tab === "setup" ? (
           <Setup
@@ -331,6 +337,7 @@ export function App() {
                     <span className={`connection${!station.connection_checked ? " unknown" : station.connected ? "" : " disconnected"}`}>
                       {!station.connection_checked ? "Reader not checked" : station.connected ? "Reader connected" : "Reader disconnected"}
                     </span>
+                    {station.kind === "desk" && <span className="hint">{view.status?.print_provider}</span>}
                     {station.simulated && <span className="simulation-label">Simulated</span>}
                   </div>
                 </div>

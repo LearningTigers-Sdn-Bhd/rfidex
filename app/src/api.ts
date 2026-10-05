@@ -375,6 +375,7 @@ export type BadgeSettings = {
   presets: Record<string, BadgeLayout>;
   active_preset: string | null;
   thermal: boolean;
+  rotate_90: boolean;
   printer: string;
   badge_types: string[];
 };

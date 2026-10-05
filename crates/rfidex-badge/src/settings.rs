@@ -25,6 +25,8 @@ pub struct Settings {
     pub active_preset: Option<String>,
     /// Thicker strokes, for direct-thermal stock that drops dots.
     pub thermal: bool,
+    /// Rotate the badge for stock loaded across the shorter edge.
+    pub rotate_90: bool,
     /// The Windows printer's name. Empty means the Windows default printer.
     pub printer: String,
     /// Ticket types added by hand, offered in Manual print next to the event's own.
@@ -77,6 +79,7 @@ impl Settings {
             presets,
             active_preset,
             thermal: self.thermal,
+            rotate_90: self.rotate_90,
             printer: self.printer.trim().chars().take(MAX_PRINTER_NAME).collect(),
             badge_types: clean_types(self.badge_types),
         }
@@ -115,6 +118,7 @@ impl Settings {
                 .get("direct_thermal")
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
+            rotate_90: keep.rotate_90,
             printer: keep.printer,
             // event-printing's own Badge types come across, added to this PC's.
             badge_types: keep
@@ -170,12 +174,14 @@ mod tests {
     fn event_printing_layouts_come_across_and_credentials_do_not() {
         let keep = Settings {
             printer: "Zebra ZD421".into(),
+            rotate_90: true,
             ..Settings::default()
         };
         let imported = Settings::from_event_printing(EVENT_PRINTING, keep).unwrap();
         assert_eq!(imported.layout.paper.width_mm, 104.0);
         assert_eq!(imported.layout.vertical_offset_mm, 4.0);
         assert!(imported.thermal);
+        assert!(imported.rotate_90);
         assert_eq!(imported.printer, "Zebra ZD421");
         assert_eq!(imported.presets.len(), 1, "the unusable preset is dropped");
         assert_eq!(imported.active_preset.as_deref(), Some("Card"));

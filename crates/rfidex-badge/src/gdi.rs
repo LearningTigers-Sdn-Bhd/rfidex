@@ -7,8 +7,9 @@ use image::GrayImage;
 use windows::core::{w, PCWSTR, PWSTR};
 use windows::Win32::Graphics::Gdi::{
     CreateDCW, DeleteDC, GetDeviceCaps, StretchDIBits, BITMAPINFO, BITMAPINFOHEADER, BI_RGB,
-    DEVMODEW, DIB_RGB_COLORS, DM_IN_BUFFER, DM_OUT_BUFFER, DM_PAPERLENGTH, DM_PAPERSIZE,
-    DM_PAPERWIDTH, HDC, HORZRES, LOGPIXELSX, RGBQUAD, SRCCOPY, VERTRES,
+    DEVMODEW, DIB_RGB_COLORS, DMORIENT_PORTRAIT, DM_IN_BUFFER, DM_ORIENTATION, DM_OUT_BUFFER,
+    DM_PAPERLENGTH, DM_PAPERSIZE, DM_PAPERWIDTH, HDC, HORZRES, LOGPIXELSX, RGBQUAD, SRCCOPY,
+    VERTRES,
 };
 use windows::Win32::Graphics::Printing::{
     ClosePrinter, DocumentPropertiesW, EnumPrintersW, GetDefaultPrinterW, OpenPrinterW,
@@ -111,7 +112,7 @@ unsafe fn print_open(
     job: &Job,
     render: &dyn Fn(f64) -> GrayImage,
 ) -> Result<(), PrintError> {
-    let hdc = create_dc(handle, name_w, job.paper)?;
+    let hdc = create_dc(handle, name_w, &job.paper_size(), job.rotate_90)?;
     let outcome = send_page(hdc, job, render);
     let _ = DeleteDC(hdc);
     outcome
@@ -126,6 +127,7 @@ unsafe fn create_dc(
     handle: PRINTER_HANDLE,
     name_w: &[u16],
     paper: &Paper,
+    rotate_90: bool,
 ) -> Result<HDC, PrintError> {
     let name = PCWSTR(name_w.as_ptr());
     let size = DocumentPropertiesW(None, handle, name, None, None, 0);
@@ -134,11 +136,17 @@ unsafe fn create_dc(
         let devmode = backing.as_mut_ptr() as *mut DEVMODEW;
         if DocumentPropertiesW(None, handle, name, Some(devmode), None, DM_OUT_BUFFER.0) == IDOK {
             let sizes = &mut (*devmode).Anonymous1.Anonymous1;
+            if rotate_90 {
+                sizes.dmOrientation = DMORIENT_PORTRAIT as i16;
+            }
             sizes.dmPaperSize = 0; // 0 = use the width and length below
             sizes.dmPaperWidth = (paper.width_mm * 10.0).round() as i16; // tenths of a mm
             sizes.dmPaperLength = (paper.height_mm * 10.0).round() as i16;
             (*devmode).dmFields =
                 (*devmode).dmFields | DM_PAPERSIZE | DM_PAPERWIDTH | DM_PAPERLENGTH;
+            if rotate_90 {
+                (*devmode).dmFields |= DM_ORIENTATION;
+            }
             let merged = DocumentPropertiesW(
                 None,
                 handle,
@@ -183,7 +191,13 @@ unsafe fn send_page(
     let printable_w = GetDeviceCaps(Some(hdc), HORZRES).max(1) as u32;
     let printable_h = GetDeviceCaps(Some(hdc), VERTRES).max(1) as u32;
     let dpi = render_dpi(job.thermal, GetDeviceCaps(Some(hdc), LOGPIXELSX));
-    let page = prepare(&render(dpi), printable_w, printable_h, job.thermal);
+    let page = prepare(
+        &render(dpi),
+        printable_w,
+        printable_h,
+        job.thermal,
+        job.rotate_90,
+    );
 
     let document = wide(&format!("RfiDex badge {}", job.document));
     let info = DOCINFOW {

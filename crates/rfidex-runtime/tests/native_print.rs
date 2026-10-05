@@ -298,3 +298,38 @@ async fn late_fetch_never_prints_for_replaced_guest() {
     }
     h.stop().await;
 }
+
+#[tokio::test]
+async fn sideways_roll_is_saved_and_used_by_desk_manual_and_test_prints() {
+    let mut h = Harness::start(RfidMode::Bind).await;
+    let mut json = serde_json::to_value(BadgeSettings::default()).unwrap();
+    json["rotate_90"] = true.into();
+    h.runtime
+        .badge()
+        .save(serde_json::from_value(json).unwrap())
+        .unwrap();
+    h.restart_runtime().await;
+    assert_eq!(
+        serde_json::to_value(h.runtime.badge().view().settings).unwrap()["rotate_90"],
+        true
+    );
+    h.runtime.badge().set_enabled(true).unwrap();
+    let scan = h
+        .runtime
+        .desk_scan(desk_id(), &ticket(1).to_string())
+        .await
+        .unwrap();
+    h.runtime
+        .desk_print(desk_id(), scan.session_id)
+        .await
+        .unwrap();
+    h.runtime
+        .badge()
+        .print_ticket(&rfidex_badge::layout::Ticket::default(), "manual")
+        .unwrap();
+    h.runtime.badge().test_print().unwrap();
+    let jobs = h.printing.jobs();
+    assert_eq!(jobs.len(), 3);
+    assert!(jobs.iter().all(|job| job.paper_tenths_mm == (800, 1000)));
+    h.stop().await;
+}

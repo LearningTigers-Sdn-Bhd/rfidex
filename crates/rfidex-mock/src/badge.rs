@@ -92,8 +92,8 @@ impl Printing for FakePrinting {
                 document: job.document.into(),
                 thermal: job.thermal,
                 paper_tenths_mm: (
-                    (job.paper.width_mm * 10.0).round() as i32,
-                    (job.paper.height_mm * 10.0).round() as i32,
+                    (job.paper_size().width_mm * 10.0).round() as i32,
+                    (job.paper_size().height_mm * 10.0).round() as i32,
                 ),
                 pixels: image.dimensions(),
                 dark_pixels: image.pixels().filter(|p| p.0[0] < 220).count(),

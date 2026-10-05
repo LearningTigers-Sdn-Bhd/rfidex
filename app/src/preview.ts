@@ -55,7 +55,7 @@ const appView: AppView = {
 };
 
 let badgeSettings: BadgeSettings = {
-  native_print_enabled: false, printer: "Zebra ZD421", thermal: false, badge_types: ["Sponsor"], presets: {}, active_preset: null,
+  native_print_enabled: false, printer: "Zebra ZD421", thermal: false, rotate_90: false, badge_types: ["Sponsor"], presets: {}, active_preset: null,
   layout: {paper:{width_mm:100,height_mm:80},elements:["name","role","company","qr"],custom_fields:{},element_scales:{},element_bolds:{},element_offsets:{},vertical_offset_mm:0},
 };
 const provider = () => badgeSettings.native_print_enabled ? "Badge printing: built-in" : "Badge printing: event-printing app";

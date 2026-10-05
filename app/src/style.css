@@ -1234,7 +1234,7 @@ dialog .checkbox input { width: 19px; }
 .printer-side { position: sticky; top: 0; }
 .printer-card-title { margin: 0 auto 0 0; font-size: 15px; font-weight: 650; letter-spacing: -0.01em; }
 .printer-paper { display: grid; place-items: center; padding: 16px; background: var(--inset); border: 1px solid var(--line-soft); border-radius: var(--radius); min-height: 140px; }
-.printer-paper img { display: block; max-width: 100%; max-height: 420px; height: auto; background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25); }
+.printer-paper :is(img, svg) { display: block; max-width: 100%; max-height: 420px; height: auto; background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25); }
 .printer-explain { margin: 0 0 16px; color: var(--ink-2); font-size: 13.5px; line-height: 1.55; max-width: 62ch; }
 .printer-option { flex: 1 1 320px; }
 .printer-position { flex: 1 1 380px; }
@@ -1285,7 +1285,7 @@ input.switch:disabled { opacity: 0.5; cursor: not-allowed; }
 /* Manual print: the form takes a narrow column and the preview gets the room. */
 .printer-workbench.is-manual { grid-template-columns: minmax(300px, 400px) minmax(0, 1fr); }
 .printer-workbench.is-manual .printer-paper { min-height: 320px; padding: 24px; }
-.printer-workbench.is-manual .printer-paper img { max-height: 640px; }
+.printer-workbench.is-manual .printer-paper :is(img, svg) { max-height: 640px; }
 .printer-guest-card .station-fields { grid-template-columns: 1fr; }
 .printer-guest-card .actions { margin-top: 18px; }
 @media (max-width: 1100px) {

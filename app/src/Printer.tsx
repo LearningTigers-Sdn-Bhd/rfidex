@@ -367,6 +367,14 @@ export function Printer() {
                         )}
                       </div>
                       <div className="station-cluster">
+                        <div className="printer-option">
+                          <label className="switch-row">
+                            <span>Rotate print 90°</span>
+                            <input type="checkbox" role="switch" className="switch" checked={settings.rotate_90} disabled={busy} onChange={(e) => change({ rotate_90: e.target.checked })} />
+                          </label>
+                          <small className="field-help">For stickers loaded 80 mm across × 100 mm along the feed. Rotates the whole badge; keep the 100 × 80 mm sticker layout.</small>
+                          <small className="field-help">Loaded stock: {settings.rotate_90 ? layout.paper.height_mm : layout.paper.width_mm} mm across × {settings.rotate_90 ? layout.paper.width_mm : layout.paper.height_mm} mm along the feed. Preview follows the print rotation.</small>
+                        </div>
                         <div className="field printer-position">
                           <Stepper id="vertical-position" label="Vertical position" unit="mm" min={-40} max={40} step={0.5} value={layout.vertical_offset_mm} disabled={busy} onChange={(n) => editLayout(setVertical(layout, n))} />
                           <small className="field-help">Moves the whole badge up (negative) or down (positive) on the paper.</small>
@@ -581,11 +589,15 @@ export function Printer() {
             </div>
 
             <aside className="station-card printer-side" aria-label="Live preview">
-              <CardHead icon={ICON.eye} title="Live preview" chip={`${layout.paper.width_mm} × ${layout.paper.height_mm} mm`} />
+              <CardHead icon={ICON.eye} title="Live preview" chip={`${settings.rotate_90 ? layout.paper.height_mm : layout.paper.width_mm} × ${settings.rotate_90 ? layout.paper.width_mm : layout.paper.height_mm} mm`} />
               <div className="station-card-body">
                 {previewError && <p className="failure" role="alert">{previewError}</p>}
                 <div className="printer-paper">
-                  {image ? <img src={image} alt="Sample badge preview" /> : <p className="hint">Drawing preview…</p>}
+                  {image ? settings.rotate_90 ? (
+                    <svg role="img" aria-label="Sample badge preview rotated 90 degrees" width={layout.paper.height_mm * 5} height={layout.paper.width_mm * 5} viewBox={`0 0 ${layout.paper.height_mm} ${layout.paper.width_mm}`}>
+                      <image href={image} width={layout.paper.width_mm} height={layout.paper.height_mm} transform={`translate(${layout.paper.height_mm} 0) rotate(90)`} />
+                    </svg>
+                  ) : <img src={image} alt="Sample badge preview" /> : <p className="hint">Drawing preview…</p>}
                 </div>
                 <small className="field-help">Sample guest only. The preview never prints.</small>
                 {section !== "manual" && (

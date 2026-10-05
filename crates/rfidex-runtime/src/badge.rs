@@ -246,6 +246,7 @@ impl BadgeService {
             printer: &settings.printer,
             paper: &settings.layout.paper,
             thermal: settings.thermal,
+            rotate_90: settings.rotate_90,
             document,
             submission: Some(&guard),
         };
@@ -278,6 +279,7 @@ impl BadgeService {
             printer: &settings.printer,
             paper: &settings.layout.paper,
             thermal: settings.thermal,
+            rotate_90: settings.rotate_90,
             document,
             submission: None,
         };

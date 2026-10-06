@@ -3213,7 +3213,7 @@ dependencies = [
 
 [[package]]
 name = "rfidex-app"
-version = "0.7.4"
+version = "0.7.5"
 dependencies = [
  "rfidex-core",
  "rfidex-hardware",
@@ -3229,7 +3229,7 @@ dependencies = [
 
 [[package]]
 name = "rfidex-badge"
-version = "0.7.4"
+version = "0.7.5"
 dependencies = [
  "cosmic-text",
  "image",
@@ -3242,7 +3242,7 @@ dependencies = [
 
 [[package]]
 name = "rfidex-core"
-version = "0.7.4"
+version = "0.7.5"
 dependencies = [
  "chrono",
  "reqwest",
@@ -3257,7 +3257,7 @@ dependencies = [
 
 [[package]]
 name = "rfidex-hardware"
-version = "0.7.4"
+version = "0.7.5"
 dependencies = [
  "chrono",
  "rfidex-core",
@@ -3271,7 +3271,7 @@ dependencies = [
 
 [[package]]
 name = "rfidex-mock"
-version = "0.7.4"
+version = "0.7.5"
 dependencies = [
  "axum",
  "chrono",
@@ -3287,7 +3287,7 @@ dependencies = [
 
 [[package]]
 name = "rfidex-runtime"
-version = "0.7.4"
+version = "0.7.5"
 dependencies = [
  "base64 0.22.1",
  "chrono",

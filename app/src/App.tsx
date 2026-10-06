@@ -5,6 +5,7 @@ import { appState, errorText, failureOf, inDesktopApp, status, syncNow } from ".
 import type { AppFailure, AppStatus, AppView, StationStatus } from "./api";
 import { Desk } from "./Desk";
 import { Gate } from "./Gate";
+import { GateDisplay } from "./GateDisplay";
 import { Help } from "./Help";
 import { Printer } from "./Printer";
 import { Problems } from "./Problems";
@@ -92,6 +93,7 @@ export function App() {
   const [tab, setTab] = useState<Tab>("station");
   const [selected, setSelected] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [displayOpen, setDisplayOpen] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [theme, setTheme] = useState<Theme>(initialTheme);
 
@@ -360,6 +362,11 @@ export function App() {
                     <div><dt>Attention</dt><dd className={problemsCount > 0 ? "is-warn" : ""}>{problemsCount}</dd></div>
                     <div><dt>Stations</dt><dd>{stations.length}</dd></div>
                   </dl>
+                  {station.kind === "gate" && (
+                    <button type="button" className="rail-display-btn" onClick={() => setDisplayOpen(true)}>
+                      Open display
+                    </button>
+                  )}
                   <div className="rail-block">
                     <h3>About this station</h3>
                     {station.kind === "desk" ? (
@@ -380,6 +387,10 @@ export function App() {
               {import.meta.env.DEV && <Simulator station={station} />}
             </div>
           )
+        )}
+
+        {displayOpen && station?.kind === "gate" && (
+          <GateDisplay station={station} onClose={() => setDisplayOpen(false)} />
         )}
 
         {notice && <p className="note">{notice}</p>}

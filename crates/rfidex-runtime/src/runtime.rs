@@ -2024,6 +2024,13 @@ async fn sync_loop(station: Arc<StationRuntime>) {
                 let _guard = station.sync_lock.lock().await;
                 tokio::select! {
                     _ = async {
+                        // Send queued readings and check-ins first: on a weak
+                        // link the full snapshot can run to its timeout, and
+                        // the queue must not wait behind it.
+                        match station.worker.run_once(now).await {
+                            Ok(report) => station.note_sync_report(&report, now),
+                            Err(_) => station.note_store_error(),
+                        }
                         if refresh {
                             // Stamp before the result: a failed (e.g. timed-out)
                             // full snapshot waits the normal 60s instead of
@@ -2033,10 +2040,6 @@ async fn sync_loop(station: Arc<StationRuntime>) {
                                 Ok(()) => station.note_cache_ok(),
                                 Err(e) => station.note_cache_error(&e),
                             }
-                        }
-                        match station.worker.run_once(now).await {
-                            Ok(report) => station.note_sync_report(&report, now),
-                            Err(_) => station.note_store_error(),
                         }
                     } => {}
                     _ = stop.changed() => return,

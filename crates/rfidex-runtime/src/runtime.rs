@@ -50,7 +50,9 @@ impl Default for RuntimeOptions {
         Self {
             heartbeat: Duration::from_secs(30),
             gate_poll: Duration::from_millis(250),
-            client_timeout: Duration::from_secs(5),
+            // A slow server must not turn a desk scan into an "offline" one.
+            // An unreachable server still fails fast on the connect timeout.
+            client_timeout: Duration::from_secs(10),
         }
     }
 }
@@ -2009,18 +2011,26 @@ async fn sync_loop(station: Arc<StationRuntime>) {
         }
         if station.lock().event_ok {
             let now = Utc::now();
-            let refresh = last_cache.is_none_or(|t| t.elapsed() >= Duration::from_secs(60));
+            // A desk asks the server on every scan and only reads the cache
+            // offline, so it refreshes rarely; a gate decides from the cache
+            // on every pass and keeps the 60s refresh.
+            let every = match station.kind() {
+                StationKind::Desk => Duration::from_secs(300),
+                _ => Duration::from_secs(60),
+            };
+            let refresh = last_cache.is_none_or(|t| t.elapsed() >= every);
             let prune = last_prune.is_none_or(|t| t.elapsed() >= Duration::from_secs(3600));
             {
                 let _guard = station.sync_lock.lock().await;
                 tokio::select! {
                     _ = async {
                         if refresh {
+                            // Stamp before the result: a failed (e.g. timed-out)
+                            // full snapshot waits the normal 60s instead of
+                            // retrying every second and piling on a loaded server.
+                            last_cache = Some(Instant::now());
                             match station.worker.refresh_cache().await {
-                                Ok(()) => {
-                                    last_cache = Some(Instant::now());
-                                    station.note_cache_ok();
-                                }
+                                Ok(()) => station.note_cache_ok(),
                                 Err(e) => station.note_cache_error(&e),
                             }
                         }

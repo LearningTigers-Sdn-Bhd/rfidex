@@ -75,6 +75,7 @@ pub fn run() {
             commands::dismiss_problem,
             commands::sync_now,
             commands::export_diagnostics,
+            commands::export_problems,
             commands::sim_place,
             commands::sim_clear,
             commands::sim_pass,

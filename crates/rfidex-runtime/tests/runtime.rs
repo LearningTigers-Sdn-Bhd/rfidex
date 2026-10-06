@@ -973,6 +973,30 @@ async fn diagnostics_export_keeps_people_and_raw_uid_out() {
 }
 
 #[tokio::test]
+async fn export_problems_keeps_unsent_scans_with_uid_and_role() {
+    let mut h = Harness::start(RfidMode::Bind).await;
+    h.set_down(true);
+    h.runtime.sim_pass(exit_id(), TAG_A).await.unwrap();
+    eventually("the passage to be saved unsent", || async {
+        h.store_of(exit_id()).count(OutboxState::Pending).unwrap() == 1
+    })
+    .await;
+
+    let path = h.runtime.export_problems().await.unwrap();
+    assert!(path.starts_with(h.paths.exports()));
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert!(text.starts_with(rfidex_runtime::problems::EXPORT_HEADER));
+    assert!(text.contains(TAG_A), "the raw sticker UID is kept");
+    assert!(text.contains("\"exit\""), "the role it was captured under");
+    assert!(text.contains("pending"));
+    assert!(!text.contains(common::KEY), "the API key never leaves Rust");
+
+    let second = h.runtime.export_problems().await.unwrap();
+    assert_ne!(path, second);
+    h.stop().await;
+}
+
+#[tokio::test]
 async fn set_gate_role_switches_and_saves_one_gate() {
     let mut h = Harness::start(RfidMode::Bind).await;
     h.runtime

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { dismissProblem, errorText, formatTime, problems } from "./api";
+import { dismissProblem, errorText, exportProblems, formatTime, problems } from "./api";
 import type { ProblemView } from "./api";
 import { problemPage } from "./problem-list";
 
@@ -13,6 +13,7 @@ export function Problems({ problemCount }: Props) {
   const [items, setItems] = useState<ProblemView[]>([]);
   const [failure, setFailure] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [savedPath, setSavedPath] = useState<string | null>(null);
   const [choosing, setChoosing] = useState<ProblemView | null>(null);
   const dialogRef = useRef<HTMLDialogElement>(null);
   const tableRef = useRef<HTMLDivElement>(null);
@@ -58,6 +59,19 @@ export function Problems({ problemCount }: Props) {
     }
   };
 
+  const exportAll = async () => {
+    setBusy(true);
+    setSavedPath(null);
+    try {
+      setSavedPath(await exportProblems());
+      setFailure(null);
+    } catch (problem) {
+      setFailure(errorText(problem));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="panel problems-page">
       <header className="panel-head">
@@ -71,7 +85,14 @@ export function Problems({ problemCount }: Props) {
           </svg>
           Refresh
         </button>
+        <button type="button" onClick={() => void exportAll()} disabled={busy}
+          title="Saves every scan that never reached the server, with the real error">
+          Export problems
+        </button>
       </header>
+      {savedPath && (
+        <p role="status">Saved to <code className="path">{savedPath}</code></p>
+      )}
 
       <div className="problems-search">
         <label htmlFor="problem-search">Search problems</label>

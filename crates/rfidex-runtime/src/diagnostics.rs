@@ -235,7 +235,7 @@ fn code_name(code: ErrorCode) -> &'static str {
 /// Quote every field, double internal quotes, and stop a spreadsheet treating
 /// a leading `=`, `+`, `-` or `@` as a formula. Quoting alone is not a formula
 /// defence, so a leading apostrophe is added after any leading whitespace too.
-fn csv_cell(value: &str) -> String {
+pub(crate) fn csv_cell(value: &str) -> String {
     let first = value
         .trim_start_matches(|c: char| c.is_whitespace())
         .chars()

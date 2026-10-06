@@ -263,6 +263,7 @@ export const dismissProblem = (station: string, id: number) =>
   invoke<boolean>("dismiss_problem", { station, id });
 export const syncNow = () => invoke<void>("sync_now");
 export const exportDiagnostics = () => invoke<string>("export_diagnostics");
+export const exportProblems = () => invoke<string>("export_problems");
 export const simPlace = (station: string, uidHex: string) =>
   invoke<void>("sim_place", { station, uidHex });
 export const simClear = (station: string) => invoke<void>("sim_clear", { station });

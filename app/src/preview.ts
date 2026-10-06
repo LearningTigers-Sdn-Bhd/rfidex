@@ -158,6 +158,8 @@ function answer(cmd: string, args: Record<string, unknown> = {}): unknown {
       return null;
     case "export_diagnostics":
       return "/tmp/rfidex-diagnostics.csv";
+    case "export_problems":
+      return "/tmp/rfidex-problems.csv";
     default:
       throw new Error(`preview: no demo answer for ${cmd}`);
   }

@@ -419,6 +419,13 @@ pub async fn export_diagnostics(state: tauri::State<'_, AppState>) -> Result<Str
 }
 
 #[tauri::command]
+pub async fn export_problems(state: tauri::State<'_, AppState>) -> Result<String, RuntimeError> {
+    let slot = current(&state).await?;
+    let path = runtime(&slot).export_problems().await?;
+    Ok(path.display().to_string())
+}
+
+#[tauri::command]
 pub async fn sim_place(
     state: tauri::State<'_, AppState>,
     station: Uuid,
